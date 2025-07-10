@@ -244,6 +244,31 @@ fn ws_relay_send(message: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn check_for_updates() -> Result<(), String> {
+    // This will trigger the updater to check for updates
+    // The actual update checking is handled by Tauri's built-in updater
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_update() -> Result<(), String> {
+    use tauri::api::process::Command;
+    
+    // Get the current executable path
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable: {}", e))?;
+    
+    // Launch the updater
+    Command::new_sidecar("updater")
+        .map_err(|e| format!("Failed to create updater command: {}", e))?
+        .args(&[current_exe.to_string_lossy().to_string()])
+        .spawn()
+        .map_err(|e| format!("Failed to spawn updater: {}", e))?;
+    
+    Ok(())
+}
+
 async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<DiscoveredServer>, Box<dyn std::error::Error + Send + Sync>> {
     let url = format!("http://{}:{}/health", ip, port);
     
@@ -314,30 +339,45 @@ fn main() {
             add_firewall_rule,
             proxy_localnode,
             start_ws_relay,
-            ws_relay_send
+            ws_relay_send,
+            check_for_updates,
+            install_update
         ])
         .setup(|app| {
-            let app_handle = app.handle();
-            
             // Handle updater events
-            app_handle.listen_global("tauri://update-available", move |event| {
+            let app_handle1 = app.handle();
+            app_handle1.clone().listen_global("tauri://update-available", move |event| {
                 println!("Update available: {:?}", event.payload());
+                // Emit to frontend
+                let _ = app_handle1.emit_all("update-available", event.payload());
             });
             
-            app_handle.listen_global("tauri://update-download-progress", move |event| {
+            let app_handle2 = app.handle();
+            app_handle2.clone().listen_global("tauri://update-download-progress", move |event| {
                 println!("Update download progress: {:?}", event.payload());
+                // Emit to frontend
+                let _ = app_handle2.emit_all("update-download-progress", event.payload());
             });
             
-            app_handle.listen_global("tauri://update-download-finished", move |event| {
+            let app_handle3 = app.handle();
+            app_handle3.clone().listen_global("tauri://update-download-finished", move |event| {
                 println!("Update download finished: {:?}", event.payload());
+                // Emit to frontend
+                let _ = app_handle3.emit_all("update-download-finished", event.payload());
             });
             
-            app_handle.listen_global("tauri://update-install", move |event| {
+            let app_handle4 = app.handle();
+            app_handle4.clone().listen_global("tauri://update-install", move |event| {
                 println!("Update install: {:?}", event.payload());
+                // Emit to frontend
+                let _ = app_handle4.emit_all("update-install", event.payload());
             });
             
-            app_handle.listen_global("tauri://update-error", move |event| {
+            let app_handle5 = app.handle();
+            app_handle5.clone().listen_global("tauri://update-error", move |event| {
                 println!("Update error: {:?}", event.payload());
+                // Emit to frontend
+                let _ = app_handle5.emit_all("update-error", event.payload());
             });
             
             Ok(())

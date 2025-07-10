@@ -17,6 +17,7 @@ import OvernightQueueManagement from "./routes/overnight-queue";
 import RoutesPage from "./routes/routes";
 import SupervisorVehicleManagement from './routes/supervisor-vehicle-management';
 import DriverTicketsPage from './routes/driver-tickets';
+import UpdatePage from './routes/update';
 import { TauriProvider } from "./context/TauriProvider";
 import { AuthProvider } from "./context/AuthProvider";
 import "./styles.css";
@@ -129,6 +130,10 @@ const router = createBrowserRouter([
       {
         path: "/driver-tickets",
         element: <DriverTicketsPage />,
+      },
+      {
+        path: "/update",
+        element: <UpdatePage />,
       },
     ],
   },
