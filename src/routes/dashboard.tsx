@@ -9,7 +9,7 @@ import { useSupervisorMode } from "../context/SupervisorModeProvider";
 import { 
   DollarSign, TrendingUp, BarChart3, MapPin, User, Clock, RefreshCw, Car, Users, 
   Calendar, Bell, Loader2, AlertCircle, CheckCircle, XCircle, Activity, 
-  Truck, Route, Ticket, Zap, Eye, EyeOff, ArrowUpRight, ArrowDownRight
+  Truck, Navigation, Ticket, Zap, Eye, EyeOff, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import api from '../lib/api';
 import { getWebSocketClient, ConnectionState } from '../lib/websocket';
@@ -310,7 +310,7 @@ function StaffDashboard() {
         <Card className="p-6 bg-gradient-to-br from-green-50 to-green-100 border-green-200">
           <div className="flex items-center space-x-4">
             <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center">
-              <Route className="h-5 w-5 text-white" />
+              <Navigation className="h-5 w-5 text-white" />
             </div>
             <div>
               <p className="text-sm font-medium text-green-600">Files d'Attente Actives</p>

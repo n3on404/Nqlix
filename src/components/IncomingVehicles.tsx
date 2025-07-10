@@ -8,7 +8,7 @@ import {
   Phone,
   RefreshCw,
   Truck,
-  RouteIcon
+  Navigation
 } from 'lucide-react';
 import { 
   getIncomingVehicles, 
@@ -77,7 +77,7 @@ export const IncomingVehicles: React.FC<IncomingVehiclesProps> = ({ onNewArrival
       <CardHeader className="flex-shrink-0 pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center space-x-2 text-lg">
-            <RouteIcon className="h-5 w-5" />
+            <Navigation className="h-5 w-5" />
             <span>Incoming Vehicles</span>
           </CardTitle>
           <Button
