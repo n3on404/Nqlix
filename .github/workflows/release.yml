@@ -25,16 +25,18 @@ jobs:
         with:
           version: 8
 
+      - name: Install frontend dependencies
+        run: |
+          pnpm install --frozen-lockfile=false
+          pnpm store prune
+
+      - name: Build frontend
+        run: pnpm build
+
       - name: Install Rust dependencies
         run: |
           cd src-tauri
           cargo install tauri-cli
-
-      - name: Install frontend dependencies
-        run: pnpm install
-
-      - name: Build frontend
-        run: pnpm build
 
       - name: Generate updater keys
         run: |
