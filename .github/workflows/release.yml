@@ -26,27 +26,19 @@ jobs:
           version: 8
 
       - name: Install frontend dependencies
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build frontend
         run: pnpm build
 
-      - name: Install Rust dependencies
+      - name: Generate updater keys (if not exists)
         run: |
-          cd src-tauri
-          cargo install tauri-cli
-
-      - name: Generate updater keys
-        run: |
-          cd src-tauri
-          cargo tauri signer generate -w $env:USERPROFILE\.tauri\nqlix_desktop_app.key
+          if (-not (Test-Path "$env:USERPROFILE\.tauri\nqlix_desktop_app.key")) {
+            pnpm tauri signer generate -w "$env:USERPROFILE\.tauri\nqlix_desktop_app.key"
+          }
 
       - name: Build Tauri app
-        run: |
-          cd src-tauri
-          cargo tauri build
+        run: pnpm tauri build
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -59,4 +51,4 @@ jobs:
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

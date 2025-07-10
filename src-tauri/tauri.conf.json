@@ -14,7 +14,9 @@
     "allowlist": {
       "all": true,
       "http": {
-        "all": true
+        "all": true,
+        "request": true,
+        "scope": ["http://**", "https://**"]
       }
     },
     "bundle": {
