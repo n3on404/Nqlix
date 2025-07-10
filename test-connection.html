@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connection Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .result { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        button { padding: 10px 20px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Connection Test</h1>
+    
+    <div>
+        <button onclick="testConnection('http://192.168.1.89:3001')">Test 192.168.1.89:3001</button>
+        <button onclick="testConnection('http://192.168.1.244:3001')">Test 192.168.1.244:3001</button>
+        <button onclick="testConnection('http://localhost:3001')">Test localhost:3001</button>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        async function testConnection(url) {
+            const resultsDiv = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'result';
+            resultDiv.innerHTML = `<strong>Testing ${url}...</strong>`;
+            resultsDiv.appendChild(resultDiv);
+            
+            try {
+                console.log(`Testing connection to: ${url}/health`);
+                
+                const response = await fetch(`${url}/health`, {
+                    method: 'GET',
+                    signal: AbortSignal.timeout(5000)
+                });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                resultDiv.className = 'result success';
+                resultDiv.innerHTML = `
+                    <strong>✅ Success: ${url}</strong><br>
+                    Status: ${data.status}<br>
+                    Version: ${data.version}<br>
+                    Environment: ${data.environment}
+                `;
+                
+            } catch (error) {
+                console.error('Connection error:', error);
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <strong>❌ Error: ${url}</strong><br>
+                    Error: ${error.message}
+                `;
+            }
+        }
+    </script>
+</body>
+</html> 

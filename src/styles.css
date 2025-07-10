@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Creamy light mode */
+    --background: 42 56% 96%;           /* Creamy, off-white */
+    --foreground: 24 15% 20%;           /* Deep brown/gray for text */
+    --card: 42 56% 98%;                 /* Slightly lighter cream */
+    --card-foreground: 24 15% 20%;
+    --popover: 42 56% 98%;
+    --popover-foreground: 24 15% 20%;
+    --primary: 27 70% 45%;              /* Warm orange accent */
+    --primary-foreground: 42 56% 98%;
+    --secondary: 42 30% 90%;            /* Light beige */
+    --secondary-foreground: 24 15% 20%; 
+    --muted: 42 30% 92%;                /* Muted beige */
+    --muted-foreground: 24 10% 50%;
+    --accent: 27 70% 90%;               /* Very light orange accent */
+    --accent-foreground: 24 15% 20%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 42 30% 85%;               /* Soft beige border */
+    --input: 42 30% 85%;
+    --ring: 27 70% 45%;
+    --chart-1: 27 87% 67%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 12 76% 61%;
+    --radius: 0.5rem
+  }
+  .dark {
+    /* Dark blue mode */
+    --background: 220 35% 13%;          /* Deep blue */
+    --foreground: 220 20% 92%;          /* Very light blue/gray for text */
+    --card: 220 35% 16%;                /* Slightly lighter blue */
+    --card-foreground: 220 20% 92%;
+    --popover: 220 35% 16%;
+    --popover-foreground: 220 20% 92%;
+    --primary: 200 90% 60%;             /* Bright blue accent */
+    --primary-foreground: 220 35% 13%;
+    --secondary: 220 30% 20%;           /* Muted blue */
+    --secondary-foreground: 220 20% 92%; 
+    --muted: 220 30% 18%;               /* Muted blue */
+    --muted-foreground: 220 15% 60%;
+    --accent: 200 90% 25%;              /* Deep blue accent */
+    --accent-foreground: 220 20% 92%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 30% 20%;              /* Muted blue border */
+    --input: 220 30% 20%;
+    --ring: 200 90% 60%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
