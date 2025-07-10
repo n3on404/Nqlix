@@ -8,6 +8,8 @@ on:
 jobs:
   create-release:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,14 +33,25 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
-      - name: Generate updater keys (if not exists)
+      - name: Setup signing key
         run: |
-          if (-not (Test-Path "$env:USERPROFILE\.tauri\nqlix_desktop_app.key")) {
-            pnpm tauri signer generate -w "$env:USERPROFILE\.tauri\nqlix_desktop_app.key"
+          $keyPath = "$env:USERPROFILE\.tauri\nqlix_desktop_app.key"
+          $keyDir = Split-Path $keyPath -Parent
+          if (-not (Test-Path $keyDir)) {
+            New-Item -ItemType Directory -Path $keyDir -Force
           }
+          echo "$env:TAURI_SIGNING_PRIVATE_KEY" | Out-File -FilePath $keyPath -Encoding utf8
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }} 
 
       - name: Build Tauri app
         run: pnpm tauri build
+
+      - name: List build artifacts (for debugging)
+        run: |
+          Write-Host "Listing build artifacts:"
+          Get-ChildItem -Recurse src-tauri/target/release/bundle/ | Select-Object FullName
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
