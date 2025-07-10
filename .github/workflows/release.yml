@@ -27,8 +27,8 @@ jobs:
 
       - name: Install frontend dependencies
         run: |
-          pnpm install --frozen-lockfile=false
-          pnpm store prune
+          pnpm install --frozen-lockfile
+          pnpm install
 
       - name: Build frontend
         run: pnpm build
