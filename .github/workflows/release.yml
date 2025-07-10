@@ -26,7 +26,7 @@ jobs:
           version: 8
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       - name: Build frontend
         run: pnpm build
