@@ -3,6 +3,7 @@ import { Loader2, Wifi, WifiOff, Printer, User, Download, CheckCircle, XCircle, 
 import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { Badge } from './ui/badge';
 import { useInit } from '../context/InitProvider';
 import { useTauri } from '../context/TauriProvider';
 import api from '../lib/api';
@@ -20,7 +21,8 @@ interface InitScreenProps {
 
 export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   const { systemStatus, updateServerUrl } = useInit();
-  const { discoverLocalServers } = useTauri();
+  const { discoverLocalServers, getAppVersion } = useTauri();
+  const [appVersion, setAppVersion] = useState<string>('');
   const [currentStep, setCurrentStep] = useState(0);
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [serverUrl, setServerUrl] = useState('');
@@ -28,6 +30,20 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveredServers, setDiscoveredServers] = useState<Array<{ip: string, port: number, url: string, response_time: number}>>([]);
+  
+  // Load app version on component mount
+  useEffect(() => {
+    const loadAppVersion = async () => {
+      try {
+        const version = await getAppVersion();
+        setAppVersion(version);
+      } catch (err) {
+        console.error('Failed to load app version:', err);
+        setAppVersion('Unknown');
+      }
+    };
+    loadAppVersion();
+  }, [getAppVersion]);
   
   const [checks, setChecks] = useState<SystemCheck[]>([
     {
@@ -393,6 +409,11 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
               Nqlix
             </h1>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Badge variant="outline" className="text-xs">
+                v{appVersion}
+              </Badge>
+            </div>
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Initializing system...
             </p>
