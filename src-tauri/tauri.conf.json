@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Nqlix",
-    "version": "0.0.1"
+    "version": "0.0.3"
   },
   "tauri": {
     "allowlist": {
@@ -33,10 +33,13 @@
     },
     "updater": {
       "active": true,
+      "windows": {
+        "installMode": "passive"
+      },
       "endpoints": [
-        "https://github.com/Samer-Gassouma/Nqlix/releases/latest/download/latest.json"
+        "https://[::1]:5000/tauri-releases/Nqlix/{{current_version}}"
       ],
-      "dialog": false,
+      "dialog": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZDOUFERUQ1OEVEMDIwQTkKUldTcElOQ08xZDZhL09ubVY4TmRDSmtUK3hzZWplUU9PRjdJZGV6elF0RURYUm8rK1hVU1JKckYK"
     },
     "security": {

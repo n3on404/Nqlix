@@ -1,19 +1,13 @@
 import { useSettingsContext } from "../context/SettingsProvider";
 import { Button } from "../components/ui/button";
 import { SystemStatus } from "../components/SystemStatus";
-import { Moon, Sun, Download, RefreshCw } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Moon, Sun } from "lucide-react";
 
 export default function Settings() {
   const { setTheme, theme: currentTheme } = useSettingsContext();
-  const navigate = useNavigate();
 
   const toggleTheme = () => {
     setTheme(currentTheme === "light" ? "dark" : "light");
-  };
-
-  const handleCheckUpdates = () => {
-    navigate('/update');
   };
 
   return (
@@ -51,24 +45,6 @@ export default function Settings() {
               Thème actuel : {currentTheme === "light" ? "Clair" : "Sombre"}
             </span>
           </div>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <h2 className="text-lg font-semibold">Mises à jour</h2>
-        <div className="flex items-center space-x-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCheckUpdates}
-            className="w-48"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Vérifier les mises à jour
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Vérifiez les mises à jour disponibles
-          </span>
         </div>
       </div>
 

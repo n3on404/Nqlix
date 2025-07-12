@@ -20,7 +20,6 @@ import {
 import { useAuth } from "./context/AuthProvider";
 import { Button } from "./components/ui/button";
 import { useSupervisorMode } from "./context/SupervisorModeProvider";
-import { UpdateManager } from "./components/UpdateManager";
 
 export default function Layout() {
   const location = useLocation();
@@ -191,9 +190,6 @@ export default function Layout() {
       <div className="flex-1 min-h-screen overflow-auto ml-16 group-hover:ml-48 transition-all duration-500 ease-in-out">
         <Outlet />
       </div>
-      
-      {/* Update Manager - rendered globally */}
-      <UpdateManager />
     </div>
   );
 }
