@@ -37,10 +37,10 @@
         "installMode": "passive"
       },
       "endpoints": [
-        "https://127.0.0.1:5002/tauri-releases/Nqlix/{{current_version}}"
+        "http://localhost:5002/tauri-releases/Nqlix/{{current_version}}"
       ],
       "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUwNEZCN0RDRURGREJFRUIKUldUcnZ2M3QzTGRQVUhTTmk1UHBzVzlzTVhVK3NsbjNmL1J1SENvK2ZabVpOc0tYdDVNSDlKNEIK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZDOUFERUQ1OEVEMDIwQTkKUldTcElOQ08xZDZhL09ubVY4TmRDSmtUK3hzZWplUU9PRjdJZGV6elF0RURYUm8rK1hVU1JKckYK"
     },
     "security": {
       "csp": "default-src blob: data: filesystem: ws: http: https: 'unsafe-eval' 'unsafe-inline';"
