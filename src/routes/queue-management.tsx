@@ -11,7 +11,11 @@ import {
   SignalHigh,
   WifiOff,
   Activity,
-  Loader2
+  Loader2,
+  Edit,
+  UserCheck,
+  AlertCircle,
+  TrendingUp
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQueue } from "../context/QueueProvider";
@@ -38,7 +42,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { useNotifications } from "../context/NotificationProvider";
-import { getWebSocketClient } from "../lib/websocket";
+import { getWebSocketClient, initializeWebSocket } from "../lib/websocket";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import api from "../lib/api";
@@ -49,9 +53,10 @@ interface SortableQueueItemProps {
   getStatusColor: (status: string) => string;
   formatTime: (dateString: string) => string;
   getBasePriceForDestination: (destinationName: string) => number | undefined;
+  onVehicleClick: (vehicle: any) => void;
 }
 
-function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination }: SortableQueueItemProps) {
+function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick }: SortableQueueItemProps) {
   const {
     attributes,
     listeners,
@@ -86,29 +91,92 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             {queue.queuePosition}
           </div>
         </div>
-        {/* Vehicle Info */}
-        <div className="flex items-center gap-4 flex-1">
-          <div className="p-3 bg-accent rounded-xl flex items-center justify-center">
+        {/* Vehicle Info - Now Clickable */}
+        <div 
+          className="flex items-center gap-4 flex-1 cursor-pointer hover:bg-primary/10 p-3 rounded-lg transition-colors group"
+          onClick={() => onVehicleClick({ 
+            licensePlate: queue.licensePlate,
+            firstName: queue.vehicle?.driver?.firstName,
+            lastName: queue.vehicle?.driver?.lastName,
+            currentDestination: queue.destinationName, 
+            currentDestinationId: queue.destinationId,
+            queueId: queue.id 
+          })}
+        >
+          <div className="p-3 bg-accent rounded-xl flex items-center justify-center group-hover:bg-primary/20 transition-colors">
             <Car className="h-7 w-7 text-primary-foreground" />
           </div>
-          <div>
-            <p className="font-bold text-white text-lg tracking-wide">{queue.vehicle?.licensePlate}</p>
-            <p className="text-sm text-muted-foreground font-medium">{queue.vehicle?.driver?.firstName} {queue.vehicle?.driver?.lastName}</p>
-          </div>
+                      <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <p className="font-bold text-white text-lg tracking-wide">{queue.licensePlate}</p>
+                <Edit className="h-4 w-4 text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <p className="text-sm text-muted-foreground font-medium">{queue.vehicle?.driver?.firstName} {queue.vehicle?.driver?.lastName}</p>
+              <p className="text-xs text-blue-400 group-hover:text-blue-300">Cliquez pour changer la destination</p>
+            </div>
         </div>
       </div>
       {/* Divider for wide screens */}
       <div className="hidden md:block h-16 w-px bg-primary/20 mx-4" />
-      {/* Right: Status & Actions */}
-      <div className="flex flex-col md:flex-row items-center gap-6 flex-shrink-0">
-        {/* Seats */}
-        <div className="text-center">
-          <div className="flex items-center justify-center gap-2">
-            <Users className="h-5 w-5 text-white" />
-            <span className="font-bold text-white text-lg">{queue.availableSeats}/{queue.availableSeats + (queue.totalSeats - queue.availableSeats)}</span>
+              {/* Right: Status & Actions */}
+        <div className="flex flex-col md:flex-row items-center gap-6 flex-shrink-0">
+          {/* Enhanced Seat Booking Display */}
+          <div className="text-center">
+            {(() => {
+              const bookedSeats = queue.totalSeats - queue.availableSeats;
+              const bookingPercentage = (bookedSeats / queue.totalSeats) * 100;
+              const isFullyBooked = queue.availableSeats === 0 || queue.status === 'READY';
+              
+              return (
+                <div className="space-y-2">
+                  {/* Seat Count */}
+                  <div className="flex items-center justify-center gap-2">
+                    <Users className={`h-5 w-5 ${isFullyBooked ? 'text-red-400' : 'text-white'}`} />
+                    <span className={`font-bold text-lg ${isFullyBooked ? 'text-red-400' : 'text-white'}`}>
+                      {queue.availableSeats}/{queue.totalSeats}
+                    </span>
+                  </div>
+                  
+                  {/* Booking Status */}
+                  <div className="text-xs">
+                    {isFullyBooked ? (
+                      <div className="bg-red-500 text-white px-2 py-1 rounded-full font-semibold flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        COMPLET
+                      </div>
+                    ) : bookedSeats > 0 ? (
+                      <div className="bg-orange-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
+                        <UserCheck className="h-3 w-3" />
+                        {bookedSeats} réservé{bookedSeats > 1 ? 's' : ''}
+                      </div>
+                    ) : (
+                      <div className="text-muted-foreground flex items-center gap-1">
+                        <TrendingUp className="h-3 w-3" />
+                        places libres
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Booking Progress Bar */}
+                  <div className="w-16 h-2 bg-gray-300 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-300 ${
+                        isFullyBooked ? 'bg-red-500' : 
+                        bookingPercentage > 75 ? 'bg-orange-500' : 
+                        bookingPercentage > 50 ? 'bg-yellow-500' : 'bg-green-500'
+                      }`}
+                      style={{ width: `${bookingPercentage}%` }}
+                    />
+                  </div>
+                  
+                  {/* Booking Percentage */}
+                  <div className="text-xs text-muted-foreground">
+                    {Math.round(bookingPercentage)}% réservé
+                  </div>
+                </div>
+              );
+            })()}
           </div>
-          <p className="text-xs text-muted-foreground">places disponibles</p>
-        </div>
         {/* Departure */}
         <div className="text-center">
           <div className="flex items-center justify-center gap-2">
@@ -133,9 +201,14 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
   );
 }
 
-// Utility to normalize destination names
+// Utility to normalize destination names for better matching
 function normalizeDestinationName(name: string) {
   return name.replace(/^STATION /i, "").toUpperCase().trim();
+}
+
+// Utility to match station names more robustly
+function normalizeStationName(name: string) {
+  return name.toUpperCase().trim();
 }
 
 export default function QueueManagement() {
@@ -163,18 +236,179 @@ export default function QueueManagement() {
   const [search, setSearch] = useState("");
   const [addVehicleError, setAddVehicleError] = useState<string | null>(null);
   const [routes, setRoutes] = useState<any[]>([]);
+  
+  // Vehicle destination selection state
+  const [vehicleDestinations, setVehicleDestinations] = useState<any[]>([]);
+  const [selectedVehicleDestination, setSelectedVehicleDestination] = useState<string | null>(null);
+  const [destinationsLoading, setDestinationsLoading] = useState(false);
+  const [defaultDestination, setDefaultDestination] = useState<any | null>(null);
 
-  // Helper to get base price for a destination
+  // Change queue modal state
+  const [showChangeQueueModal, setShowChangeQueueModal] = useState(false);
+  const [selectedVehicleForQueueChange, setSelectedVehicleForQueueChange] = useState<any | null>(null);
+  const [changeQueueDestinations, setChangeQueueDestinations] = useState<any[]>([]);
+  const [selectedNewDestination, setSelectedNewDestination] = useState<string | null>(null);
+  const [changeQueueLoading, setChangeQueueLoading] = useState(false);
+  const [changeQueueError, setChangeQueueError] = useState<string | null>(null);
+
+  // Helper to get base price for a destination - updated to work with route table
   function getBasePriceForDestination(destinationName: string) {
-    const route = routes.find(r => r.destinationName?.toUpperCase() === destinationName?.toUpperCase());
+    // Try exact match first
+    let route = routes.find(r => 
+      normalizeStationName(r.stationName) === normalizeStationName(destinationName)
+    );
+    
+    // If no exact match, try with normalized names (remove common prefixes/suffixes)
+    if (!route) {
+      const normalizedDestination = normalizeDestinationName(destinationName);
+      route = routes.find(r => 
+        normalizeDestinationName(r.stationName) === normalizedDestination
+      );
+    }
+    
+    // If still no match, try partial matching
+    if (!route) {
+      route = routes.find(r => 
+        normalizeStationName(r.stationName).includes(normalizeStationName(destinationName)) ||
+        normalizeStationName(destinationName).includes(normalizeStationName(r.stationName))
+      );
+    }
+    
     return route?.basePrice;
   }
+
+  // Enhanced function to get route info for a destination
+  function getRouteForDestination(destinationName: string) {
+    // Try exact match first
+    let route = routes.find(r => 
+      normalizeStationName(r.stationName) === normalizeStationName(destinationName)
+    );
+    
+    // If no exact match, try with normalized names
+    if (!route) {
+      const normalizedDestination = normalizeDestinationName(destinationName);
+      route = routes.find(r => 
+        normalizeDestinationName(r.stationName) === normalizedDestination
+      );
+    }
+    
+    // If still no match, try partial matching
+    if (!route) {
+      route = routes.find(r => 
+        normalizeStationName(r.stationName).includes(normalizeStationName(destinationName)) ||
+        normalizeStationName(destinationName).includes(normalizeStationName(r.stationName))
+      );
+    }
+    
+    return route;
+  }
+
+  // Fetch available destinations for a vehicle
+  const fetchVehicleDestinations = async (licensePlate: string) => {
+    setDestinationsLoading(true);
+    setVehicleDestinations([]);
+    setSelectedVehicleDestination(null);
+    setDefaultDestination(null);
+    
+    try {
+      const response = await api.get(`/api/queue/vehicle/${licensePlate}/destinations`);
+      
+      if (response.success && response.data) {
+        const data = response.data as any;
+        console.log('🎯 Vehicle destinations loaded:', data);
+        setVehicleDestinations(data.destinations || []);
+        setDefaultDestination(data.defaultDestination);
+        
+        // Auto-select default destination if available
+        if (data.defaultDestination) {
+          setSelectedVehicleDestination(data.defaultDestination.stationId);
+          console.log('✅ Auto-selected default destination:', data.defaultDestination.stationName);
+        } else if (data.destinations && data.destinations.length > 0) {
+          // Auto-select first destination if no default
+          setSelectedVehicleDestination(data.destinations[0].stationId);
+          console.log('✅ Auto-selected first destination:', data.destinations[0].stationName);
+        }
+      } else {
+        console.warn('⚠️ Failed to load destinations:', response);
+      }
+    } catch (error: any) {
+      console.error('Error fetching vehicle destinations:', error);
+      setAddVehicleError('Impossible de charger les destinations autorisées pour ce véhicule');
+    } finally {
+      setDestinationsLoading(false);
+    }
+  };
+
+  // Fetch available destinations for queue change
+  const fetchChangeQueueDestinations = async (licensePlate: string, currentDestinationId?: string) => {
+    console.log('🔄 Fetching destinations for vehicle:', licensePlate);
+    setChangeQueueLoading(true);
+    setChangeQueueDestinations([]);
+    setSelectedNewDestination(null);
+    setChangeQueueError(null);
+    
+    try {
+      const response = await api.get(`/api/queue/vehicle/${licensePlate}/destinations`);
+      console.log('🔄 Raw API response for destinations:', response);
+      
+      if (response.success && response.data) {
+        const data = response.data as any;
+        console.log('🔄 Change queue destinations loaded:', data);
+        console.log('🔄 All destinations:', data.destinations);
+        console.log('🔄 Current destination ID:', currentDestinationId);
+        
+        // Filter out current destination if vehicle is already in a queue
+        const availableDestinations = (data.destinations || []).filter((dest: any) => {
+          console.log(`🔄 Checking destination ${dest.stationName} (${dest.stationId}) vs current ${currentDestinationId}`);
+          return dest.stationId !== currentDestinationId;
+        });
+        
+        console.log('🔄 Available destinations after filtering:', availableDestinations);
+        setChangeQueueDestinations(availableDestinations);
+        
+        // Auto-select first available destination
+        if (availableDestinations.length > 0) {
+          setSelectedNewDestination(availableDestinations[0].stationId);
+          console.log('✅ Auto-selected first available destination for queue change:', availableDestinations[0].stationName);
+        } else {
+          console.log('⚠️ No available destinations after filtering');
+        }
+      } else {
+        console.warn('⚠️ Failed to load destinations for queue change:', response);
+        setChangeQueueError('Impossible de charger les destinations disponibles');
+      }
+    } catch (error: any) {
+      console.error('❌ Error fetching destinations for queue change:', error);
+      setChangeQueueError('Erreur lors du chargement des destinations');
+    } finally {
+      setChangeQueueLoading(false);
+    }
+  };
+
+  // Handle vehicle click to change queue
+  const handleVehicleClick = (vehicle: any) => {
+    console.log('🖱️ Vehicle clicked for queue change:', vehicle);
+    setSelectedVehicleForQueueChange(vehicle);
+    setShowChangeQueueModal(true);
+    setChangeQueueError(null);
+    
+    // Fetch available destinations for this vehicle
+    if (vehicle.licensePlate) {
+      fetchChangeQueueDestinations(vehicle.licensePlate, vehicle.currentDestinationId);
+    }
+  };
 
   // Real-time notifications for queue/vehicle events
   useEffect(() => {
     if (!isWebSocketConnected) return;
     const wsClient = getWebSocketClient();
+    
     const queueHandler = (msg: any) => {
+      console.log('🔄 Queue update received:', msg);
+      
+      // Refresh queue data when update received
+      refreshQueues();
+      
       if (msg?.payload?.queue) {
         addNotification({
           type: 'info',
@@ -184,11 +418,111 @@ export default function QueueManagement() {
         });
       }
     };
+    
+    const bookingHandler = (msg: any) => {
+      console.log('🎯 Booking update received:', msg);
+      
+      // Refresh queue data when booking update received
+      refreshQueues();
+      
+      if (msg?.payload) {
+        const booking = msg.payload;
+        const bookedSeats = booking.seatsBooked || booking.seats;
+        const vehiclePlate = booking.vehicleLicensePlate || booking.licensePlate;
+        const destination = booking.destinationName || booking.destination;
+        
+        if (vehiclePlate && destination) {
+          addNotification({
+            type: 'success',
+            title: 'Nouvelle Réservation',
+            message: `${bookedSeats} place${bookedSeats > 1 ? 's' : ''} réservée${bookedSeats > 1 ? 's' : ''} sur ${vehiclePlate} → ${destination}`,
+            duration: 5000
+          });
+        }
+      }
+    };
+    
+    const queueUpdatedHandler = (msg: any) => {
+      console.log('🔄 Queue updated event received:', msg);
+      // Force refresh queue data when queue_updated event received
+      setTimeout(() => {
+        console.log('🔄 Force refreshing queues after queue update...');
+        refreshQueues();
+      }, 100); // Small delay to ensure backend has processed the update
+    };
+    
+    const bookingCreatedHandler = (msg: any) => {
+      console.log('🎯 Booking created event received:', msg);
+      // Force refresh queue data when booking_created event received
+      setTimeout(() => {
+        console.log('🔄 Force refreshing queues after booking created...');
+        refreshQueues();
+      }, 100);
+      
+      if (msg?.payload || msg) {
+        const booking = msg.payload || msg;
+        const seatsBooked = booking.seatsBooked || booking.seats || 1;
+        addNotification({
+          type: 'success',
+          title: 'Nouvelle Réservation',
+          message: `Réservation créée - ${seatsBooked} place${seatsBooked > 1 ? 's' : ''}`,
+          duration: 5000
+        });
+      }
+    };
+    
+    const vehicleStatusHandler = (msg: any) => {
+      console.log('🚗 Vehicle status update received:', msg);
+      
+      // Refresh queue data when vehicle status changes
+      refreshQueues();
+      
+      if (msg?.payload?.vehicle && msg?.payload?.status) {
+        const vehicle = msg.payload.vehicle;
+        const status = msg.payload.status;
+        
+        if (status === 'READY') {
+          addNotification({
+            type: 'warning',
+            title: 'Véhicule Complet',
+            message: `Véhicule ${vehicle.licensePlate} est maintenant complet et prêt au départ`,
+            duration: 6000
+          });
+        }
+      }
+    };
+    
+    // Listen for multiple event types that could indicate queue/booking changes
     wsClient.on('queue_update', queueHandler);
+    wsClient.on('booking_update', bookingHandler);
+    wsClient.on('vehicle_status_update', vehicleStatusHandler);
+    wsClient.on('queue_updated', queueUpdatedHandler);
+    wsClient.on('booking_created', bookingCreatedHandler);
+    wsClient.on('cash_booking_updated', queueUpdatedHandler);
+    wsClient.on('financial_update', queueUpdatedHandler);
+    
     return () => {
       wsClient.removeListener('queue_update', queueHandler);
+      wsClient.removeListener('booking_update', bookingHandler);
+      wsClient.removeListener('vehicle_status_update', vehicleStatusHandler);
+      wsClient.removeListener('queue_updated', queueUpdatedHandler);
+      wsClient.removeListener('booking_created', bookingCreatedHandler);
+      wsClient.removeListener('cash_booking_updated', queueUpdatedHandler);
+      wsClient.removeListener('financial_update', queueUpdatedHandler);
     };
-  }, [isWebSocketConnected, addNotification]);
+  }, [isWebSocketConnected, addNotification, refreshQueues]);
+
+  // Initialize WebSocket connection for real-time updates
+  useEffect(() => {
+    console.log('🔌 Queue Management: Initializing WebSocket connection...');
+    const wsClient = initializeWebSocket();
+    
+    // Ensure we're connected for real-time updates
+    if (!wsClient.isConnected()) {
+      console.log('🔌 Queue Management: WebSocket not connected, connecting...');
+      wsClient.connect();
+    }
+  }, []);
 
   // Update lastUpdated timestamp when queues change
   useEffect(() => {
@@ -234,14 +568,30 @@ export default function QueueManagement() {
     }
   }, [showAddVehicleModal]);
 
+  // Fetch destinations when vehicle is selected
+  useEffect(() => {
+    if (selectedVehicle && selectedVehicle.licensePlate) {
+      fetchVehicleDestinations(selectedVehicle.licensePlate);
+    } else {
+      setVehicleDestinations([]);
+      setSelectedVehicleDestination(null);
+      setDefaultDestination(null);
+    }
+  }, [selectedVehicle]);
+
   // Fetch all routes on mount
   useEffect(() => {
     api.get("/api/routes").then(res => {
       if (res.success && Array.isArray(res.data)) {
+        console.log('📍 Routes loaded:', res.data);
         setRoutes(res.data);
       } else {
+        console.warn('⚠️ Failed to load routes:', res);
         setRoutes([]);
       }
+    }).catch(error => {
+      console.error('❌ Error loading routes:', error);
+      setRoutes([]);
     });
   }, []);
 
@@ -292,18 +642,24 @@ export default function QueueManagement() {
   // Get licensePlates already in any queue (robust extraction)
   const allQueueItems = Object.values(queues).flat();
   console.log("Sample queue item for vehiclesInAnyQueue:", allQueueItems[0]);
-  const vehiclesInAnyQueue = allQueueItems.map(q => {
-    // Use the correct property path from QueueItem interface
-    return (
-      (q.vehicle && q.vehicle.licensePlate) ||
-      ""
-    ).toUpperCase().trim();
+  const vehiclesInAnyQueue = allQueueItems.map((q: any) => {
+    // Use the correct property path - licensePlate is directly on the queue object
+    return (q.licensePlate || "").toUpperCase().trim();
   });
 
   // Debug logging
   console.log('queues', queues);
   console.log('vehiclesInAnyQueue', vehiclesInAnyQueue);
   console.log('vehicles', vehicles);
+  
+  // Log booking status for debugging
+  console.log('🎯 Booking Status Debug:');
+  Object.entries(queues).forEach(([dest, queueItems]: [string, any[]]) => {
+    queueItems.forEach((item: any) => {
+      const bookedSeats = (item.totalSeats || 0) - (item.availableSeats || 0);
+      console.log(`  ${item.licensePlate}: ${item.availableSeats}/${item.totalSeats} (${bookedSeats} booked, ${item.status})`);
+    });
+  });
 
   // Optimistic UI for queue actions
   const handleEnterQueue = async (licensePlate: string) => {
@@ -320,6 +676,42 @@ export default function QueueManagement() {
       });
     }
     return result; // Return the result for optimistic update
+  };
+
+  // Enter queue with specific destination
+  const handleEnterQueueWithDestination = async (licensePlate: string, destinationId: string, destinationName?: string) => {
+    try {
+      const response = await api.post('/api/queue/enter', { 
+        licensePlate, 
+        destinationId, 
+        destinationName 
+      });
+      
+      if (response.success) {
+        const data = response.data as any;
+        if (data?.movedFromQueue && data?.previousDestination) {
+          addNotification({
+            type: 'info',
+            title: 'Véhicule déplacé',
+            message: `${licensePlate} déplacé de ${data.previousDestination} vers ${destinationName || 'la destination sélectionnée'}`,
+            duration: 5000
+          });
+        } else {
+          addNotification({
+            type: 'success',
+            title: 'Véhicule ajouté',
+            message: `${licensePlate} ajouté à la file pour ${destinationName || 'la destination sélectionnée'}`,
+            duration: 4000
+          });
+        }
+        refreshQueues(); // Refresh the queue data
+      }
+      
+      return response;
+    } catch (error: any) {
+      console.error('Error entering queue with destination:', error);
+      return { success: false, message: error.message || 'Échec de l\'entrée en file' };
+    }
   };
   const handleExitQueue = async (licensePlate: string) => {
     setActionLoading(licensePlate);
@@ -383,6 +775,17 @@ export default function QueueManagement() {
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
             {isLoading ? 'Actualisation...' : 'Actualiser'}
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={() => {
+              console.log('🔄 Manual queue refresh triggered');
+              refreshQueues();
+            }}
+            className="border-blue-300 hover:bg-blue-50 text-blue-600"
+          >
+            <Activity className="h-4 w-4 mr-2" />
+            Test Refresh
           </Button>
             <Button 
               variant="default" 
@@ -456,6 +859,75 @@ export default function QueueManagement() {
               )}
             </div>
           )}
+          
+          {/* Destination Selection */}
+          {selectedVehicle && (
+            <div className="mt-4 space-y-3">
+              <div className="border-t pt-4">
+                <h3 className="text-sm font-medium text-foreground mb-3">
+                  Choisir la destination pour {selectedVehicle.licensePlate}
+                </h3>
+                
+                {destinationsLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 className="animate-spin mr-2 h-4 w-4" />
+                    <span className="text-sm text-muted-foreground">Chargement des destinations...</span>
+                  </div>
+                ) : vehicleDestinations.length > 0 ? (
+                  <div className="space-y-2">
+                    {vehicleDestinations.map((dest: any) => (
+                      <div
+                        key={dest.stationId}
+                        className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedVehicleDestination === dest.stationId 
+                            ? 'border-primary bg-primary/10' 
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-muted'
+                        }`}
+                        onClick={() => setSelectedVehicleDestination(dest.stationId)}
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-3 h-3 rounded-full border-2 ${
+                            selectedVehicleDestination === dest.stationId 
+                              ? 'border-primary bg-primary' 
+                              : 'border-gray-300'
+                          }`} />
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <span className="font-medium text-foreground">{dest.stationName}</span>
+                              {dest.isDefault && (
+                                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                  Par défaut
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              Priorité: {dest.priority} • Prix: {formatCurrency(dest.basePrice)}
+                              {/* Show route info if available */}
+                              {(() => {
+                                const route = getRouteForDestination(dest.stationName);
+                                return route ? (
+                                  <span className="text-green-600 ml-1">✓ Route disponible</span>
+                                ) : (
+                                  <span className="text-orange-600 ml-1">⚠ Pas de route</span>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <div className="text-muted-foreground text-sm">
+                      Aucune destination autorisée disponible pour ce véhicule
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
           {addVehicleError && (
             <div className="text-destructive text-sm mt-3 bg-destructive/10 p-3 rounded-lg border border-destructive/30">
               {addVehicleError}
@@ -464,25 +936,196 @@ export default function QueueManagement() {
           <DialogFooter className="mt-6">
             <Button
               onClick={async () => {
-                if (!selectedVehicle) return;
+                if (!selectedVehicle || !selectedVehicleDestination) return;
                 setActionLoading(selectedVehicle.licensePlate);
                 setAddVehicleError(null);
-                const result = await handleEnterQueue(selectedVehicle.licensePlate);
+                
+                // Find the selected destination info
+                const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
+                
+                console.log('🚗 Adding vehicle to queue:', {
+                  licensePlate: selectedVehicle.licensePlate,
+                  destinationId: selectedVehicleDestination,
+                  destinationName: destinationInfo?.stationName,
+                  routePrice: getBasePriceForDestination(destinationInfo?.stationName || ''),
+                  destinationInfo
+                });
+                
+                // Call handleEnterQueue with destination info
+                const result = await handleEnterQueueWithDestination(
+                  selectedVehicle.licensePlate, 
+                  selectedVehicleDestination,
+                  destinationInfo?.stationName
+                );
+                
                 setActionLoading(null);
                 if (result?.success) {
                   setShowAddVehicleModal(false);
                   setSelectedVehicle(null);
+                  setSelectedVehicleDestination(null);
+                  setVehicleDestinations([]);
                 } else if (result?.message) {
                   setAddVehicleError(result.message);
                 }
               }}
-              disabled={!selectedVehicle || !!actionLoading}
+              disabled={!selectedVehicle || !selectedVehicleDestination || !!actionLoading}
               className="bg-primary hover:bg-primary/80"
             >
               {actionLoading ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
               Ajouter à la file
             </Button>
             <Button variant="ghost" onClick={() => setShowAddVehicleModal(false)}>
+              Annuler
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Change Queue Modal */}
+      <Dialog open={showChangeQueueModal} onOpenChange={setShowChangeQueueModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold">
+              Changer la destination - {selectedVehicleForQueueChange?.licensePlate}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {selectedVehicleForQueueChange && (
+            <div className="space-y-4">
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-blue-100 rounded-lg">
+                    <Car className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-blue-900">{selectedVehicleForQueueChange.licensePlate}</div>
+                    <div className="text-sm text-blue-700">
+                      {selectedVehicleForQueueChange.firstName} {selectedVehicleForQueueChange.lastName}
+                    </div>
+                    <div className="text-xs text-blue-600">
+                      Actuellement en file pour: <span className="font-medium">{selectedVehicleForQueueChange.currentDestination}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="space-y-3">
+                <h3 className="text-sm font-medium text-foreground">
+                  Choisir une nouvelle destination
+                </h3>
+                
+                {changeQueueLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 className="animate-spin mr-2 h-4 w-4" />
+                    <span className="text-sm text-muted-foreground">Chargement des destinations...</span>
+                  </div>
+                ) : changeQueueDestinations.length > 0 ? (
+                  <div className="space-y-2">
+                    {changeQueueDestinations.map((dest: any) => (
+                      <div
+                        key={dest.stationId}
+                        className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                          selectedNewDestination === dest.stationId 
+                            ? 'border-primary bg-primary/10' 
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-muted'
+                        }`}
+                        onClick={() => setSelectedNewDestination(dest.stationId)}
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-3 h-3 rounded-full border-2 ${
+                            selectedNewDestination === dest.stationId 
+                              ? 'border-primary bg-primary' 
+                              : 'border-gray-300'
+                          }`} />
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <span className="font-medium text-foreground">{dest.stationName}</span>
+                              {dest.isDefault && (
+                                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                  Par défaut
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              Priorité: {dest.priority} • Prix: {formatCurrency(dest.basePrice)}
+                              {/* Show route info if available */}
+                              {(() => {
+                                const route = getRouteForDestination(dest.stationName);
+                                return route ? (
+                                  <span className="text-green-600 ml-1">✓ Route disponible</span>
+                                ) : (
+                                  <span className="text-orange-600 ml-1">⚠ Pas de route</span>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <div className="text-muted-foreground text-sm">
+                      Aucune autre destination autorisée disponible pour ce véhicule
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {changeQueueError && (
+                <div className="text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/30">
+                  {changeQueueError}
+                </div>
+              )}
+            </div>
+          )}
+          
+          <DialogFooter className="mt-6">
+            <Button
+              onClick={async () => {
+                if (!selectedVehicleForQueueChange || !selectedNewDestination) return;
+                
+                setChangeQueueLoading(true);
+                setChangeQueueError(null);
+                
+                // Find the selected destination info
+                const destinationInfo = changeQueueDestinations.find(d => d.stationId === selectedNewDestination);
+                
+                console.log('🔄 Changing vehicle queue:', {
+                  licensePlate: selectedVehicleForQueueChange.licensePlate,
+                  from: selectedVehicleForQueueChange.currentDestination,
+                  to: destinationInfo?.stationName,
+                  destinationId: selectedNewDestination
+                });
+                
+                // Call the API to change queue
+                const result = await handleEnterQueueWithDestination(
+                  selectedVehicleForQueueChange.licensePlate, 
+                  selectedNewDestination,
+                  destinationInfo?.stationName
+                );
+                
+                setChangeQueueLoading(false);
+                
+                if (result?.success) {
+                  setShowChangeQueueModal(false);
+                  setSelectedVehicleForQueueChange(null);
+                  setSelectedNewDestination(null);
+                  setChangeQueueDestinations([]);
+                  
+                  // Refresh queues to show updated data
+                  refreshQueues();
+                } else if (result?.message) {
+                  setChangeQueueError(result.message);
+                }
+              }}
+              disabled={!selectedVehicleForQueueChange || !selectedNewDestination || changeQueueLoading}
+              className="bg-primary hover:bg-primary/80"
+            >
+              {changeQueueLoading ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
+              Changer la destination
+            </Button>
+            <Button variant="ghost" onClick={() => setShowChangeQueueModal(false)}>
               Annuler
             </Button>
           </DialogFooter>
@@ -509,7 +1152,18 @@ export default function QueueManagement() {
               onClick={() => setSelectedDestination(prev => prev === summary.destinationName ? null : summary.destinationName)}
             >
               <CardHeader className="pb-3">
-                <CardTitle className="text-lg font-semibold text-gray-900">{summary.destinationName}</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-semibold text-gray-900">{summary.destinationName}</CardTitle>
+                  {(() => {
+                    const route = getRouteForDestination(summary.destinationName);
+                    return route ? (
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-green-600">{formatCurrency(route.basePrice)}</p>
+                        <p className="text-xs text-muted-foreground">Prix route</p>
+                      </div>
+                    ) : null;
+                  })()}
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -535,6 +1189,51 @@ export default function QueueManagement() {
                       <p className="text-xs text-blue-600">En charge</p>
                     </div>
                   </div>
+                  
+                  {/* Booking Summary */}
+                  {(() => {
+                    const destinationQueues = queues[summary.destinationName] || [];
+                    const totalSeats = destinationQueues.reduce((sum, q: any) => sum + (q.totalSeats || 0), 0);
+                    const availableSeats = destinationQueues.reduce((sum, q: any) => sum + (q.availableSeats || 0), 0);
+                    const bookedSeats = totalSeats - availableSeats;
+                    const bookingPercentage = totalSeats > 0 ? (bookedSeats / totalSeats) * 100 : 0;
+                    const fullyBookedVehicles = destinationQueues.filter((q: any) => (q.availableSeats === 0 || q.status === 'READY')).length;
+                    
+                    return totalSeats > 0 ? (
+                      <div className="border-t pt-3 space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-600 flex items-center gap-1">
+                            <Users className="h-4 w-4" />
+                            Réservations
+                          </span>
+                          <span className="font-semibold text-gray-900">
+                            {bookedSeats}/{totalSeats}
+                          </span>
+                        </div>
+                        
+                        {/* Booking Progress */}
+                        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full transition-all duration-300 ${
+                              bookingPercentage === 100 ? 'bg-red-500' : 
+                              bookingPercentage > 75 ? 'bg-orange-500' : 
+                              bookingPercentage > 50 ? 'bg-yellow-500' : 'bg-green-500'
+                            }`}
+                            style={{ width: `${bookingPercentage}%` }}
+                          />
+                        </div>
+                        
+                        <div className="flex items-center justify-between text-xs text-gray-500">
+                          <span>{Math.round(bookingPercentage)}% réservé</span>
+                          {fullyBookedVehicles > 0 && (
+                            <span className="text-red-600 font-medium">
+                              {fullyBookedVehicles} complet{fullyBookedVehicles > 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
               </CardContent>
             </Card>
@@ -610,13 +1309,14 @@ export default function QueueManagement() {
                         >
                           <div className="space-y-3">
                             {destinationQueues.map((queue) => (
-                              <SortableQueueItem
-                                key={queue.id}
-                                queue={queue}
-                                getStatusColor={getStatusColor}
-                                formatTime={formatTime}
-                                getBasePriceForDestination={getBasePriceForDestination}
-                              />
+                                                              <SortableQueueItem
+                                  key={queue.id}
+                                  queue={queue}
+                                  getStatusColor={getStatusColor}
+                                  formatTime={formatTime}
+                                  getBasePriceForDestination={getBasePriceForDestination}
+                                  onVehicleClick={handleVehicleClick}
+                                />
                             ))}
                           </div>
                         </SortableContext>

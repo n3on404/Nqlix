@@ -405,7 +405,6 @@ export default function DriverTicketsPage() {
           <div class="ticket">
             <div class="header">
               <h2 class="company-name">NQLIX COMPANY</h2>
-              <div class="company-name">شركة لواج</div>
               <div class="bilingual-title">
                 <span class="english-title">DRIVER ENTRY TICKET</span>
                 <span class="arabic-title">تذكرة دخول السائق</span>
@@ -684,7 +683,6 @@ export default function DriverTicketsPage() {
           <div class="ticket">
             <div class="header">
               <h2 class="company-name">NQLIX COMPANY</h2>
-              <div class="company-name">شركة لواج</div>
               <div class="bilingual-title">
                 <span class="english-title">DRIVER EXIT TICKET</span>
                 <span class="arabic-title">تذكرة خروج السائق</span>
@@ -809,32 +807,34 @@ export default function DriverTicketsPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'WAITING': return 'bg-yellow-100 text-yellow-800';
-      case 'LOADING': return 'bg-blue-100 text-blue-800';
-      case 'READY': return 'bg-green-100 text-green-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'WAITING': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400';
+      case 'LOADING': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400';
+      case 'READY': return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400';
+      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400';
     }
   };
 
   const getSourceColor = (source: string) => {
-    return source === 'queue' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800';
+    return source === 'queue' 
+      ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' 
+      : 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400';
   };
 
   return (
     <div className="container mx-auto p-6">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Driver Tickets</h1>
-        <p className="text-gray-600 mt-2">Generate entry and exit tickets for drivers</p>
+        <h1 className="text-3xl font-bold text-foreground">Driver Tickets</h1>
+        <p className="text-muted-foreground mt-2">Generate entry and exit tickets for drivers</p>
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg mb-6">
+      <div className="flex space-x-1 bg-muted p-1 rounded-lg mb-6">
         <button
           onClick={() => setActiveTab('entry')}
           className={`flex-1 py-2 px-4 rounded-md font-medium transition-colors ${
             activeTab === 'entry'
-              ? 'bg-white text-blue-600 shadow-sm'
-              : 'text-gray-600 hover:text-gray-900'
+              ? 'bg-background text-primary shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           📥 Entry Tickets
@@ -843,8 +843,8 @@ export default function DriverTicketsPage() {
           onClick={() => setActiveTab('exit')}
           className={`flex-1 py-2 px-4 rounded-md font-medium transition-colors ${
             activeTab === 'exit'
-              ? 'bg-white text-red-600 shadow-sm'
-              : 'text-gray-600 hover:text-gray-900'
+              ? 'bg-background text-destructive shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           📤 Exit Tickets
@@ -865,7 +865,7 @@ export default function DriverTicketsPage() {
           <Button
             onClick={searchByCIN}
             disabled={isLoading || !cinSearch.trim()}
-            className="bg-blue-600 hover:bg-blue-700"
+            className="bg-primary hover:bg-primary/90"
           >
             {isLoading ? 'Searching...' : 'Search CIN'}
           </Button>
@@ -882,7 +882,7 @@ export default function DriverTicketsPage() {
 
         {/* General Search */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
           <Input
             type="text"
             placeholder={`Search vehicles for ${activeTab} tickets...`}
@@ -896,7 +896,7 @@ export default function DriverTicketsPage() {
       {/* Vehicles Grid */}
       <div className="mb-6">
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold">
+          <h2 className="text-xl font-semibold text-foreground">
             {activeTab === 'entry' ? 'Vehicles in Queue' : 'Vehicles for Exit'}
           </h2>
           <Button
@@ -911,14 +911,14 @@ export default function DriverTicketsPage() {
 
         {isLoadingVehicles ? (
           <div className="text-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-2 text-gray-600">Loading vehicles...</p>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+            <p className="mt-2 text-muted-foreground">Loading vehicles...</p>
           </div>
         ) : filteredVehicles.length === 0 ? (
           <div className="text-center py-8">
-            <Car className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600">No vehicles found</p>
-            <p className="text-sm text-gray-500 mt-1">
+            <Car className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <p className="text-muted-foreground">No vehicles found</p>
+            <p className="text-sm text-muted-foreground mt-1">
               {activeTab === 'entry' 
                 ? 'No vehicles are currently in queue for entry tickets'
                 : 'No vehicles found for exit tickets'
@@ -932,8 +932,8 @@ export default function DriverTicketsPage() {
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-start">
                     <div>
-                      <CardTitle className="text-lg font-mono">{vehicle.licensePlate}</CardTitle>
-                      <p className="text-sm text-gray-600">{vehicle.destinationName}</p>
+                      <CardTitle className="text-lg font-mono text-foreground">{vehicle.licensePlate}</CardTitle>
+                      <p className="text-sm text-muted-foreground">{vehicle.destinationName}</p>
                     </div>
                     <div className="flex flex-col items-end space-y-1">
                       {vehicle.source && (
@@ -953,8 +953,8 @@ export default function DriverTicketsPage() {
                   {/* Driver Info */}
                   {vehicle.driver && (
                     <div className="flex items-center space-x-2 text-sm">
-                      <User className="w-4 h-4 text-gray-500" />
-                      <span>
+                      <User className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-foreground">
                         {vehicle.driver.firstName} {vehicle.driver.lastName}
                       </span>
                     </div>
@@ -963,15 +963,15 @@ export default function DriverTicketsPage() {
                   {/* Queue Position */}
                   {vehicle.queuePosition && (
                     <div className="flex items-center space-x-2 text-sm">
-                      <Hash className="w-4 h-4 text-gray-500" />
-                      <span>Position: #{vehicle.queuePosition}</span>
+                      <Hash className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-foreground">Position: #{vehicle.queuePosition}</span>
                     </div>
                   )}
 
                   {/* Time Info */}
                   <div className="flex items-center space-x-2 text-sm">
-                    <Clock className="w-4 h-4 text-gray-500" />
-                    <span>
+                    <Clock className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-foreground">
                       {vehicle.enteredAt 
                         ? `Entered: ${formatDateTime(vehicle.enteredAt)}`
                         : vehicle.startTime 
@@ -983,8 +983,8 @@ export default function DriverTicketsPage() {
 
                   {/* Vehicle Info */}
                   <div className="flex items-center space-x-2 text-sm">
-                    <Car className="w-4 h-4 text-gray-500" />
-                    <span>
+                    <Car className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-foreground">
                       {vehicle.vehicle.model || 'Unknown'} • {vehicle.vehicle.capacity} seats
                     </span>
                   </div>
@@ -998,8 +998,8 @@ export default function DriverTicketsPage() {
                     disabled={isLoading}
                     className={`w-full ${
                       activeTab === 'entry' 
-                        ? 'bg-green-600 hover:bg-green-700' 
-                        : 'bg-red-600 hover:bg-red-700'
+                        ? 'bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700' 
+                        : 'bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700'
                     }`}
                   >
                     {isLoading ? 'Generating...' : `Generate ${activeTab === 'entry' ? 'Entry' : 'Exit'} Ticket`}
@@ -1013,10 +1013,10 @@ export default function DriverTicketsPage() {
 
       {/* Entry Ticket Printout */}
       {showEntryTicket && entryTicket && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Entry Ticket Generated</h3>
-            <div className="mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-background border border-border rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4 text-foreground">Entry Ticket Generated</h3>
+            <div className="mb-4 space-y-2 text-foreground">
               <p><strong>Vehicle:</strong> {entryTicket.licensePlate}</p>
               <p><strong>Station:</strong> {entryTicket.stationName}</p>
               <p><strong>Position:</strong> #{entryTicket.queuePosition}</p>
@@ -1039,10 +1039,10 @@ export default function DriverTicketsPage() {
 
       {/* Exit Ticket Printout */}
       {showExitTicket && exitTicket && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Exit Ticket Generated</h3>
-            <div className="mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-background border border-border rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4 text-foreground">Exit Ticket Generated</h3>
+            <div className="mb-4 space-y-2 text-foreground">
               <p><strong>Vehicle:</strong> {exitTicket.licensePlate}</p>
               <p><strong>From:</strong> {exitTicket.departureStationName}</p>
               <p><strong>To:</strong> {exitTicket.destinationStationName}</p>

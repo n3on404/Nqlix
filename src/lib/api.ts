@@ -436,6 +436,13 @@ class ApiService {
   }
 
   /**
+   * Get available destinations for booking (only destinations with available seats)
+   */
+  public async getAvailableDestinationsForBooking(): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/queue-booking/destinations', 'GET');
+  }
+
+  /**
    * Get queue by destination
    */
   public async getQueueByDestination(destinationId: string): Promise<ApiResponse<any>> {

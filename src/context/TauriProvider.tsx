@@ -1,5 +1,6 @@
-import React, { createContext, useContext, ReactNode } from 'react';
+import React, { createContext, useContext, ReactNode, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
+import { UpdateManager } from '../components/UpdateManager';
 
 interface DiscoveredServer {
   ip: string;
@@ -18,6 +19,7 @@ interface TauriContextType {
   discoverLocalServers: () => Promise<NetworkDiscoveryResult>;
   getAppVersion: () => Promise<string>;
   getAppName: () => Promise<string>;
+  showUpdateManager: boolean;
 }
 
 const TauriContext = createContext<TauriContextType>({
@@ -30,6 +32,7 @@ const TauriContext = createContext<TauriContextType>({
   getAppName: async () => {
     throw new Error('TauriProvider not initialized');
   },
+  showUpdateManager: false,
 });
 
 export const useTauri = () => {
@@ -45,6 +48,7 @@ interface TauriProviderProps {
 }
 
 export const TauriProvider: React.FC<TauriProviderProps> = ({ children }) => {
+  const [showUpdateManager, setShowUpdateManager] = React.useState(true);
   const discoverLocalServers = async (): Promise<NetworkDiscoveryResult> => {
     try {
       const result = await invoke<NetworkDiscoveryResult>('discover_local_servers');
@@ -78,10 +82,12 @@ export const TauriProvider: React.FC<TauriProviderProps> = ({ children }) => {
     discoverLocalServers,
     getAppVersion,
     getAppName,
+    showUpdateManager,
   };
 
   return (
     <TauriContext.Provider value={value}>
+      {showUpdateManager && <UpdateManager />}
       {children}
     </TauriContext.Provider>
   );

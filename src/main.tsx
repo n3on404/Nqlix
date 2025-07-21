@@ -138,6 +138,20 @@ const App: React.FC = () => {
   useAddFirewallRule();
   const { isInitialized, isInitializing, shouldShowLogin, completeInitialization } = useInit();
 
+  // Initialize WebSocket connection when app is ready
+  useEffect(() => {
+    if (isInitialized && !isInitializing) {
+      console.log('🚀 App initialized, setting up WebSocket connection...');
+      // Import and initialize WebSocket
+      import('./lib/websocket').then(({ initializeWebSocket }) => {
+        const wsClient = initializeWebSocket();
+        console.log('✅ WebSocket client initialized for app');
+      }).catch(error => {
+        console.error('❌ Failed to initialize WebSocket:', error);
+      });
+    }
+  }, [isInitialized, isInitializing]);
+
   if (isInitializing || !isInitialized) {
     return <InitScreen onInitComplete={completeInitialization} />;
   }

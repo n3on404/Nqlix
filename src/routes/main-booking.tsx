@@ -40,16 +40,56 @@ export default function MainBooking() {
   const [isLoading, setIsLoading] = useState(true);
   const [basePrice, setBasePrice] = useState<number>(0);
 
-  // Fetch available destinations from API
+  // Fetch available destinations from API (only destinations with available seats)
   const fetchDestinations = async () => {
     setIsLoading(true);
-    const response = await api.getAvailableQueues();
+    const response = await api.getAvailableDestinationsForBooking();
     if (response.success && response.data) {
-      setDestinations(response.data);
-    } else {
-      setDestinations([]);
+      // Filter out destinations with no available seats
+      const availableDestinations = response.data.filter((dest: Destination) => dest.totalAvailableSeats > 0);
+      setDestinations(availableDestinations);
+      console.log(`📍 Fetched ${availableDestinations.length} available destinations`);
     }
     setIsLoading(false);
+  };
+
+  // Optimized function to update only if destinations have actually changed
+  const updateDestinationsIfChanged = async () => {
+    try {
+      const response = await api.getAvailableDestinationsForBooking();
+      if (response.success && response.data) {
+        const availableDestinations = response.data.filter((dest: Destination) => dest.totalAvailableSeats > 0);
+        
+        // Only update if the destinations have actually changed
+        const currentIds = destinations.map((d: Destination) => d.destinationId).sort();
+        const newIds = availableDestinations.map((d: Destination) => d.destinationId).sort();
+        const currentSeats = destinations.map((d: Destination) => `${d.destinationId}:${d.totalAvailableSeats}`).sort();
+        const newSeats = availableDestinations.map((d: Destination) => `${d.destinationId}:${d.totalAvailableSeats}`).sort();
+        
+        const idsChanged = JSON.stringify(currentIds) !== JSON.stringify(newIds);
+        const seatsChanged = JSON.stringify(currentSeats) !== JSON.stringify(newSeats);
+        
+        if (idsChanged || seatsChanged) {
+          setDestinations(availableDestinations);
+          console.log(`📍 Updated destinations: ${availableDestinations.length} available (changes detected)`);
+          
+          // Check if selected destination is still valid
+          if (selectedDestination) {
+            const stillAvailable = availableDestinations.find((dest: Destination) => dest.destinationId === selectedDestination.destinationId);
+            if (!stillAvailable) {
+              console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is no longer available, clearing selection`);
+              setSelectedDestination(null);
+              setShowSuccess(false);
+            } else if (stillAvailable.totalAvailableSeats !== selectedDestination.totalAvailableSeats) {
+              setSelectedDestination(stillAvailable);
+              fetchAvailableSeats(stillAvailable.destinationId);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error updating destinations:', error);
+    }
   };
 
   // Fetch available seats and base price for selected destination
@@ -70,16 +110,149 @@ export default function MainBooking() {
     }
   };
 
-  // Initial fetch and WebSocket subscription
+  // Initial fetch and WebSocket subscription for real-time updates
   useEffect(() => {
     fetchDestinations();
     const wsClient = getWebSocketClient();
-    const queueHandler = () => fetchDestinations();
-    wsClient.on('queue_update', queueHandler);
-    return () => {
-      wsClient.removeListener('queue_update', queueHandler);
+    
+    // Handler for specific seat availability updates
+    const seatAvailabilityHandler = (data: any) => {
+      console.log('📊 Seat availability update received:', data);
+      
+      if (data?.destinationId && data?.availableSeats !== undefined) {
+        // Update specific destination in the list
+        setDestinations(prev => prev.map(dest => 
+          dest.destinationId === data.destinationId 
+            ? { ...dest, totalAvailableSeats: data.availableSeats }
+            : dest
+        ).filter(dest => dest.totalAvailableSeats > 0)); // Remove fully booked destinations
+        
+        // If this is the selected destination, update its available seats
+        if (selectedDestination?.destinationId === data.destinationId) {
+          setAvailableSeats(data.availableSeats);
+          
+          // If destination is now fully booked, clear selection
+          if (data.availableSeats === 0 && selectedDestination) {
+            console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is now fully booked, clearing selection`);
+            setSelectedDestination(null);
+            setShowSuccess(false);
+          }
+        }
+      }
     };
-  }, []);
+    
+    // Handler for destination list updates
+    const destinationListHandler = (data: any) => {
+      console.log('📍 Destination list update received:', data);
+      
+      if (data?.destinations) {
+        const availableDestinations = data.destinations.filter((dest: Destination) => dest.totalAvailableSeats > 0);
+        setDestinations(availableDestinations);
+        
+        // Check if selected destination is still available
+        if (selectedDestination) {
+          const stillAvailable = availableDestinations.find((dest: Destination) => dest.destinationId === selectedDestination.destinationId);
+          if (!stillAvailable) {
+            console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is no longer available, clearing selection`);
+            setSelectedDestination(null);
+            setShowSuccess(false);
+          } else if (stillAvailable.totalAvailableSeats !== selectedDestination.totalAvailableSeats) {
+            // Update selected destination data
+            setSelectedDestination(stillAvailable);
+            fetchAvailableSeats(stillAvailable.destinationId);
+          }
+        }
+      }
+    };
+    
+    // Legacy handlers for backward compatibility (will trigger full refresh if needed)
+    const legacyQueueHandler = () => {
+      console.log('🔄 Legacy queue update received, performing minimal refresh...');
+      // Only fetch if we don't have any destinations (fallback)
+      if (destinations.length === 0) {
+        fetchDestinations();
+      }
+    };
+    
+    const legacyBookingHandler = () => {
+      console.log('🎯 Legacy booking update received, performing minimal refresh...');
+      // Only fetch if we don't have any destinations (fallback)
+      if (destinations.length === 0) {
+        fetchDestinations();
+      }
+    };
+    
+    // Handler for booking conflicts (immediate notification)
+    const bookingConflictHandler = (data: any) => {
+      console.log('🚨 Booking conflict received:', data);
+      
+      if (data?.destinationId && data?.message) {
+        // Show immediate conflict notification
+        if (data.conflictType === 'booking_conflict') {
+          alert(`⚠️ Booking Conflict!\n\n${data.message}\n\nAnother staff member just booked these seats. Please try again with updated availability.`);
+        } else if (data.conflictType === 'insufficient_seats') {
+          alert(`⚠️ Insufficient Seats!\n\n${data.message}\n\nPlease select fewer seats or choose a different destination.`);
+        } else if (data.conflictType === 'seat_taken') {
+          alert(`⚠️ Seats No Longer Available!\n\n${data.message}\n\nThe seats you selected were just taken. Please refresh and try again.`);
+        }
+        
+        // Clear current selection if it's for the same destination
+        if (selectedDestination?.destinationId === data.destinationId) {
+          setSelectedDestination(null);
+          setShowSuccess(false);
+        }
+        
+        // Force refresh destinations to show current state
+        fetchDestinations();
+      }
+    };
+    
+    // Handler for booking success notifications
+    const bookingSuccessHandler = (data: any) => {
+      console.log('🎉 Booking success notification received:', data);
+      
+      if (data?.destinationId && data?.seatsBooked) {
+        // Only show notification if it's not our own booking (to avoid duplicate notifications)
+        if (!isProcessing && selectedDestination?.destinationId !== data.destinationId) {
+          console.log(`✅ ${data.seatsBooked} seats were just booked for ${data.destinationName} by another staff member`);
+        }
+      }
+    };
+    
+    // Listen for the new granular update events
+    wsClient.on('seat_availability_changed', seatAvailabilityHandler);
+    wsClient.on('destinations_updated', destinationListHandler);
+    wsClient.on('booking_conflict', bookingConflictHandler);
+    wsClient.on('booking_success', bookingSuccessHandler);
+    
+    // Keep legacy events for backward compatibility but with minimal impact
+    wsClient.on('queue_update', legacyQueueHandler);
+    wsClient.on('booking_update', legacyBookingHandler);
+    wsClient.on('cash_booking_updated', legacyQueueHandler);
+    wsClient.on('queue_updated', legacyQueueHandler);
+    wsClient.on('booking_created', legacyBookingHandler);
+    
+    // Periodic background sync (every 30 seconds) as fallback
+    const backgroundSyncInterval = setInterval(() => {
+      if (!wsClient.isConnected()) {
+        console.log('🔄 WebSocket disconnected, performing background sync...');
+        updateDestinationsIfChanged();
+      }
+    }, 30000);
+    
+    return () => {
+      wsClient.removeListener('seat_availability_changed', seatAvailabilityHandler);
+      wsClient.removeListener('destinations_updated', destinationListHandler);
+      wsClient.removeListener('booking_conflict', bookingConflictHandler);
+      wsClient.removeListener('booking_success', bookingSuccessHandler);
+      wsClient.removeListener('queue_update', legacyQueueHandler);
+      wsClient.removeListener('booking_update', legacyBookingHandler);
+      wsClient.removeListener('cash_booking_updated', legacyQueueHandler);
+      wsClient.removeListener('queue_updated', legacyQueueHandler);
+      wsClient.removeListener('booking_created', legacyBookingHandler);
+      clearInterval(backgroundSyncInterval);
+    };
+  }, [selectedDestination, destinations.length, isProcessing]);
 
   // When a destination is selected, fetch its available seats
   useEffect(() => {
@@ -87,6 +260,15 @@ export default function MainBooking() {
       fetchAvailableSeats(selectedDestination.destinationId);
     }
   }, [selectedDestination]);
+
+  // Check if selected destination becomes fully booked and clear selection
+  useEffect(() => {
+    if (selectedDestination && availableSeats === 0) {
+      console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is now fully booked, clearing selection`);
+      setSelectedDestination(null);
+      setShowSuccess(false);
+    }
+  }, [selectedDestination, availableSeats]);
 
   const handleDestinationSelect = (destination: Destination | null) => {
     console.log("destination", destination);
@@ -164,31 +346,56 @@ export default function MainBooking() {
     }
   }
 
-  const handleBooking = async () => {
-    if (!selectedDestination) {
-      return;
-    }
+  const handleBookingSubmit = async () => {
+    if (!selectedDestination || !currentStaff) return;
+
     setIsProcessing(true);
+
     try {
-      // Call the real booking API
-      const response = await api.bookCashTickets(selectedDestination.destinationId, bookingData.seats);
-      if (response.success && response.data && response.data.bookings) {
-        // Print a ticket for each booking
-        response.data.bookings.forEach((booking: any) => {
-          printTicket(booking);
-        });
-    setShowSuccess(true);
-    setTimeout(() => {
-          setBookingData({ seats: 1 });
-      setShowSuccess(false);
+      const response = await api.createQueueBooking({
+        destinationId: selectedDestination.destinationId,
+        seatsRequested: bookingData.seats,
+        staffId: currentStaff.id
+      });
+
+      if (response.success && response.data) {
+        console.log('✅ Booking created successfully:', response.data);
+        setShowSuccess(true);
+        
+        // Clear selection after successful booking
+        setTimeout(() => {
           setSelectedDestination(null);
-    }, 2000);
+          setShowSuccess(false);
+          setBookingData({ seats: 1 });
+        }, 3000);
       } else {
-        // Show error
-        alert(response.message || 'Échec de la réservation');
+        console.error('❌ Booking failed:', response.message);
+        
+        // Handle specific booking conflict errors
+        if (response.message?.includes('Booking conflict') || 
+            response.message?.includes('were just booked by another user')) {
+          alert(`⚠️ Booking Conflict!\n\n${response.message}\n\nThe seat availability has been updated. Please select your seats again.`);
+          
+          // Clear selection and refresh data immediately
+          setSelectedDestination(null);
+          setShowSuccess(false);
+          
+          // Force refresh of destinations to show current availability
+          fetchDestinations();
+        } else if (response.message?.includes('Not enough seats available')) {
+          alert(`⚠️ Insufficient Seats!\n\n${response.message}\n\nPlease select fewer seats or choose a different destination.`);
+          
+          // Refresh available seats for the current destination
+          if (selectedDestination) {
+            fetchAvailableSeats(selectedDestination.destinationId);
+          }
+        } else {
+          alert(`❌ Booking Failed!\n\n${response.message || 'Unknown error occurred'}\n\nPlease try again.`);
+        }
       }
-    } catch (error) {
-      alert('Échec de la réservation');
+    } catch (error: any) {
+      console.error('❌ Booking error:', error);
+      alert(`❌ Network Error!\n\nFailed to process booking: ${error.message}\n\nPlease check your connection and try again.`);
     } finally {
       setIsProcessing(false);
     }
@@ -308,14 +515,27 @@ export default function MainBooking() {
         </div>
 
         {/* Empty State */}
-        {destinations.length === 0 && (
+        {destinations.length === 0 && !isLoading && (
           <div className="text-center py-12">
             <MapPin className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-gray-600 dark:text-gray-400 mb-2">
-              Aucune destination trouvée
+              Aucune destination avec des places disponibles
             </h3>
             <p className="text-gray-500">
-              Essayez d'ajuster vos filtres pour voir les destinations disponibles
+              Toutes les destinations sont actuellement complètes. Vérifiez à nouveau dans quelques minutes.
+            </p>
+          </div>
+        )}
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="text-center py-12">
+            <Loader2 className="w-8 h-8 text-blue-600 mx-auto mb-4 animate-spin" />
+            <h3 className="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">
+              Chargement des destinations...
+            </h3>
+            <p className="text-gray-500">
+              Recherche des destinations avec des places disponibles
             </p>
           </div>
         )}
@@ -411,7 +631,7 @@ export default function MainBooking() {
                 {/* Book Button */}
                 <div className="flex items-end">
                   <Button
-                    onClick={handleBooking}
+                    onClick={handleBookingSubmit}
                     disabled={!canBook}
                     className={`w-full h-16 sm:h-20 text-base sm:text-lg`}
                     size="lg"

@@ -267,7 +267,6 @@ export function DriverExitTicket({ ticket }: { ticket: any }) {
         />
 
         <h2 style={printStyles.companyName}>NQLIX COMPANY</h2>
-        <div style={printStyles.companyName}>شركة لواج</div>
 
         <div style={printStyles.bilingualTitle}>
           <span style={printStyles.englishTitle}>DRIVER EXIT TICKET</span>

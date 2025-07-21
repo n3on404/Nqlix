@@ -263,7 +263,6 @@ export function DriverEntryTicket({ ticket }: { ticket: any }) {
         />
 
         <h2 style={printStyles.companyName}>NQLIX COMPANY</h2>
-        <div style={printStyles.companyName}>شركة لواج</div>
 
         <div style={printStyles.bilingualTitle}>
           <span style={printStyles.englishTitle}>DRIVER ENTRY TICKET</span>

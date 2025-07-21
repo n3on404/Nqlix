@@ -61,6 +61,7 @@ const SupervisorVehicleManagement: React.FC = () => {
     licensePlate: '',
     capacity: '',
     authorizedStationIds: [] as string[],
+    defaultDestinationId: '',
   });
   const [governorates, setGovernorates] = useState<{ id: string; name: string }[]>([]);
   const [delegations, setDelegations] = useState<{ id: string; name: string }[]>([]);
@@ -223,7 +224,14 @@ const SupervisorVehicleManagement: React.FC = () => {
       for (let i = 0; i < options.length; i++) {
         if (options[i].selected) values.push(options[i].value);
       }
-      setForm({ ...form, authorizedStationIds: values });
+      
+      // Clear default destination if it's no longer in authorized stations
+      const updatedForm = { ...form, authorizedStationIds: values };
+      if (form.defaultDestinationId && !values.includes(form.defaultDestinationId)) {
+        updatedForm.defaultDestinationId = '';
+      }
+      
+      setForm(updatedForm);
     } else {
       setForm({ ...form, [name]: type === 'number' ? Number(value) : value });
       if (name === 'licensePlate') {
@@ -255,6 +263,7 @@ const SupervisorVehicleManagement: React.FC = () => {
       licensePlate: form.licensePlate,
       capacity: form.capacity ? Number(form.capacity) : undefined,
       authorizedStationIds: form.authorizedStationIds,
+      defaultDestinationId: form.defaultDestinationId,
     };
     const res = await api.post<{ id: string } | undefined>('/api/vehicles/request', payload);
     if (res.success && res.data && res.data.id) {
@@ -268,7 +277,7 @@ const SupervisorVehicleManagement: React.FC = () => {
       await handleApprove(res.data.id);
       setShowRequestForm(false);
       setForm({
-        cin: '', phoneNumber: '', firstName: '', lastName: '', originGovernorateId: '', originDelegationId: '', licensePlate: '', capacity: '', authorizedStationIds: []
+        cin: '', phoneNumber: '', firstName: '', lastName: '', originGovernorateId: '', originDelegationId: '', licensePlate: '', capacity: '', authorizedStationIds: [], defaultDestinationId: ''
       });
       addNotification({ type: 'success', title: 'Créé & Approuvé', message: 'Demande de conducteur créée et approuvée.' });
       // Refresh vehicles and pending requests immediately
@@ -496,6 +505,28 @@ const SupervisorVehicleManagement: React.FC = () => {
                   <Button type="button" variant="outline" size="sm" onClick={() => setShowCreateStation(true)}>+ Nouvelle station</Button>
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">Maintenez Ctrl (Windows) ou Cmd (Mac) pour sélectionner plusieurs stations.</div>
+              </div>
+              
+              {/* Default Destination Selection */}
+              <div className="col-span-2">
+                <label className="block text-sm font-medium mb-1">Destination par défaut</label>
+                <select 
+                  name="defaultDestinationId" 
+                  value={form.defaultDestinationId} 
+                  onChange={handleFormChange} 
+                  className="w-full border rounded p-2"
+                  disabled={form.authorizedStationIds.length === 0}
+                >
+                  <option value="">Sélectionner la destination par défaut (optionnel)</option>
+                  {stations
+                    .filter(s => form.authorizedStationIds.includes(s.id))
+                    .map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                </select>
+                <div className="text-xs text-muted-foreground mt-1">
+                  La destination par défaut sera utilisée automatiquement lors de l'ajout à la file d'attente.
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-4">
