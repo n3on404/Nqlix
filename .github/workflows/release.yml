@@ -40,14 +40,14 @@ jobs:
           if (-not (Test-Path $keyDir)) {
             New-Item -ItemType Directory -Path $keyDir -Force
           }
-          echo "$env:TAURI_SIGNING_PRIVATE_KEY" | Out-File -FilePath $keyPath -Encoding utf8
+          echo "$env:TAURI_PRIVATE_KEY" | Out-File -FilePath $keyPath -Encoding utf8
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
 
       - name: Build Tauri app
         run: pnpm tauri build
         env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
       - name: List build artifacts (for debugging)

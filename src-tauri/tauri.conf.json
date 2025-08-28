@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Nqlix",
-    "version": "0.0.8"
+    "version": "0.0.10"
   },
   "tauri": {
     "allowlist": {
@@ -21,7 +21,7 @@
     },
     "bundle": {
       "active": true,
-      "targets": ["msi", "nsis"],
+      "targets": ["msi", "nsis", "updater"],
       "identifier": "com.nqlix.desktop",
       "icon": [
         "icons/32x32.png",
@@ -33,14 +33,11 @@
     },
     "updater": {
       "active": true,
-      "dialog": true,
       "endpoints": [
-        "https://api.github.com/repos/Samer-Gassouma/Nqlix/releases/latest"
+        "https://tunimove.vercel.app/api/updater/nqlix"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2RTY1NUE2MTA1RkRFNUEKUldSYTNsOFFwbFhtbHE1Nm5pc1J5QStuQk5yN2pmVEorS2RSYUtTd3JWakJYTEdlTndHUFFYeVEK",
-      "windows": {
-        "installMode": "passive"
-      }
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2RTY1NUE2MTA1RkRFNUEKUldSYTNsOFFwbFhtbHE1Nm5pc1J5QStuQk5yN2pmVEorS2RSYUtTd3JWakJYTEdlTndHUFFYeVEK"
     },
     "security": {
       "csp": "default-src blob: data: filesystem: ws: http: https: 'unsafe-eval' 'unsafe-inline';"
