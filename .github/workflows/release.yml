@@ -54,15 +54,28 @@ jobs:
         run: |
           Write-Host "Listing build artifacts:"
           Get-ChildItem -Recurse src-tauri/target/release/bundle/ | Select-Object FullName
+          
+          Write-Host "`nChecking for updater files:"
+          Write-Host "MSI Updater files:"
+          Get-ChildItem src-tauri/target/release/bundle/msi/ -Name | Where-Object { $_ -like "*.zip*" }
+          Write-Host "NSIS Updater files:"
+          Get-ChildItem src-tauri/target/release/bundle/nsis/ -Name | Where-Object { $_ -like "*.zip*" }
+          
+          Write-Host "`nFull MSI directory contents:"
+          Get-ChildItem src-tauri/target/release/bundle/msi/ -Name
+          Write-Host "`nFull NSIS directory contents:"
+          Get-ChildItem src-tauri/target/release/bundle/nsis/ -Name
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.zip
+            src-tauri/target/release/bundle/msi/*.zip.sig
             src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/updater/*.json
-            src-tauri/target/release/bundle/updater/*.sig
+            src-tauri/target/release/bundle/nsis/*.zip
+            src-tauri/target/release/bundle/nsis/*.zip.sig
           draft: false
           prerelease: false
           body: |
@@ -79,5 +92,9 @@ jobs:
             ## Auto-Update
             
             The application will automatically check for updates and notify you when a new version is available.
+            
+            ### Updater Files Included:
+            - **MSI Updater**: `.msi.zip` and `.msi.zip.sig` files
+            - **NSIS Updater**: `.exe.zip` and `.exe.zip.sig` files
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
