@@ -37,7 +37,7 @@
         "https://tunimove.vercel.app/api/updater/nqlix"
       ],
       "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk2RTY1NUE2MTA1RkRFNUEKUldSYTNsOFFwbFhtbHE1Nm5pc1J5QStuQk5yN2pmVEorS2RSYUtTd3JWakJYTEdlTndHUFFYeVEK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE3NjQ1QzgxQUIzQTg3OEMKUldTTWh6cXJnVnhrRnkrWXVMR0R2S0hqQnY5UUxYODh6ZzJlRlpuRG0rN05LMHliZk1pQit1UVYK"
     },
     "security": {
       "csp": "default-src blob: data: filesystem: ws: http: https: 'unsafe-eval' 'unsafe-inline';"
