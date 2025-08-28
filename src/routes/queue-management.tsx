@@ -42,6 +42,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { useNotifications } from "../context/NotificationProvider";
+import { usePaymentNotifications } from "../components/NotificationToast";
 import { getWebSocketClient, initializeWebSocket } from "../lib/websocket";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
@@ -225,6 +226,12 @@ export default function QueueManagement() {
     updateVehicleStatus,
   } = useQueue();
   const { addNotification } = useNotifications();
+  const { 
+    notifyPaymentSuccess, 
+    notifyPaymentFailed, 
+    notifySeatUpdate, 
+    notifyVehicleReady 
+  } = usePaymentNotifications();
   const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null); // vehicle id or action
@@ -254,40 +261,59 @@ export default function QueueManagement() {
   // Helper to get base price for a destination - updated to work with route table
   function getBasePriceForDestination(destinationName: string) {
     // Try exact match first
-    let route = routes.find(r => 
+    let route = routes.find(r =>
       normalizeStationName(r.stationName) === normalizeStationName(destinationName)
     );
-    
+
     // If no exact match, try with normalized names (remove common prefixes/suffixes)
     if (!route) {
       const normalizedDestination = normalizeDestinationName(destinationName);
-      route = routes.find(r => 
+      route = routes.find(r =>
         normalizeDestinationName(r.stationName) === normalizedDestination
       );
     }
-    
+
     // If still no match, try partial matching
     if (!route) {
-      route = routes.find(r => 
+      route = routes.find(r =>
         normalizeStationName(r.stationName).includes(normalizeStationName(destinationName)) ||
         normalizeStationName(destinationName).includes(normalizeStationName(r.stationName))
       );
     }
-    
+
     return route?.basePrice;
   }
+
+  // Auto-fetch detailed queue data for destinations that have vehicles but no detailed data
+  useEffect(() => {
+    if (queueSummaries.length > 0 && !isLoading) {
+      console.log('🔍 Checking for destinations needing detailed data fetch...');
+      queueSummaries.forEach(summary => {
+        const normalizedDestination = normalizeDestinationName(summary.destinationName);
+        const destinationQueues = queues[normalizedDestination] || [];
+
+        console.log(`📊 ${normalizedDestination}: Summary shows ${summary.totalVehicles} vehicles, detailed data has ${destinationQueues.length} items`);
+
+        // If summary shows vehicles but we don't have detailed data, fetch it
+        if (summary.totalVehicles > 0 && destinationQueues.length === 0) {
+          console.log(`🔍 Auto-fetching detailed data for ${normalizedDestination} (ID: ${summary.destinationId})`);
+          fetchQueueForDestination(summary.destinationId);
+        }
+      });
+    }
+  }, [queueSummaries, queues, isLoading, fetchQueueForDestination]);
 
   // Enhanced function to get route info for a destination
   function getRouteForDestination(destinationName: string) {
     // Try exact match first
-    let route = routes.find(r => 
+    let route = routes.find(r =>
       normalizeStationName(r.stationName) === normalizeStationName(destinationName)
     );
-    
+
     // If no exact match, try with normalized names
     if (!route) {
       const normalizedDestination = normalizeDestinationName(destinationName);
-      route = routes.find(r => 
+      route = routes.find(r =>
         normalizeDestinationName(r.stationName) === normalizedDestination
       );
     }
@@ -491,6 +517,62 @@ export default function QueueManagement() {
         }
       }
     };
+
+    // Payment confirmation handler for queue management
+    const paymentHandler = (msg: any) => {
+      if (msg?.payload?.source === 'payment_confirmation') {
+        const paymentData = msg.payload;
+        
+        // Show payment success notification
+        notifyPaymentSuccess({
+          verificationCode: paymentData.verificationCode,
+          totalAmount: paymentData.totalAmount,
+          seatsBooked: paymentData.seatsBooked,
+          vehicleLicensePlate: paymentData.vehicle.licensePlate,
+          destinationName: paymentData.vehicle.destination,
+          paymentReference: paymentData.onlineTicketId || 'N/A'
+        });
+
+        // Refresh queue data to show updated seat counts
+        refreshQueues();
+      }
+    };
+
+    // Seat availability change handler for queue management
+    const seatHandler = (msg: any) => {
+      if (msg?.payload?.type === 'seat_availability_changed') {
+        const seatData = msg.payload;
+        
+        // Find the vehicle in current state to get old seat count
+        const currentVehicle = Object.values(queues).flat().find((q: any) => q.licensePlate === seatData.vehicleLicensePlate);
+        if (currentVehicle) {
+          notifySeatUpdate({
+            vehicleLicensePlate: seatData.vehicleLicensePlate,
+            destinationName: seatData.destinationName,
+            availableSeats: seatData.availableSeats,
+            totalSeats: seatData.totalSeats,
+            oldAvailableSeats: currentVehicle.availableSeats
+          });
+        }
+
+        // Refresh queue data
+        refreshQueues();
+      }
+    };
+
+    // Vehicle status change handler for queue management
+    const vehicleStatusChangeHandler = (msg: any) => {
+      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
+        notifyVehicleReady({
+          licensePlate: msg.payload.licensePlate,
+          destinationName: msg.payload.destinationName,
+          totalSeats: msg.payload.totalSeats
+        });
+
+        // Refresh queue data
+        refreshQueues();
+      }
+    };
     
     // Listen for multiple event types that could indicate queue/booking changes
     wsClient.on('queue_update', queueHandler);
@@ -500,6 +582,9 @@ export default function QueueManagement() {
     wsClient.on('booking_created', bookingCreatedHandler);
     wsClient.on('cash_booking_updated', queueUpdatedHandler);
     wsClient.on('financial_update', queueUpdatedHandler);
+    wsClient.on('payment_confirmation', paymentHandler);
+    wsClient.on('seat_availability_changed', seatHandler);
+    wsClient.on('vehicle_status_changed', vehicleStatusChangeHandler);
     
     return () => {
       wsClient.removeListener('queue_update', queueHandler);
@@ -509,6 +594,9 @@ export default function QueueManagement() {
       wsClient.removeListener('booking_created', bookingCreatedHandler);
       wsClient.removeListener('cash_booking_updated', queueUpdatedHandler);
       wsClient.removeListener('financial_update', queueUpdatedHandler);
+      wsClient.removeListener('payment_confirmation', paymentHandler);
+      wsClient.removeListener('seat_availability_changed', seatHandler);
+      wsClient.removeListener('vehicle_status_changed', vehicleStatusChangeHandler);
     };
   }, [isWebSocketConnected, addNotification, refreshQueues]);
 

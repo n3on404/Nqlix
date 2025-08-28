@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Nqlix",
-    "version": "0.0.3"
+    "version": "0.0.6"
   },
   "tauri": {
     "allowlist": {
@@ -33,9 +33,9 @@
     },
     "updater": {
       "active": true,
-      "dialog": false,
+      "dialog": true,
       "endpoints": [
-        "https://172.31.152.73:3000/api/releases/latest.json"
+        "https://api.github.com/repos/Samer-Gassouma/Nqlix/releases/latest"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4QjhFODVGNjBDNjQ3NjQKUldTTGZNaGRKWnJLbWJxVmJPbDVJWmVPZmVBWGJrVGRPTGVxVmJVVGJxTGJxbXBBUXVYMXBLWnkK",
       "windows": {
@@ -50,8 +50,8 @@
         "fullscreen": false,
         "resizable": true,
         "title": "Nqlix",
-        "width": 800,
-        "height": 600
+        "height": 600,
+        "width": 800
       }
     ]
   }

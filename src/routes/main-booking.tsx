@@ -18,8 +18,10 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { getWebSocketClient } from '../lib/websocket';
+import { usePaymentNotifications } from '../components/NotificationToast';
 import { TicketPrintout } from '../components/TicketPrintout';
 import { renderToString } from 'react-dom/server';
+import { printerService, type TicketData } from '../services/printerService';
 
 interface Destination {
   destinationId: string;
@@ -31,6 +33,12 @@ interface Destination {
 export default function MainBooking() {
   const { currentStaff } = useAuth();
   const { systemStatus } = useInit();
+  const { 
+    notifyPaymentSuccess, 
+    notifyPaymentFailed, 
+    notifySeatUpdate, 
+    notifyVehicleReady 
+  } = usePaymentNotifications();
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null);
   const [availableSeats, setAvailableSeats] = useState<number>(1);
@@ -218,12 +226,70 @@ export default function MainBooking() {
         }
       }
     };
+
+    // Payment confirmation handler for main booking
+    const paymentHandler = (msg: any) => {
+      if (msg?.payload?.source === 'payment_confirmation') {
+        const paymentData = msg.payload;
+        
+        // Show payment success notification
+        notifyPaymentSuccess({
+          verificationCode: paymentData.verificationCode,
+          totalAmount: paymentData.totalAmount,
+          seatsBooked: paymentData.seatsBooked,
+          vehicleLicensePlate: paymentData.vehicle.licensePlate,
+          destinationName: paymentData.vehicle.destination,
+          paymentReference: paymentData.onlineTicketId || 'N/A'
+        });
+
+        // Refresh destinations to show updated seat counts
+        fetchDestinations();
+      }
+    };
+
+    // Seat availability change handler for main booking
+    const seatHandler = (msg: any) => {
+      if (msg?.payload?.type === 'seat_availability_changed') {
+        const seatData = msg.payload;
+        
+        // Find the destination in current state to get old seat count
+        const currentDestination = destinations.find((d: Destination) => d.destinationName === seatData.destinationName);
+        if (currentDestination) {
+          notifySeatUpdate({
+            vehicleLicensePlate: seatData.vehicleLicensePlate,
+            destinationName: seatData.destinationName,
+            availableSeats: seatData.availableSeats,
+            totalSeats: seatData.totalSeats,
+            oldAvailableSeats: currentDestination.totalAvailableSeats
+          });
+        }
+
+        // Refresh destinations
+        fetchDestinations();
+      }
+    };
+
+    // Vehicle status change handler for main booking
+    const vehicleStatusHandler = (msg: any) => {
+      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
+        notifyVehicleReady({
+          licensePlate: msg.payload.licensePlate,
+          destinationName: msg.payload.destinationName,
+          totalSeats: msg.payload.totalSeats
+        });
+
+        // Refresh destinations
+        fetchDestinations();
+      }
+    };
     
     // Listen for the new granular update events
     wsClient.on('seat_availability_changed', seatAvailabilityHandler);
     wsClient.on('destinations_updated', destinationListHandler);
     wsClient.on('booking_conflict', bookingConflictHandler);
     wsClient.on('booking_success', bookingSuccessHandler);
+    wsClient.on('payment_confirmation', paymentHandler);
+    wsClient.on('vehicle_status_changed', vehicleStatusHandler);
     
     // Keep legacy events for backward compatibility but with minimal impact
     wsClient.on('queue_update', legacyQueueHandler);
@@ -245,6 +311,8 @@ export default function MainBooking() {
       wsClient.removeListener('destinations_updated', destinationListHandler);
       wsClient.removeListener('booking_conflict', bookingConflictHandler);
       wsClient.removeListener('booking_success', bookingSuccessHandler);
+      wsClient.removeListener('payment_confirmation', paymentHandler);
+      wsClient.removeListener('vehicle_status_changed', vehicleStatusHandler);
       wsClient.removeListener('queue_update', legacyQueueHandler);
       wsClient.removeListener('booking_update', legacyBookingHandler);
       wsClient.removeListener('cash_booking_updated', legacyQueueHandler);
@@ -286,8 +354,66 @@ export default function MainBooking() {
     return basePrice * bookingData.seats;
   };
 
-  // Add a printTicket function (stub for now)
-  function printTicket(booking: any) {
+  // Print ticket using the new printer service
+  async function printTicket(booking: any) {
+    try {
+      // Check if printer is available
+      const isPrinterAvailable = await printerService.isPrinterAvailable();
+      if (!isPrinterAvailable) {
+        alert('Aucune imprimante disponible. Veuillez connecter une imprimante et réessayer.');
+        return;
+      }
+
+      // Prepare ticket data
+      const ticketData: TicketData = {
+        ticketId: booking.ticketId || booking.verificationCode || booking.id || 'UNKNOWN',
+        customerName: booking.customerName,
+        startStationName: booking.startStationName || 'CURRENT STATION',
+        destinationName: booking.destinationName,
+        vehicleLicensePlate: booking.vehicleLicensePlate,
+        seatsBooked: booking.seatsBooked || booking.seats || 1,
+        seatNumber: booking.seatNumber,
+        totalAmount: booking.totalAmount || (booking.basePrice * (booking.seatsBooked || 1)) || 0,
+        verificationCode: booking.verificationCode,
+        bookingTime: booking.bookingTime || booking.createdAt || new Date().toISOString(),
+        qrCodeData: booking.verificationCode || booking.id // Use verification code for QR
+      };
+
+      // Print the ticket
+      await printerService.printTicket(ticketData);
+      
+      // Show success message
+      alert('Ticket imprimé avec succès!');
+      
+    } catch (error) {
+      console.error('Print error:', error);
+      alert(`Erreur lors de l'impression: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+      
+      // Fallback to browser print if tauri print fails
+      console.log('Falling back to browser print...');
+      printTicketFallback(booking);
+    }
+  }
+
+  // Test printer functionality
+  async function testPrinter() {
+    try {
+      const isPrinterAvailable = await printerService.isPrinterAvailable();
+      if (!isPrinterAvailable) {
+        alert('Aucune imprimante disponible. Veuillez connecter une imprimante et réessayer.');
+        return;
+      }
+
+      await printerService.printTestPage();
+      alert('Page de test imprimée avec succès!');
+    } catch (error) {
+      console.error('Printer test error:', error);
+      alert(`Erreur lors du test d'impression: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+    }
+  }
+
+  // Fallback browser print function
+  function printTicketFallback(booking: any) {
     // Render the ticket as HTML
     const html = renderToString(<TicketPrintout booking={booking} />);
     // Open a new window and print
@@ -416,7 +542,7 @@ export default function MainBooking() {
               </p>
               
               {/* Printer Status Indicator */}
-              <div className="mt-2">
+              <div className="mt-2 flex items-center space-x-3">
                 <div className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg text-xs font-medium ${
                   systemStatus.printerConnected 
                     ? 'bg-green-100 text-green-700 border border-green-200' 
@@ -434,6 +560,18 @@ export default function MainBooking() {
                     </>
                   )}
                 </div>
+                
+                {/* Test Printer Button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={testPrinter}
+                  className="text-xs h-7 px-2"
+                  disabled={!systemStatus.printerConnected}
+                >
+                  <Printer className="h-3 w-3 mr-1" />
+                  Test
+                </Button>
               </div>
             </div>
             

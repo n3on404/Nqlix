@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button';
 import { useAuth } from '../context/AuthProvider';
 import { useDashboard } from '../context/DashboardProvider';
 import { useNotifications } from '../context/NotificationProvider';
+import { usePaymentNotifications } from '../components/NotificationToast';
 import { useSupervisorMode } from "../context/SupervisorModeProvider";
 import { 
   DollarSign, TrendingUp, BarChart3, MapPin, User, Clock, RefreshCw, Car, Users, 
@@ -93,6 +94,12 @@ export default function Dashboard() {
 
 function StaffDashboard() {
   const { addNotification } = useNotifications();
+  const { 
+    notifyPaymentSuccess, 
+    notifyPaymentFailed, 
+    notifySeatUpdate, 
+    notifyVehicleReady 
+  } = usePaymentNotifications();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [queues, setQueues] = useState<QueueData[]>([]);
   const [vehicles, setVehicles] = useState<VehicleData[]>([]);
@@ -196,9 +203,68 @@ function StaffDashboard() {
       }
     };
 
+    // Payment confirmation handler
+    const paymentHandler = (msg: any) => {
+      if (msg?.payload?.source === 'payment_confirmation') {
+        const paymentData = msg.payload;
+        
+        // Show payment success notification
+        notifyPaymentSuccess({
+          verificationCode: paymentData.verificationCode,
+          totalAmount: paymentData.totalAmount,
+          seatsBooked: paymentData.seatsBooked,
+          vehicleLicensePlate: paymentData.vehicle.licensePlate,
+          destinationName: paymentData.vehicle.destination,
+          paymentReference: paymentData.onlineTicketId || 'N/A'
+        });
+
+        // Refresh dashboard data to show updated seat counts
+        fetchDashboardData();
+      }
+    };
+
+    // Seat availability change handler
+    const seatHandler = (msg: any) => {
+      if (msg?.payload?.type === 'seat_availability_changed') {
+        const seatData = msg.payload;
+        
+        // Find the vehicle in current state to get old seat count
+        const currentVehicle = vehicles.find(v => v.licensePlate === seatData.vehicleLicensePlate);
+        if (currentVehicle) {
+          notifySeatUpdate({
+            vehicleLicensePlate: seatData.vehicleLicensePlate,
+            destinationName: seatData.destinationName,
+            availableSeats: seatData.availableSeats,
+            totalSeats: seatData.totalSeats,
+            oldAvailableSeats: currentVehicle.availableSeats
+          });
+        }
+
+        // Refresh dashboard data
+        fetchDashboardData();
+      }
+    };
+
+    // Vehicle status change handler
+    const vehicleStatusHandler = (msg: any) => {
+      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
+        notifyVehicleReady({
+          licensePlate: msg.payload.licensePlate,
+          destinationName: msg.payload.destinationName,
+          totalSeats: msg.payload.totalSeats
+        });
+
+        // Refresh dashboard data
+        fetchDashboardData();
+      }
+    };
+
     wsClient.on('queue_update', queueHandler);
     wsClient.on('booking_update', bookingHandler);
     wsClient.on('vehicle_update', vehicleHandler);
+    wsClient.on('payment_confirmation', paymentHandler);
+    wsClient.on('seat_availability_changed', seatHandler);
+    wsClient.on('vehicle_status_changed', vehicleStatusHandler);
 
     // Auto-refresh every 30 seconds if not connected
     const refreshInterval = setInterval(() => {
@@ -213,6 +279,9 @@ function StaffDashboard() {
       wsClient.removeListener('queue_update', queueHandler);
       wsClient.removeListener('booking_update', bookingHandler);
       wsClient.removeListener('vehicle_update', vehicleHandler);
+      wsClient.removeListener('payment_confirmation', paymentHandler);
+      wsClient.removeListener('seat_availability_changed', seatHandler);
+      wsClient.removeListener('vehicle_status_changed', vehicleStatusHandler);
       clearInterval(refreshInterval);
     };
   }, [fetchDashboardData, addNotification]);
@@ -518,6 +587,12 @@ function StaffDashboard() {
 }
 
 function SupervisorDashboard() {
+  const { 
+    notifyPaymentSuccess, 
+    notifyPaymentFailed, 
+    notifySeatUpdate, 
+    notifyVehicleReady 
+  } = usePaymentNotifications();
   const [financialData, setFinancialData] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -585,6 +660,58 @@ function SupervisorDashboard() {
       setLastUpdate(new Date());
     };
 
+    // Payment confirmation handler for supervisor
+    const handlePaymentConfirmation = (msg: any) => {
+      if (msg?.payload?.source === 'payment_confirmation') {
+        const paymentData = msg.payload;
+        
+        // Show payment success notification
+        notifyPaymentSuccess({
+          verificationCode: paymentData.verificationCode,
+          totalAmount: paymentData.totalAmount,
+          seatsBooked: paymentData.seatsBooked,
+          vehicleLicensePlate: paymentData.vehicle.licensePlate,
+          destinationName: paymentData.vehicle.destination,
+          paymentReference: paymentData.onlineTicketId || 'N/A'
+        });
+
+        // Refresh financial data
+        loadSupervisorData();
+      }
+    };
+
+    // Seat availability change handler for supervisor
+    const handleSeatUpdate = (msg: any) => {
+      if (msg?.payload?.type === 'seat_availability_changed') {
+        const seatData = msg.payload;
+        
+        notifySeatUpdate({
+          vehicleLicensePlate: seatData.vehicleLicensePlate,
+          destinationName: seatData.destinationName,
+          availableSeats: seatData.availableSeats,
+          totalSeats: seatData.totalSeats,
+          oldAvailableSeats: seatData.oldAvailableSeats || 0
+        });
+
+        // Refresh data
+        loadSupervisorData();
+      }
+    };
+
+    // Vehicle status change handler for supervisor
+    const handleVehicleStatusChange = (msg: any) => {
+      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
+        notifyVehicleReady({
+          licensePlate: msg.payload.licensePlate,
+          destinationName: msg.payload.destinationName,
+          totalSeats: msg.payload.totalSeats
+        });
+
+        // Refresh data
+        loadSupervisorData();
+      }
+    };
+
     // Check initial connection state
     setIsConnected(wsClient.isConnected());
 
@@ -594,6 +721,9 @@ function SupervisorDashboard() {
     wsClient.on('state_changed', handleStateChange);
     wsClient.on('financial_update', handleFinancialUpdate);
     wsClient.on('dashboard_update', handleDashboardUpdate);
+    wsClient.on('payment_confirmation', handlePaymentConfirmation);
+    wsClient.on('seat_availability_changed', handleSeatUpdate);
+    wsClient.on('vehicle_status_changed', handleVehicleStatusChange);
     
     // Load initial data
     loadSupervisorData();
@@ -615,6 +745,9 @@ function SupervisorDashboard() {
       wsClient.removeListener('state_changed', handleStateChange);
       wsClient.removeListener('financial_update', handleFinancialUpdate);
       wsClient.removeListener('dashboard_update', handleDashboardUpdate);
+      wsClient.removeListener('payment_confirmation', handlePaymentConfirmation);
+      wsClient.removeListener('seat_availability_changed', handleSeatUpdate);
+      wsClient.removeListener('vehicle_status_changed', handleVehicleStatusChange);
       clearInterval(refreshInterval);
     };
   }, []);

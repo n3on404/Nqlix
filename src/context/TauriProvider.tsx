@@ -48,7 +48,7 @@ interface TauriProviderProps {
 }
 
 export const TauriProvider: React.FC<TauriProviderProps> = ({ children }) => {
-  const [showUpdateManager, setShowUpdateManager] = React.useState(true);
+  const [showUpdateManager, setShowUpdateManager] = React.useState(false);
   const discoverLocalServers = async (): Promise<NetworkDiscoveryResult> => {
     try {
       const result = await invoke<NetworkDiscoveryResult>('discover_local_servers');

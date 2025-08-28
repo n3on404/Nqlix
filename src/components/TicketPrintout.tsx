@@ -57,7 +57,6 @@ export function TicketPrintout({ booking }: { booking: any }) {
     datetime: {
       textAlign: 'center' as const,
       fontSize: '10px',
-      color: '#333',
       marginBottom: '8px'
     },
 
@@ -108,7 +107,6 @@ export function TicketPrintout({ booking }: { booking: any }) {
       textAlign: 'center' as const,
       margin: '8px 0',
       padding: '6px',
-      backgroundColor: '#f8f8f8',
       border: '1px solid #000'
     },
 
@@ -137,7 +135,6 @@ export function TicketPrintout({ booking }: { booking: any }) {
       textAlign: 'center' as const,
       margin: '8px 0',
       padding: '6px',
-      backgroundColor: '#f0f0f0',
       border: '1px solid #000'
     },
 
@@ -156,8 +153,7 @@ export function TicketPrintout({ booking }: { booking: any }) {
       margin: '8px 0',
       padding: '6px',
       border: '2px solid #000',
-      borderRadius: '2px',
-      backgroundColor: '#f0f0f0'
+      borderRadius: '2px'
     },
 
     qrSection: {
@@ -168,14 +164,12 @@ export function TicketPrintout({ booking }: { booking: any }) {
     qrPlaceholder: {
       width: '50px',
       height: '50px',
-      backgroundColor: '#f0f0f0',
       margin: '4px auto',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       fontSize: '8px',
-      color: '#666',
-      border: '1px solid #ccc',
+      border: '1px solid #000',
       fontFamily: 'monospace'
     },
 
@@ -192,8 +186,7 @@ export function TicketPrintout({ booking }: { booking: any }) {
       textAlign: 'center' as const,
       margin: '6px 0',
       padding: '4px',
-      backgroundColor: '#f8f8f8',
-      border: '1px solid #ccc'
+      border: '1px solid #000'
     },
 
     totalPrice: {
@@ -208,16 +201,14 @@ export function TicketPrintout({ booking }: { booking: any }) {
       fontFamily: 'monospace',
       margin: '4px 0',
       padding: '2px',
-      backgroundColor: '#f0f0f0',
-      border: '1px solid #ccc'
+      border: '1px solid #000'
     },
 
     passengerSection: {
       textAlign: 'center' as const,
       margin: '6px 0',
       padding: '4px',
-      backgroundColor: '#f8f8f8',
-      border: '1px solid #ccc'
+      border: '1px solid #000'
     },
 
     passengerName: {
@@ -425,7 +416,7 @@ export function TicketPrintout({ booking }: { booking: any }) {
         <div style={printStyles.qrPlaceholder}>
           QR CODE
         </div>
-        <div style={{ fontSize: '8px', color: '#666' }}>
+        <div style={{ fontSize: '8px' }}>
           <div style={printStyles.bilingualTitle}>
             <span>Scan for verification</span>
             <span style={{ direction: 'rtl', paddingRight: '12px' }}>امسح للتحقق</span>

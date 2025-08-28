@@ -306,6 +306,7 @@ fn get_network_prefix(ip: &IpAddr) -> String {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_printer::init())
         .invoke_handler(tauri::generate_handler![
             greet,
             get_app_version,

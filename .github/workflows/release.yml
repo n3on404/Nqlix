@@ -64,5 +64,19 @@ jobs:
             src-tauri/target/release/bundle/updater/*.sig
           draft: false
           prerelease: false
+          body: |
+            ## What's Changed
+            
+            This release includes the latest updates for Nqlix Desktop Application.
+            
+            ## Installation
+            
+            Download the appropriate installer for your system:
+            - **Windows (MSI)**: Use the `.msi` file for automatic installation
+            - **Windows (NSIS)**: Use the `.exe` file for manual installation
+            
+            ## Auto-Update
+            
+            The application will automatically check for updates and notify you when a new version is available.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

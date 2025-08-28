@@ -12,6 +12,7 @@ import {
 import api from '../lib/api';
 import { TicketPrintout } from '../components/TicketPrintout';
 import { renderToString } from 'react-dom/server';
+import { printerService, type TicketData } from '../services/printerService';
 
 type VerificationStatus = 'success' | 'not_found' | 'already_verified' | 'error';
 
@@ -36,63 +37,94 @@ export default function VerifyTicket() {
   const handlePrintTicket = async (bookingData: any) => {
     setIsPrinting(true);
     try {
-      // Print the ticket using the TicketPrintout component
-      const html = renderToString(<TicketPrintout booking={bookingData} />);
-      const printWindow = window.open('', '', 'width=400,height=600');
-      if (printWindow) {
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>Ticket Printout</title>
-              <style>
-                body {
-                  margin: 0;
-                  padding: 0;
-                  font-family: Arial, sans-serif;
-                }
-                @media print {
-                  @page {
-                    size: 80mm auto;
-                    margin: 2mm;
-                  }
-                  body * {
-                    visibility: hidden;
-                  }
-                  .ticket-printout, .ticket-printout * {
-                    visibility: visible;
-                  }
-                  .ticket-printout {
-                    position: absolute;
-                    left: 0;
-                    top: 0;
-                    width: 100% !important;
-                    box-shadow: none !important;
-                    border: none !important;
-                  }
-                }
-              </style>
-            </head>
-            <body>
-              ${html}
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
-        printWindow.focus();
-        
-        // Wait a bit for the content to load before printing
-        setTimeout(() => {
-          printWindow.print();
-          setTimeout(() => {
-            printWindow.close();
-          }, 1000);
-        }, 500);
+      // Check if printer is available
+      const isPrinterAvailable = await printerService.isPrinterAvailable();
+      if (!isPrinterAvailable) {
+        console.warn('No printer available, falling back to browser print');
+        await printTicketFallback(bookingData);
+        return;
       }
+
+      // Prepare ticket data
+      const ticketData: TicketData = {
+        ticketId: bookingData.ticketId || bookingData.verificationCode || bookingData.id || 'UNKNOWN',
+        customerName: bookingData.customerName,
+        startStationName: bookingData.startStationName || 'CURRENT STATION',
+        destinationName: bookingData.destinationName,
+        vehicleLicensePlate: bookingData.vehicleLicensePlate,
+        seatsBooked: bookingData.seatsBooked || bookingData.seats || 1,
+        seatNumber: bookingData.seatNumber,
+        totalAmount: bookingData.totalAmount || (bookingData.basePrice * (bookingData.seatsBooked || 1)) || 0,
+        verificationCode: bookingData.verificationCode,
+        bookingTime: bookingData.bookingTime || bookingData.createdAt || new Date().toISOString(),
+        qrCodeData: bookingData.verificationCode || bookingData.id
+      };
+
+      // Print using tauri printer
+      await printerService.printTicket(ticketData);
+      console.log('Ticket printed successfully with printer service');
+
     } catch (error) {
-      console.error('Printing failed:', error);
+      console.error('Printer service failed, falling back to browser print:', error);
+      await printTicketFallback(bookingData);
     } finally {
       setIsPrinting(false);
+    }
+  };
+
+  const printTicketFallback = async (bookingData: any) => {
+    // Fallback to browser print
+    const html = renderToString(<TicketPrintout booking={bookingData} />);
+    const printWindow = window.open('', '', 'width=400,height=600');
+    if (printWindow) {
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Ticket Printout</title>
+            <style>
+              body {
+                margin: 0;
+                padding: 0;
+                font-family: Arial, sans-serif;
+              }
+              @media print {
+                @page {
+                  size: 80mm auto;
+                  margin: 2mm;
+                }
+                body * {
+                  visibility: hidden;
+                }
+                .ticket-printout, .ticket-printout * {
+                  visibility: visible;
+                }
+                .ticket-printout {
+                  position: absolute;
+                  left: 0;
+                  top: 0;
+                  width: 100% !important;
+                  box-shadow: none !important;
+                  border: none !important;
+                }
+              }
+            </style>
+          </head>
+          <body>
+            ${html}
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      
+      // Wait a bit for the content to load before printing
+      setTimeout(() => {
+        printWindow.print();
+        setTimeout(() => {
+          printWindow.close();
+        }, 1000);
+      }, 500);
     }
   };
 

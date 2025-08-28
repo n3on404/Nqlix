@@ -6,7 +6,9 @@ import {
   AlertCircle, 
   Info, 
   X,
-  Truck
+  Truck,
+  DollarSign,
+  User
 } from 'lucide-react';
 import { useNotifications, Notification } from '../context/NotificationProvider';
 
@@ -136,5 +138,79 @@ export const useVehicleNotifications = () => {
     notifyVehicleArrival,
     notifyVehicleDelay,
     notifyVehicleEnRoute,
+  };
+};
+
+// Helper hook for payment notifications
+export const usePaymentNotifications = () => {
+  const { addNotification } = useNotifications();
+
+  const notifyPaymentSuccess = (paymentData: {
+    verificationCode: string;
+    totalAmount: number;
+    seatsBooked: number;
+    vehicleLicensePlate: string;
+    destinationName: string;
+    paymentReference: string;
+  }) => {
+    addNotification({
+      type: 'success',
+      title: 'Payment Confirmed',
+      message: `Online payment of ${paymentData.totalAmount.toFixed(2)} TND confirmed for ${paymentData.seatsBooked} seat(s) to ${paymentData.destinationName}. Vehicle: ${paymentData.vehicleLicensePlate}`,
+      duration: 8000,
+      icon: <DollarSign className="h-5 w-5 text-green-600" />
+    });
+  };
+
+  const notifyPaymentFailed = (paymentData: {
+    verificationCode: string;
+    totalAmount: number;
+    destinationName: string;
+  }) => {
+    addNotification({
+      type: 'error',
+      title: 'Payment Failed',
+      message: `Payment of ${paymentData.totalAmount.toFixed(2)} TND failed for booking ${paymentData.verificationCode} to ${paymentData.destinationName}`,
+      duration: 6000,
+      icon: <AlertCircle className="h-5 w-5 text-red-600" />
+    });
+  };
+
+  const notifySeatUpdate = (seatData: {
+    vehicleLicensePlate: string;
+    destinationName: string;
+    availableSeats: number;
+    totalSeats: number;
+    oldAvailableSeats: number;
+  }) => {
+    const seatsTaken = seatData.oldAvailableSeats - seatData.availableSeats;
+    addNotification({
+      type: 'info',
+      title: 'Seats Updated',
+      message: `${seatsTaken} seat(s) booked for ${seatData.destinationName}. Vehicle ${seatData.vehicleLicensePlate} now has ${seatData.availableSeats}/${seatData.totalSeats} seats available.`,
+      duration: 5000,
+      icon: <User className="h-5 w-5 text-blue-600" />
+    });
+  };
+
+  const notifyVehicleReady = (vehicleData: {
+    licensePlate: string;
+    destinationName: string;
+    totalSeats: number;
+  }) => {
+    addNotification({
+      type: 'success',
+      title: 'Vehicle Ready to Depart',
+      message: `Vehicle ${vehicleData.licensePlate} to ${vehicleData.destinationName} is now full and ready to depart!`,
+      duration: 6000,
+      icon: <Truck className="h-5 w-5 text-green-600" />
+    });
+  };
+
+  return {
+    notifyPaymentSuccess,
+    notifyPaymentFailed,
+    notifySeatUpdate,
+    notifyVehicleReady,
   };
 }; 

@@ -17,6 +17,7 @@ import OvernightQueueManagement from "./routes/overnight-queue";
 import RoutesPage from "./routes/routes";
 import SupervisorVehicleManagement from './routes/supervisor-vehicle-management';
 import DriverTicketsPage from './routes/driver-tickets';
+import PreviewTicket from './routes/preview-ticket';
 import { TauriProvider } from "./context/TauriProvider";
 import { AuthProvider } from "./context/AuthProvider";
 import "./styles.css";
@@ -26,6 +27,7 @@ import { InitProvider, useInit } from "./context/InitProvider";
 import { NotificationProvider } from "./context/NotificationProvider";
 import { DashboardProvider } from "./context/DashboardProvider";
 import { QueueProvider } from "./context/QueueProvider";
+import { EnhancedConnectionProvider } from "./context/EnhancedConnectionProvider";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { InitScreen } from "./components/InitScreen";
 import { NotificationContainer } from "./components/NotificationToast";
@@ -38,6 +40,9 @@ import { invoke } from '@tauri-apps/api/tauri';
 // Add this import for getting the current executable path
 import { appDir } from '@tauri-apps/api/path';
 import { platform } from '@tauri-apps/api/os';
+
+// Import enhanced API service
+import enhancedApi from './services/enhancedLocalNodeApi';
 
 function useAddFirewallRule() {
   useEffect(() => {
@@ -60,6 +65,35 @@ function useAddFirewallRule() {
       }
     }
     run();
+  }, []);
+}
+
+// Enhanced system initialization
+function useEnhancedSystemInit() {
+  useEffect(() => {
+    async function initializeEnhancedSystem() {
+      try {
+        console.log('🚀 Initializing enhanced system...');
+        
+        // Discover local node servers
+        const discoveredServers = await enhancedApi.discoverLocalNodeServers();
+        console.log('🔍 Discovered servers:', discoveredServers);
+        
+        // Check connection to best available server
+        const isConnected = await enhancedApi.checkConnection();
+        console.log('🔌 Connection status:', isConnected);
+        
+        if (isConnected) {
+          console.log('✅ Enhanced system initialized successfully');
+        } else {
+          console.warn('⚠️ Enhanced system connection failed, using fallback');
+        }
+      } catch (error) {
+        console.error('❌ Enhanced system initialization failed:', error);
+      }
+    }
+    
+    initializeEnhancedSystem();
   }, []);
 }
 
@@ -130,24 +164,40 @@ const router = createBrowserRouter([
         path: "/driver-tickets",
         element: <DriverTicketsPage />,
       },
+      {
+        path: "/preview-ticket",
+        element: <PreviewTicket />,
+      },
     ],
   },
 ]);
 
 const App: React.FC = () => {
   useAddFirewallRule();
+  useEnhancedSystemInit();
   const { isInitialized, isInitializing, shouldShowLogin, completeInitialization } = useInit();
 
   // Initialize WebSocket connection when app is ready
   useEffect(() => {
     if (isInitialized && !isInitializing) {
       console.log('🚀 App initialized, setting up WebSocket connection...');
-      // Import and initialize WebSocket
-      import('./lib/websocket').then(({ initializeWebSocket }) => {
-        const wsClient = initializeWebSocket();
-        console.log('✅ WebSocket client initialized for app');
+      // Import and initialize Enhanced WebSocket
+      import('./services/enhancedLocalNodeWebSocket').then(({ initializeEnhancedWebSocket }) => {
+        const wsClient = initializeEnhancedWebSocket();
+        console.log('✅ Enhanced WebSocket client initialized for app');
+        
+        // Subscribe to real-time updates
+        wsClient.subscribeToUpdates(['booking', 'vehicleQueue', 'seat_availability', 'financial']);
+        
+        // Listen for UI refresh events
+        wsClient.on('ui_refresh_required', (data: any) => {
+          console.log('🔄 UI refresh required:', data);
+          // Trigger UI refresh based on data type
+          window.dispatchEvent(new CustomEvent('ui_refresh', { detail: data }));
+        });
+        
       }).catch(error => {
-        console.error('❌ Failed to initialize WebSocket:', error);
+        console.error('❌ Failed to initialize Enhanced WebSocket:', error);
       });
     }
   }, [isInitialized, isInitializing]);
@@ -174,8 +224,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
               <QueueProvider>
                 <SettingsProvider>
                   <SupervisorModeProvider>
-                    <App />
-                    <Toaster />
+                    <EnhancedConnectionProvider>
+                      <App />
+                      <Toaster />
+                    </EnhancedConnectionProvider>
                   </SupervisorModeProvider>
                 </SettingsProvider>
               </QueueProvider>

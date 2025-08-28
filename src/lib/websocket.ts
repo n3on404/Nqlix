@@ -63,14 +63,48 @@ export class WebSocketClient {
     // Listen for relay messages
     if (!this.relayUnlisten) {
       listen<string>('ws-relay-message', (event) => {
-        try {
-          const message: WebSocketMessage = JSON.parse(event.payload);
-          console.log('📨 Received WebSocket message:', message.type);
-          this.handleMessage(message);
-        } catch (e) {
-          console.error('❌ Error parsing WebSocket message:', e);
-          this.emit('message', event.payload);
+        console.log('🔍 Raw WebSocket relay event received:', {
+          eventType: 'ws-relay-message',
+          payload: event.payload,
+          payloadType: typeof event.payload
+        });
+        
+        // Check if payload is already an object (pre-parsed)
+        let message: WebSocketMessage;
+        
+        if (typeof event.payload === 'object' && event.payload !== null) {
+          // Payload is already an object
+          message = event.payload as WebSocketMessage;
+          console.log('📦 Payload is already an object, no parsing needed');
+        } else if (typeof event.payload === 'string') {
+          // Payload is a string, try to parse it
+          try {
+            message = JSON.parse(event.payload);
+            console.log('📦 Parsed JSON payload successfully');
+          } catch (e) {
+            console.error('❌ Error parsing WebSocket message:', e);
+            console.error('Raw payload:', event.payload);
+            this.emit('raw_message', event.payload);
+            return;
+          }
+        } else {
+          console.warn('⚠️ Unexpected payload type:', typeof event.payload, event.payload);
+          return;
         }
+        
+        // Validate message structure
+        if (!message || typeof message !== 'object') {
+          console.warn('⚠️ Invalid message structure received:', message);
+          return;
+        }
+        
+        if (!message.type) {
+          console.warn('⚠️ Message missing type property:', message);
+          return;
+        }
+        
+        console.log('📨 Received WebSocket message:', message.type);
+        this.handleMessage(message);
       }).then(unlisten => {
         this.relayUnlisten = unlisten;
       });
@@ -93,6 +127,12 @@ export class WebSocketClient {
   }
 
   private handleMessage(message: WebSocketMessage) {
+    // Validate message structure
+    if (!message || !message.type) {
+      console.warn('⚠️ Invalid message structure in handleMessage:', message);
+      return;
+    }
+    
     // Handle specific message types
     switch (message.type) {
       case 'connected':
@@ -151,11 +191,6 @@ export class WebSocketClient {
         this.emit('booking_created', message.payload);
         break;
         
-      case 'seat_availability_changed':
-        console.log('📊 Received seat availability changed');
-        this.emit('seat_availability_changed', message.payload);
-        break;
-        
       case 'destinations_updated':
         console.log('📍 Received destinations updated');
         this.emit('destinations_updated', message.payload);
@@ -176,6 +211,16 @@ export class WebSocketClient {
         this.emit('financial_update', message.payload);
         break;
         
+      case 'payment_confirmation':
+        console.log('💳 Received payment confirmation');
+        this.emit('payment_confirmation', message.payload);
+        break;
+        
+      case 'vehicle_status_changed':
+        console.log('🚌 Received vehicle status changed');
+        this.emit('vehicle_status_changed', message.payload);
+        break;
+        
       case 'error':
         console.error('❌ Server error:', message.payload?.message);
         this.emit('error', message.payload);
@@ -188,8 +233,13 @@ export class WebSocketClient {
     
     // Emit the generic message event
     this.emit('message', message);
-    // Emit typed event
-    this.emit(message.type, message.payload || message.data);
+    
+    // Emit typed event with validation
+    if (message.type && typeof message.type === 'string') {
+      this.emit(message.type, message.payload || message.data);
+    } else {
+      console.warn('⚠️ Cannot emit typed event - invalid message type:', message.type);
+    }
   }
 
   private authenticate() {

@@ -2,19 +2,13 @@ import { useEffect, useState } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { getWebSocketClient, ConnectionState } from '../lib/websocket';
+import { useEnhancedConnection } from '../context/EnhancedConnectionProvider';
+import { EnhancedConnectionState } from '../services/enhancedLocalNodeWebSocket';
 import { useAuth } from '../context/AuthProvider';
+import { printerService } from '../services/printerService';
+import { Printer } from 'lucide-react';
 
-interface ConnectionMetrics {
-  state: ConnectionState;
-  isConnected: boolean;
-  isAuthenticated: boolean;
-  quality: 'excellent' | 'good' | 'poor' | 'critical';
-  latency: number;
-  reconnectAttempts: number;
-  queuedMessages: number;
-  connectionHistory: Array<{ timestamp: number; success: boolean; latency?: number }>;
-}
+
 
 interface SystemStatusProps {
   compact?: boolean;
@@ -24,43 +18,70 @@ interface SystemStatusProps {
 
 export function SystemStatus({ compact = false, showDetails = false, className = '' }: SystemStatusProps) {
   const { isAuthenticated } = useAuth();
-  const [connectionState, setConnectionState] = useState(ConnectionState.DISCONNECTED);
-  const [isConnected, setIsConnected] = useState(false);
+  const { 
+    connectionState, 
+    isConnected, 
+    isAuthenticated: isWebSocketAuthenticated,
+    connect,
+    disconnect,
+    refreshConnection
+  } = useEnhancedConnection();
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const wsClient = getWebSocketClient();
+  const [printerAvailable, setPrinterAvailable] = useState(false);
+  const [checkingPrinter, setCheckingPrinter] = useState(false);
+
+  const checkPrinterStatus = async () => {
+    setCheckingPrinter(true);
+    try {
+      const available = await printerService.isPrinterAvailable();
+      setPrinterAvailable(available);
+    } catch (error) {
+      console.error('Failed to check printer status:', error);
+      setPrinterAvailable(false);
+    } finally {
+      setCheckingPrinter(false);
+    }
+  };
 
   useEffect(() => {
-    const updateState = () => {
-      setConnectionState(wsClient.getConnectionState());
-      setIsConnected(wsClient.isConnected());
-    };
-    updateState();
-    wsClient.on('state_changed', updateState);
-    wsClient.on('connected', updateState);
-    wsClient.on('disconnected', updateState);
+    checkPrinterStatus(); // Check printer status on mount
+    
+    // Set up periodic printer status check
+    const printerCheckInterval = setInterval(checkPrinterStatus, 30000); // Check every 30 seconds
+    
     return () => {
-      wsClient.removeListener('state_changed', updateState);
-      wsClient.removeListener('connected', updateState);
-      wsClient.removeListener('disconnected', updateState);
+      clearInterval(printerCheckInterval);
     };
-  }, [wsClient]);
+  }, []);
 
-  const handleForceReconnect = () => {
+  const handleForceReconnect = async () => {
     setIsReconnecting(true);
-    wsClient.disconnect();
-    setTimeout(() => {
-      wsClient.connect();
+    try {
+      await refreshConnection();
+    } catch (error) {
+      console.error('Reconnection failed:', error);
+    } finally {
       setIsReconnecting(false);
-    }, 500);
+    }
   };
 
   if (compact) {
     return (
       <div className={`flex items-center space-x-2 ${className}`}>
-        <Badge variant={connectionState === ConnectionState.CONNECTED ? 'default' : 'outline'}>
-          {connectionState === ConnectionState.CONNECTED ? '🟢 Connected' : connectionState === ConnectionState.CONNECTING ? '🟡 Connecting...' : connectionState === ConnectionState.RECONNECTING ? '🔄 Reconnecting...' : connectionState === ConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
+        <Badge variant={isConnected ? 'default' : 'outline'}>
+          {connectionState === EnhancedConnectionState.CONNECTED ? '🟢 Connected' : 
+           connectionState === EnhancedConnectionState.AUTHENTICATED ? '🟢 Authenticated' :
+           connectionState === EnhancedConnectionState.CONNECTING ? '🟡 Connecting...' : 
+           connectionState === EnhancedConnectionState.DISCOVERING ? '🔍 Discovering...' :
+           connectionState === EnhancedConnectionState.OPTIMIZING ? '⚡ Optimizing...' :
+           connectionState === EnhancedConnectionState.RECONNECTING ? '🔄 Reconnecting...' : 
+           connectionState === EnhancedConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
         </Badge>
-        {(!isConnected || connectionState === ConnectionState.FAILED) && (
+        <Badge variant={printerAvailable ? 'default' : 'destructive'}>
+          <Printer className="h-3 w-3 mr-1" />
+          {checkingPrinter ? '⏳' : printerAvailable ? '🖨️' : '❌'}
+        </Badge>
+        {(!isConnected || connectionState === EnhancedConnectionState.FAILED) && (
           <Button
             size="sm"
             variant="outline"
@@ -85,15 +106,30 @@ export function SystemStatus({ compact = false, showDetails = false, className =
         {/* Connection State */}
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">State:</span>
-          <Badge variant={connectionState === ConnectionState.CONNECTED ? 'default' : 'outline'}>
-            {connectionState === ConnectionState.CONNECTED ? '🟢 Connected' : connectionState === ConnectionState.CONNECTING ? '🟡 Connecting...' : connectionState === ConnectionState.RECONNECTING ? '🔄 Reconnecting...' : connectionState === ConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
+          <Badge variant={isConnected ? 'default' : 'outline'}>
+            {connectionState === EnhancedConnectionState.CONNECTED ? '🟢 Connected' : 
+             connectionState === EnhancedConnectionState.AUTHENTICATED ? '🟢 Authenticated' :
+             connectionState === EnhancedConnectionState.CONNECTING ? '🟡 Connecting...' : 
+             connectionState === EnhancedConnectionState.DISCOVERING ? '🔍 Discovering...' :
+             connectionState === EnhancedConnectionState.OPTIMIZING ? '⚡ Optimizing...' :
+             connectionState === EnhancedConnectionState.RECONNECTING ? '🔄 Reconnecting...' : 
+             connectionState === EnhancedConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
           </Badge>
         </div>
         {/* Authentication Status */}
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">Authenticated:</span>
-          <Badge variant={isAuthenticated ? 'default' : 'destructive'}>
-            {isAuthenticated ? '✅ Yes' : '❌ No'}
+          <Badge variant={isWebSocketAuthenticated ? 'default' : 'destructive'}>
+            {isWebSocketAuthenticated ? '✅ Yes' : '❌ No'}
+          </Badge>
+        </div>
+        
+        {/* Printer Status */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">Printer:</span>
+          <Badge variant={printerAvailable ? 'default' : 'destructive'}>
+            <Printer className="h-3 w-3 mr-1" />
+            {checkingPrinter ? 'Checking...' : printerAvailable ? '✅ Available' : '❌ Not Available'}
           </Badge>
         </div>
         {/* Actions */}
@@ -102,10 +138,20 @@ export function SystemStatus({ compact = false, showDetails = false, className =
             size="sm"
             variant="outline"
             onClick={handleForceReconnect}
-            disabled={isReconnecting || connectionState === ConnectionState.CONNECTING}
+            disabled={isReconnecting || connectionState === EnhancedConnectionState.CONNECTING}
             className="flex-1"
           >
             {isReconnecting ? 'Connecting...' : 'Force Reconnect'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={checkPrinterStatus}
+            disabled={checkingPrinter}
+            className="flex-1"
+          >
+            <Printer className="h-3 w-3 mr-1" />
+            {checkingPrinter ? 'Checking...' : 'Check Printer'}
           </Button>
         </div>
       </CardContent>

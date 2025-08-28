@@ -15,7 +15,8 @@ import {
   BarChart3,
   Moon,
   MapPin,
-  Ticket
+  Ticket,
+  Eye
 } from "lucide-react";
 import { useAuth } from "./context/AuthProvider";
 import { Button } from "./components/ui/button";
@@ -40,6 +41,7 @@ export default function Layout() {
     { path: "/booking", icon: UserPlus, label: "Réservation" },
     { path: "/verify", icon: CheckSquare, label: "Vérifier" },
     { path: "/driver-tickets", icon: Ticket, label: "Tickets Chauffeurs" },
+    { path: "/preview-ticket", icon: Eye, label: "Aperçu Ticket" },
   ];
 
   const supervisorNavItems = [
