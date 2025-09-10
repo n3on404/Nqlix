@@ -36,19 +36,19 @@ export const IncomingVehicles: React.FC<IncomingVehiclesProps> = ({ onNewArrival
     const updatedVehicles = getIncomingVehicles();
     
     // Check for new arrivals and handle them
-    updatedVehicles.forEach(vehicle => {
+    updatedVehicles.forEach((vehicle: IncomingVehicle) => {
       if (vehicle.isNewArrival && onNewArrival) {
         onNewArrival(vehicle);
         // Remove the vehicle from the list when it arrives
         setTimeout(() => {
           removeArrivedVehicle(vehicle.id);
-          setVehicles(getIncomingVehicles().filter(v => v.status !== 'ARRIVED'));
+          setVehicles(getIncomingVehicles().filter((v: IncomingVehicle) => v.status !== 'ARRIVED'));
         }, 2000); // Give time for notification to show
       }
     });
     
     // Filter out arrived vehicles
-    const enRouteVehicles = updatedVehicles.filter(v => v.status !== 'ARRIVED');
+    const enRouteVehicles = updatedVehicles.filter((v: IncomingVehicle) => v.status !== 'ARRIVED');
     setVehicles(enRouteVehicles);
     setLastUpdate(new Date());
     

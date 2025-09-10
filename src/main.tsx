@@ -1,6 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { EnhancedMqttProvider } from './context/EnhancedMqttProvider';
+import EnhancedMqttConnectionTest from './components/EnhancedMqttConnectionTest';
 import Layout from "./layout";
 import ErrorPage from "./error-page";
 import Home from "./routes/home";
@@ -27,7 +29,6 @@ import { InitProvider, useInit } from "./context/InitProvider";
 import { NotificationProvider } from "./context/NotificationProvider";
 import { DashboardProvider } from "./context/DashboardProvider";
 import { QueueProvider } from "./context/QueueProvider";
-import { EnhancedConnectionProvider } from "./context/EnhancedConnectionProvider";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { InitScreen } from "./components/InitScreen";
 import { NotificationContainer } from "./components/NotificationToast";
@@ -168,6 +169,10 @@ const router = createBrowserRouter([
         path: "/preview-ticket",
         element: <PreviewTicket />,
       },
+      {
+        path: "/mqtt-connection-test",
+        element: <EnhancedMqttConnectionTest />,
+      },
     ],
   },
 ]);
@@ -177,27 +182,35 @@ const App: React.FC = () => {
   useEnhancedSystemInit();
   const { isInitialized, isInitializing, shouldShowLogin, completeInitialization } = useInit();
 
-  // Initialize WebSocket connection when app is ready
+  // Initialize MQTT connection when app is ready
   useEffect(() => {
     if (isInitialized && !isInitializing) {
-      console.log('🚀 App initialized, setting up WebSocket connection...');
-      // Import and initialize Enhanced WebSocket
-      import('./services/enhancedLocalNodeWebSocket').then(({ initializeEnhancedWebSocket }) => {
-        const wsClient = initializeEnhancedWebSocket();
-        console.log('✅ Enhanced WebSocket client initialized for app');
+      console.log('🚀 App initialized, setting up Enhanced MQTT connection...');
+      // Import and initialize Enhanced MQTT
+      import('./services/enhancedMqttClient').then(({ initializeEnhancedMqtt }) => {
+        const mqttClient = initializeEnhancedMqtt();
+        console.log('✅ Enhanced MQTT client initialized for app');
         
-        // Subscribe to real-time updates
-        wsClient.subscribeToUpdates(['booking', 'vehicleQueue', 'seat_availability', 'financial']);
-        
-        // Listen for UI refresh events
-        wsClient.on('ui_refresh_required', (data: any) => {
-          console.log('🔄 UI refresh required:', data);
-          // Trigger UI refresh based on data type
-          window.dispatchEvent(new CustomEvent('ui_refresh', { detail: data }));
+        // Connect to MQTT broker
+        mqttClient.connect().then(() => {
+          console.log('🔌 Enhanced MQTT connected successfully');
+          
+          // Subscribe to real-time updates
+          mqttClient.subscribeToUpdates(['queue_update', 'cash_booking_updated', 'seat_availability_changed', 'financial_update', 'dashboard_update']);
+          
+          // Listen for UI refresh events
+          mqttClient.on('ui_refresh_required', (data: any) => {
+            console.log('🔄 UI refresh required:', data);
+            // Trigger UI refresh based on data type
+            window.dispatchEvent(new CustomEvent('ui_refresh', { detail: data }));
+          });
+          
+        }).catch((error: any) => {
+          console.error('❌ Failed to connect Enhanced MQTT:', error);
         });
         
-      }).catch(error => {
-        console.error('❌ Failed to initialize Enhanced WebSocket:', error);
+      }).catch((error: any) => {
+        console.error('❌ Failed to initialize Enhanced MQTT:', error);
       });
     }
   }, [isInitialized, isInitializing]);
@@ -220,18 +233,18 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <InitProvider>
         <NotificationProvider>
           <AuthProvider>
-            <DashboardProvider>
-              <QueueProvider>
-                <SettingsProvider>
-                  <SupervisorModeProvider>
-                    <EnhancedConnectionProvider>
+            <EnhancedMqttProvider>
+              <DashboardProvider>
+                <QueueProvider>
+                  <SettingsProvider>
+                    <SupervisorModeProvider>
                       <App />
                       <Toaster />
-                    </EnhancedConnectionProvider>
-                  </SupervisorModeProvider>
-                </SettingsProvider>
-              </QueueProvider>
-            </DashboardProvider>
+                    </SupervisorModeProvider>
+                  </SettingsProvider>
+                </QueueProvider>
+              </DashboardProvider>
+            </EnhancedMqttProvider>
           </AuthProvider>
         </NotificationProvider>
       </InitProvider>

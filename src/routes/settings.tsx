@@ -2,7 +2,7 @@ import { useSettingsContext } from "../context/SettingsProvider";
 import { Button } from "../components/ui/button";
 import { SystemStatus } from "../components/SystemStatus";
 import { UpdateSection } from "../components/UpdateSection";
-import { EnhancedConnectionTest } from "../components/EnhancedConnectionTest";
+import EnhancedMqttConnectionTest from "../components/EnhancedMqttConnectionTest";
 import { Moon, Sun, Printer, RefreshCw, TestTube } from "lucide-react";
 import { useState, useEffect } from "react";
 import { printerService, type PrinterInfo } from "../services/printerService";
@@ -163,7 +163,7 @@ export default function Settings() {
               Testez et diagnostiquez la connexion avec le serveur local et le système WebSocket amélioré.
             </p>
           </div>
-          <EnhancedConnectionTest />
+          <EnhancedMqttConnectionTest />
         </div>
 
         {/* Update Section */}

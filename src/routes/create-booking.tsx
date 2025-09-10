@@ -1,8 +1,68 @@
 import { useState } from "react";
 import { Button } from "../components/ui/button";
-import { getAvailableDestinations, getVehicleQueuesByDestination } from "../data/mockData";
 import { useInit } from "../context/InitProvider";
 import { Users, MapPin, CreditCard, Ticket, PrinterIcon, AlertTriangle } from "lucide-react";
+
+// Types for the data structures
+interface VehicleQueue {
+  id: string;
+  queuePosition: number;
+  availableSeats: number;
+  totalSeats: number;
+  basePrice: number;
+  status: string;
+}
+
+// Mock data - replace with actual API calls later
+const mockDestinations = [
+  "Tunis",
+  "Sfax", 
+  "Sousse",
+  "Monastir",
+  "Gabès",
+  "Gafsa",
+  "Kairouan",
+  "Bizerte",
+  "Ariana",
+  "Ben Arous"
+];
+
+const mockVehicleQueues: Record<string, VehicleQueue[]> = {
+  "Tunis": [
+    { id: "tunis-1", queuePosition: 1, availableSeats: 8, totalSeats: 12, basePrice: 15.50, status: "En attente" },
+    { id: "tunis-2", queuePosition: 2, availableSeats: 5, totalSeats: 12, basePrice: 15.50, status: "En attente" },
+    { id: "tunis-3", queuePosition: 3, availableSeats: 12, totalSeats: 12, basePrice: 15.50, status: "Prêt" }
+  ],
+  "Sfax": [
+    { id: "sfax-1", queuePosition: 1, availableSeats: 6, totalSeats: 12, basePrice: 18.00, status: "En attente" },
+    { id: "sfax-2", queuePosition: 2, availableSeats: 10, totalSeats: 12, basePrice: 18.00, status: "Prêt" }
+  ],
+  "Sousse": [
+    { id: "sousse-1", queuePosition: 1, availableSeats: 4, totalSeats: 12, basePrice: 12.00, status: "En attente" },
+    { id: "sousse-2", queuePosition: 2, availableSeats: 12, totalSeats: 12, basePrice: 12.00, status: "Prêt" }
+  ],
+  "Monastir": [
+    { id: "monastir-1", queuePosition: 1, availableSeats: 7, totalSeats: 12, basePrice: 10.50, status: "En attente" }
+  ],
+  "Gabès": [
+    { id: "gabes-1", queuePosition: 1, availableSeats: 9, totalSeats: 12, basePrice: 20.00, status: "Prêt" }
+  ],
+  "Gafsa": [
+    { id: "gafsa-1", queuePosition: 1, availableSeats: 3, totalSeats: 12, basePrice: 22.50, status: "En attente" }
+  ],
+  "Kairouan": [
+    { id: "kairouan-1", queuePosition: 1, availableSeats: 11, totalSeats: 12, basePrice: 14.00, status: "Prêt" }
+  ],
+  "Bizerte": [
+    { id: "bizerte-1", queuePosition: 1, availableSeats: 6, totalSeats: 12, basePrice: 13.50, status: "En attente" }
+  ],
+  "Ariana": [
+    { id: "ariana-1", queuePosition: 1, availableSeats: 8, totalSeats: 12, basePrice: 8.00, status: "Prêt" }
+  ],
+  "Ben Arous": [
+    { id: "benarous-1", queuePosition: 1, availableSeats: 5, totalSeats: 12, basePrice: 7.50, status: "En attente" }
+  ]
+};
 
 export default function CreateBooking() {
   const { systemStatus } = useInit();
@@ -12,8 +72,8 @@ export default function CreateBooking() {
   const [seatsRequested, setSeatsRequested] = useState(1);
   const [selectedQueue, setSelectedQueue] = useState("");
 
-  const destinations = getAvailableDestinations();
-  const availableQueues = selectedDestination ? getVehicleQueuesByDestination(selectedDestination) : [];
+  const destinations = mockDestinations;
+  const availableQueues = selectedDestination ? mockVehicleQueues[selectedDestination] || [] : [];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,7 +186,7 @@ export default function CreateBooking() {
                 required
               >
                 <option value="">Choisissez une destination...</option>
-                {destinations.map(dest => (
+                {destinations.map((dest: string) => (
                   <option key={dest} value={dest}>{dest}</option>
                 ))}
               </select>
@@ -145,7 +205,7 @@ export default function CreateBooking() {
                 {availableQueues.length === 0 ? (
                   <p className="text-muted-foreground">Aucun véhicule disponible pour {selectedDestination}</p>
                 ) : (
-                  availableQueues.map(queue => (
+                  availableQueues.map((queue: VehicleQueue) => (
                     <div 
                       key={queue.id}
                       className={`p-4 border rounded-lg cursor-pointer transition-colors ${
@@ -197,7 +257,7 @@ export default function CreateBooking() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Montant total</label>
                   <div className="text-2xl font-bold">
-                    {(seatsRequested * (availableQueues.find(q => q.id === selectedQueue)?.basePrice || 0)).toFixed(2)} TND
+                    {(seatsRequested * (availableQueues.find((q: VehicleQueue) => q.id === selectedQueue)?.basePrice || 0)).toFixed(2)} TND
                   </div>
                 </div>
               </div>

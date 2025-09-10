@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "nqlix_desktop_app"
-version = "0.0.10"
+version = "0.0.13"
 dependencies = [
  "futures",
  "once_cell",

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { useEnhancedConnection } from '../context/EnhancedConnectionProvider';
-import { EnhancedConnectionState } from '../services/enhancedLocalNodeWebSocket';
+import { useEnhancedMqtt } from '../context/EnhancedMqttProvider';
+import { MqttConnectionState } from '../services/enhancedMqttClient';
 import { useAuth } from '../context/AuthProvider';
 import { printerService } from '../services/printerService';
 import { Printer } from 'lucide-react';
@@ -21,11 +21,15 @@ export function SystemStatus({ compact = false, showDetails = false, className =
   const { 
     connectionState, 
     isConnected, 
-    isAuthenticated: isWebSocketAuthenticated,
+    isAuthenticated: isMqttAuthenticated,
     connect,
-    disconnect,
-    refreshConnection
-  } = useEnhancedConnection();
+    disconnect
+  } = useEnhancedMqtt();
+  
+  const refreshConnection = async () => {
+    await disconnect();
+    await connect();
+  };
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [printerAvailable, setPrinterAvailable] = useState(false);
   const [checkingPrinter, setCheckingPrinter] = useState(false);
@@ -69,19 +73,18 @@ export function SystemStatus({ compact = false, showDetails = false, className =
     return (
       <div className={`flex items-center space-x-2 ${className}`}>
         <Badge variant={isConnected ? 'default' : 'outline'}>
-          {connectionState === EnhancedConnectionState.CONNECTED ? '🟢 Connected' : 
-           connectionState === EnhancedConnectionState.AUTHENTICATED ? '🟢 Authenticated' :
-           connectionState === EnhancedConnectionState.CONNECTING ? '🟡 Connecting...' : 
-           connectionState === EnhancedConnectionState.DISCOVERING ? '🔍 Discovering...' :
-           connectionState === EnhancedConnectionState.OPTIMIZING ? '⚡ Optimizing...' :
-           connectionState === EnhancedConnectionState.RECONNECTING ? '🔄 Reconnecting...' : 
-           connectionState === EnhancedConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
+          {connectionState === MqttConnectionState.CONNECTED ? '🟢 Connected' :
+           connectionState === MqttConnectionState.AUTHENTICATED ? '🟢 Authenticated' :
+           connectionState === MqttConnectionState.CONNECTING ? '🟡 Connecting...' :
+           connectionState === MqttConnectionState.DISCOVERING ? '🔍 Discovering...' :
+           connectionState === MqttConnectionState.RECONNECTING ? '🔄 Reconnecting...' :
+           connectionState === MqttConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
         </Badge>
         <Badge variant={printerAvailable ? 'default' : 'destructive'}>
           <Printer className="h-3 w-3 mr-1" />
           {checkingPrinter ? '⏳' : printerAvailable ? '🖨️' : '❌'}
         </Badge>
-        {(!isConnected || connectionState === EnhancedConnectionState.FAILED) && (
+        {(!isConnected || connectionState === MqttConnectionState.FAILED) && (
           <Button
             size="sm"
             variant="outline"
@@ -107,20 +110,19 @@ export function SystemStatus({ compact = false, showDetails = false, className =
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">State:</span>
           <Badge variant={isConnected ? 'default' : 'outline'}>
-            {connectionState === EnhancedConnectionState.CONNECTED ? '🟢 Connected' : 
-             connectionState === EnhancedConnectionState.AUTHENTICATED ? '🟢 Authenticated' :
-             connectionState === EnhancedConnectionState.CONNECTING ? '🟡 Connecting...' : 
-             connectionState === EnhancedConnectionState.DISCOVERING ? '🔍 Discovering...' :
-             connectionState === EnhancedConnectionState.OPTIMIZING ? '⚡ Optimizing...' :
-             connectionState === EnhancedConnectionState.RECONNECTING ? '🔄 Reconnecting...' : 
-             connectionState === EnhancedConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
+            {connectionState === MqttConnectionState.CONNECTED ? '🟢 Connected' :
+             connectionState === MqttConnectionState.AUTHENTICATED ? '🟢 Authenticated' :
+             connectionState === MqttConnectionState.CONNECTING ? '🟡 Connecting...' :
+             connectionState === MqttConnectionState.DISCOVERING ? '🔍 Discovering...' :
+             connectionState === MqttConnectionState.RECONNECTING ? '🔄 Reconnecting...' :
+             connectionState === MqttConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
           </Badge>
         </div>
         {/* Authentication Status */}
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">Authenticated:</span>
-          <Badge variant={isWebSocketAuthenticated ? 'default' : 'destructive'}>
-            {isWebSocketAuthenticated ? '✅ Yes' : '❌ No'}
+          <Badge variant={isMqttAuthenticated ? 'default' : 'destructive'}>
+            {isMqttAuthenticated ? '✅ Yes' : '❌ No'}
           </Badge>
         </div>
         
@@ -138,7 +140,7 @@ export function SystemStatus({ compact = false, showDetails = false, className =
             size="sm"
             variant="outline"
             onClick={handleForceReconnect}
-            disabled={isReconnecting || connectionState === EnhancedConnectionState.CONNECTING}
+            disabled={isReconnecting || connectionState === MqttConnectionState.CONNECTING}
             className="flex-1"
           >
             {isReconnecting ? 'Connecting...' : 'Force Reconnect'}

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { getWebSocketClient, initializeWebSocket } from '../lib/websocket';
+import { useEnhancedMqtt } from './EnhancedMqttProvider';
 import api from '../lib/api';
 import { useAuth } from './AuthProvider';
 import { useNotifications } from './NotificationProvider';
@@ -38,7 +38,7 @@ interface QueueContextType {
   error: string | null;
   refreshQueues: () => Promise<void>;
   fetchQueueForDestination: (destinationId: string) => Promise<void>;
-  isWebSocketConnected: boolean;
+  isConnected: boolean;
   isRealTimeEnabled: boolean;
   toggleRealTime: () => void;
   enterQueue: (licensePlate: string) => Promise<any>;
@@ -53,7 +53,7 @@ const QueueContext = createContext<QueueContextType>({
   error: null,
   refreshQueues: async () => {},
   fetchQueueForDestination: async () => {},
-  isWebSocketConnected: false,
+  isConnected: false,
   isRealTimeEnabled: true,
   toggleRealTime: () => {},
   enterQueue: async () => ({}),
@@ -78,7 +78,8 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
   const [queueSummaries, setQueueSummaries] = useState<QueueSummary[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [isWebSocketConnected, setIsWebSocketConnected] = useState<boolean>(false);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const { mqttClient, isConnected: mqttConnected, isAuthenticated: mqttAuthenticated } = useEnhancedMqtt();
   const [lastManualRefresh, setLastManualRefresh] = useState<number>(0);
   const { isAuthenticated } = useAuth();
   const { addNotification } = useNotifications();
@@ -174,279 +175,58 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     }
   }, [isAuthenticated, addNotification]);
   
-  // Initialize WebSocket connection and set up event handlers
+  // Initialize MQTT connection and set up event handlers
   useEffect(() => {
-    if (!isAuthenticated) {
-      console.log('👤 Not authenticated, skipping WebSocket setup');
+    if (!isAuthenticated || !mqttConnected) {
+      console.log('👤 Not authenticated or MQTT not connected, skipping queue updates setup');
       return;
     }
     
-    console.log('🔌 Setting up WebSocket connection for queue updates...');
-    const wsClient = initializeWebSocket(); // Use the new initialization function
+    console.log('🔌 Setting up MQTT connection for queue updates...');
     
-    const handleConnect = () => {
-      console.log('✅ WebSocket connected for queue updates');
-      setIsWebSocketConnected(true);
-    };
+    // Set connection state based on MQTT status
+    setIsConnected(mqttConnected && mqttAuthenticated);
     
-    const handleDisconnect = () => {
-      console.log('❌ WebSocket disconnected for queue updates');
-      setIsWebSocketConnected(false);
-    };
-    
-    const handleAuthenticated = () => {
-      console.log('🔐 WebSocket authenticated for queue updates');
-      setIsWebSocketConnected(true);
-      
-      // Subscribe to queue updates
-      wsClient.subscribe(['queues', 'dashboard', 'bookings'])
+    // Subscribe to queue updates via MQTT
+    if (mqttClient) {
+      mqttClient.subscribeToUpdates(['queue_update', 'vehicle_queue_updated', 'seat_availability_changed'])
         .then(() => {
-          console.log('📡 Subscribed to queue updates');
-          // Request initial queue data
-          return wsClient.requestQueueData();
+          console.log('✅ Subscribed to MQTT queue updates');
+          setIsConnected(true);
         })
-        .catch(err => console.error('❌ Failed to subscribe to queue updates:', err));
-    };
-    
-    const handleQueueData = (data: any) => {
-      console.log('📊 Received WebSocket queue data:', data);
-
-      // Check if we recently had a manual refresh - if so, be more conservative with WebSocket updates
-      const timeSinceManualRefresh = Date.now() - lastManualRefresh;
-      const isRecentManualRefresh = timeSinceManualRefresh < 5000; // 5 seconds
-
-      if (isRecentManualRefresh) {
-        console.log('🔄 Skipping WebSocket queue data due to recent manual refresh');
-        return;
-      }
-
-      try {
-        // Process queue data if present - handle both formats (array and object)
-        if (data && data.queues) {
-          console.log('📋 Processing queue data from WebSocket');
-
-          const summaries: QueueSummary[] = [];
-          const queueDetails: Record<string, QueueItem[]> = {};
-
-          // Handle array format (from dashboard_data)
-          if (Array.isArray(data.queues)) {
-            console.log('📋 Processing array format queue data');
-
-            data.queues.forEach((queueItem: any) => {
-              if (queueItem && queueItem.destinationName) {
-                const destinationName = queueItem.destinationName.toUpperCase();
-
-                // Create summary from queue item
-                const summary: QueueSummary = {
-                  destinationId: queueItem.destinationId || destinationName,
-                  destinationName: destinationName,
-                  totalVehicles: queueItem.vehicleCount || 0,
-                  waitingVehicles: queueItem.waitingVehicles || 0,
-                  loadingVehicles: queueItem.loadingVehicles || 0,
-                  readyVehicles: queueItem.readyVehicles || 0,
-                  estimatedNextDeparture: queueItem.estimatedNextDeparture
-                };
-
-                summaries.push(summary);
-                // Initialize empty array for this destination (will be filled by API if needed)
-                queueDetails[destinationName] = [];
-              }
-            });
-          }
-          // Handle object format (from direct queue data)
-          else if (typeof data.queues === 'object') {
-            console.log('📋 Processing object format queue data');
-
-            Object.entries(data.queues).forEach(([destinationName, queueItems]: [string, any]) => {
-              // Skip numeric keys (array indices)
-              if (!isNaN(Number(destinationName))) return;
-
-              const items = Array.isArray(queueItems) ? queueItems : [];
-              const normalizedDestination = destinationName.toUpperCase();
-
-              // Create summary
-              const summary: QueueSummary = {
-                destinationId: items[0]?.destinationId || destinationName,
-                destinationName: normalizedDestination,
-                totalVehicles: items.length,
-                waitingVehicles: items.filter(item => item.status === 'WAITING').length,
-                loadingVehicles: items.filter(item => item.status === 'LOADING').length,
-                readyVehicles: items.filter(item => item.status === 'READY').length,
-                estimatedNextDeparture: items[0]?.estimatedDeparture
-              };
-
-              summaries.push(summary);
-              queueDetails[normalizedDestination] = items.map((item: any) => ({
-                ...item,
-                destinationName: normalizedDestination
-              }));
-            });
-          }
-
-          console.log('✅ WebSocket queue data processed:', summaries.length, 'destinations');
-          if (summaries.length > 0) {
-            setQueueSummaries(summaries);
-
-            // Only update queue details if we actually have detailed data
-            // Don't overwrite existing detailed data with empty arrays from dashboard_data
-            const hasDetailedData = Object.values(queueDetails).some(items => items.length > 0);
-            if (hasDetailedData) {
-              setQueues(queueDetails);
-            } else {
-              console.log('📋 Dashboard data received, summaries updated but keeping existing detailed data');
-            }
-          }
-          setIsLoading(false);
+        .catch((err: any) => console.error('❌ Failed to subscribe to queue updates:', err));
+      
+      // Listen for queue data updates
+      const handleQueueUpdate = (data: any) => {
+        console.log('� Received MQTT queue data:', data);
+        
+        // Check if we recently had a manual refresh - if so, be more conservative with MQTT updates
+        const now = Date.now();
+        const timeSinceRefresh = now - lastManualRefresh;
+        
+        if (timeSinceRefresh < 2000) { // 2 seconds
+          console.log('🔄 Skipping MQTT queue data due to recent manual refresh');
+          return;
         }
         
-        // Handle direct summaries if provided (fallback format)
-        if (data && data.summaries && Array.isArray(data.summaries)) {
-          console.log('📋 Processing queue summaries (legacy format)');
-          const processedSummaries = data.summaries.map((summary: any) => ({
-            destinationId: summary.destinationId,
-            destinationName: summary.destinationName?.toUpperCase() || summary.destinationName,
-            totalVehicles: Number(summary.totalVehicles) || 0,
-            waitingVehicles: Number(summary.waitingVehicles) || 0,
-            loadingVehicles: Number(summary.loadingVehicles) || 0,
-            readyVehicles: Number(summary.readyVehicles) || 0,
-            estimatedNextDeparture: summary.estimatedNextDeparture
-          }));
-          
-          setQueueSummaries(processedSummaries);
+        // Process queue data from MQTT
+        if (data && data.queues) {
+          console.log('📋 Processing queue data from MQTT');
+          setQueues(data.queues);
           setIsLoading(false);
+          setLastManualRefresh(now);
         }
-      } catch (error) {
-        console.error('❌ Error processing WebSocket queue data:', error);
-      }
-    };
-    
-    const handleQueueUpdate = (data: any) => {
-      console.log('🚗 Received real-time queue update:', data);
-
-      // Check if we recently had a manual refresh - if so, be more conservative with updates
-      const timeSinceManualRefresh = Date.now() - lastManualRefresh;
-      const isRecentManualRefresh = timeSinceManualRefresh < 3000; // 3 seconds
-
-      if (isRecentManualRefresh) {
-        console.log('🔄 Skipping WebSocket update due to recent manual refresh');
-        return;
-      }
-
-      // Handle individual queue entry updates
-      if (data && data.queue) {
-        const queue = data.queue;
-        const destination = queue.destinationName?.toUpperCase() || queue.destinationName;
-
-        setQueues(prev => {
-          const newQueues = { ...prev };
-          if (!newQueues[destination]) {
-            newQueues[destination] = [];
-          }
-
-          // Find and update or add the queue item
-          const index = newQueues[destination].findIndex(q => q.id === queue.id);
-          if (index >= 0) {
-            newQueues[destination][index] = {
-              ...queue,
-              destinationName: destination
-            };
-          } else {
-            newQueues[destination].push({
-              ...queue,
-              destinationName: destination
-            });
-          }
-
-          // Sort by queue position
-          newQueues[destination].sort((a, b) => a.queuePosition - b.queuePosition);
-          return newQueues;
-        });
-
-        // Show notification only for significant updates
-        if (addNotification && (queue.status === 'DEPARTED' || queue.status === 'READY')) {
-          addNotification({
-            type: 'info',
-            title: 'Queue Updated',
-            message: `Vehicle ${queue.licensePlate} status: ${queue.status}`,
-            duration: 3000
-          });
-        }
-      }
-
-      // Handle full queue data updates (like from refresh)
-      if (data && data.queues && typeof data.queues === 'object') {
-        console.log('📋 Processing full queue data update from WebSocket');
-        const processedQueues: Record<string, any[]> = {};
-
-        Object.entries(data.queues).forEach(([destinationName, queueItems]: [string, any]) => {
-          const items = Array.isArray(queueItems) ? queueItems : [];
-          const normalizedDestination = destinationName.toUpperCase();
-
-          processedQueues[normalizedDestination] = items.map((item: any) => ({
-            ...item,
-            destinationName: normalizedDestination
-          })).sort((a, b) => a.queuePosition - b.queuePosition);
-        });
-
-        setQueues(processedQueues);
-        console.log('✅ WebSocket queue data updated:', Object.keys(processedQueues).length, 'destinations');
-      }
-
-      // Update summaries if provided
-      if (data && data.summaries && Array.isArray(data.summaries)) {
-        console.log('📋 Updating queue summaries from WebSocket');
-        const processedSummaries = data.summaries.map((summary: any) => ({
-          destinationId: summary.destinationId,
-          destinationName: summary.destinationName?.toUpperCase() || summary.destinationName,
-          totalVehicles: Number(summary.totalVehicles) || 0,
-          waitingVehicles: Number(summary.waitingVehicles) || 0,
-          loadingVehicles: Number(summary.loadingVehicles) || 0,
-          readyVehicles: Number(summary.readyVehicles) || 0,
-          estimatedNextDeparture: summary.estimatedNextDeparture
-        }));
-        setQueueSummaries(processedSummaries);
-      }
-    };
-    
-    const handleError = (error: any) => {
-      console.error('❌ WebSocket error:', error);
-      setError(error?.message || 'WebSocket connection error');
-    };
-    
-    // Register event listeners
-    wsClient.on('connected', handleConnect);
-    wsClient.on('disconnected', handleDisconnect);
-    wsClient.on('authenticated', handleAuthenticated);
-    wsClient.on('queue_data', handleQueueData);
-    wsClient.on('dashboard_data', handleQueueData); // Handle both event types
-    wsClient.on('initial_data', handleQueueData); // Handle initial data
-    wsClient.on('queue_update', handleQueueUpdate);
-    wsClient.on('error', handleError);
-    
-    // Check current connection state
-    if (wsClient.isAuthenticated()) {
-      setIsWebSocketConnected(true);
-      // Subscribe and request data if already authenticated
-      wsClient.subscribe(['queues', 'dashboard', 'bookings'])
-        .then(() => wsClient.requestQueueData())
-        .catch(err => console.error('❌ Failed to subscribe on mount:', err));
-    } else if (wsClient.isConnected()) {
-      setIsWebSocketConnected(true);
+      };
+      
+      mqttClient.on('queue_update', handleQueueUpdate);
+      mqttClient.on('vehicle_queue_updated', handleQueueUpdate);
+      
+      return () => {
+        mqttClient.off('queue_update', handleQueueUpdate);
+        mqttClient.off('vehicle_queue_updated', handleQueueUpdate);
+      };
     }
-    
-    // Cleanup function
-    return () => {
-      console.log('🧹 Cleaning up WebSocket queue listeners');
-      wsClient.removeListener('connected', handleConnect);
-      wsClient.removeListener('disconnected', handleDisconnect);
-      wsClient.removeListener('authenticated', handleAuthenticated);
-      wsClient.removeListener('queue_data', handleQueueData);
-      wsClient.removeListener('dashboard_data', handleQueueData);
-      wsClient.removeListener('initial_data', handleQueueData);
-      wsClient.removeListener('queue_update', handleQueueUpdate);
-      wsClient.removeListener('error', handleError);
-    };
-  }, [isAuthenticated, addNotification, lastManualRefresh]); // Include lastManualRefresh to handle updates
+  }, [isAuthenticated, mqttConnected, mqttAuthenticated, mqttClient]);
   
   // Initial data load when authenticated
   useEffect(() => {
@@ -458,7 +238,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
 
   // Fallback refresh when WebSocket is not connected
   useEffect(() => {
-    if (!isAuthenticated || isWebSocketConnected) return;
+    if (!isAuthenticated || isConnected) return;
     
     console.log('⏰ WebSocket not connected, setting up fallback refresh');
     const intervalId = setInterval(() => {
@@ -466,7 +246,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     }, 30000); // Refresh every 30 seconds when WebSocket is not available
     
     return () => clearInterval(intervalId);
-  }, [isAuthenticated, isWebSocketConnected, refreshQueues]);
+  }, [isAuthenticated, isConnected, refreshQueues]);
   
   const enterQueue = async (licensePlate: string) => {
     try {
@@ -491,8 +271,8 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
           });
         }
         
-        // Don't refresh immediately if WebSocket is connected (it will update automatically)
-        if (!isWebSocketConnected) {
+        // Don't refresh immediately if MQTT is connected (it will update automatically)
+        if (!isConnected) {
           refreshQueues();
         }
       }
@@ -507,8 +287,8 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     try {
       const response = await api.post('/api/queue/exit', { licensePlate });
       if (response.success) {
-        // Don't refresh immediately if WebSocket is connected
-        if (!isWebSocketConnected) {
+        // Don't refresh immediately if MQTT is connected
+        if (!isConnected) {
           refreshQueues();
         }
       }
@@ -523,8 +303,8 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     try {
       const response = await api.put('/queue/status', { licensePlate, status });
       if (response.success) {
-        // Don't refresh immediately if WebSocket is connected
-        if (!isWebSocketConnected) {
+        // Don't refresh immediately if MQTT is connected
+        if (!isConnected) {
           refreshQueues();
         }
       }
@@ -578,7 +358,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
         error,
         refreshQueues,
         fetchQueueForDestination,
-        isWebSocketConnected,
+        isConnected,
         isRealTimeEnabled: true,
         toggleRealTime: () => {},
         enterQueue,

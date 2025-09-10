@@ -1,7 +1,7 @@
 {
   "name": "nqlix-desktop-app",
   "private": true,
-  "version": "0.0.11",
+  "version": "0.0.13",
   "type": "module",
   "scripts": {
     "build": "tsc && vite build",
@@ -44,6 +44,7 @@
     "clsx": "^2.0.0",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.263.1",
+    "mqtt": "^5.3.4",
     "next-themes": "^0.2.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
