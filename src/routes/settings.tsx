@@ -3,6 +3,7 @@ import { Button } from "../components/ui/button";
 import { SystemStatus } from "../components/SystemStatus";
 import { UpdateSection } from "../components/UpdateSection";
 import EnhancedMqttConnectionTest from "../components/EnhancedMqttConnectionTest";
+import AppControls from "../components/AppControls";
 import { Moon, Sun, Printer, RefreshCw, TestTube } from "lucide-react";
 import { useState, useEffect } from "react";
 import { printerService, type PrinterInfo } from "../services/printerService";
@@ -85,6 +86,9 @@ export default function Settings() {
             </div>
           </div>
         </div>
+
+        {/* App Controls Section */}
+        <AppControls />
 
         {/* Printer Management Section */}
         <div className="space-y-4">

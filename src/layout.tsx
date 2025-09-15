@@ -1,5 +1,6 @@
 import { Outlet, Link, useLocation } from "react-router-dom";
 import clsx from "clsx";
+import { useState } from "react";
 import { 
   LayoutDashboard,
   Car,
@@ -16,22 +17,31 @@ import {
   Moon,
   MapPin,
   Ticket,
-  Eye
+  Eye,
+  Menu,
+  X
 } from "lucide-react";
 import { useAuth } from "./context/AuthProvider";
 import { Button } from "./components/ui/button";
 import { useSupervisorMode } from "./context/SupervisorModeProvider";
+import { WaslaLogo } from "./components/WaslaLogo";
 
 export default function Layout() {
   const location = useLocation();
   const { currentStaff, logout } = useAuth();
   const { isSupervisorMode, toggleSupervisorMode } = useSupervisorMode();
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
 
   const selectedClass = "text-primary bg-primary/10";
   const defaultClass = "w-5 h-5";
 
   // Check if user is supervisor
   const isSupervisor = currentStaff?.role === 'SUPERVISOR';
+
+  // Toggle sidebar
+  const toggleSidebar = () => {
+    setIsSidebarExpanded(!isSidebarExpanded);
+  };
 
   // Different nav items based on mode
   const regularNavItems = [
@@ -61,12 +71,45 @@ export default function Layout() {
 
   return (
     <div className="flex min-w-screen min-h-screen">
-      <div className="group fixed top-0 left-0 h-screen w-16 hover:w-48 bg-muted flex flex-col gap-2 px-2 py-3 border-r transition-all duration-500 ease-in-out z-30">
-        {/* Logo */}
-        <div className="w-12 h-12 bg-primary rounded-lg flex items-center justify-center mb-4 group-hover:w-44 transition-all duration-500 ease-in-out">
-                      <span className="text-white font-bold text-lg group-hover:hidden transition-opacity duration-300">L</span>
-                          <span className="text-white font-bold text-sm hidden group-hover:block opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-200">Nqlix Station</span>
+      {/* Sidebar */}
+      <div className={`fixed top-0 left-0 h-screen bg-muted flex flex-col gap-2 px-2 py-3 border-r transition-all duration-300 ease-in-out z-30 ${
+        isSidebarExpanded ? 'w-48' : 'w-16'
+      }`}>
+        {/* Header with Logo and Toggle */}
+        <div className="flex items-center justify-between mb-4">
+          <div className={`flex items-center justify-center transition-all duration-300 ease-in-out ${
+            isSidebarExpanded ? 'w-32 h-10' : 'w-12 h-12'
+          }`}>
+            {isSidebarExpanded ? (
+              <WaslaLogo size={32} showText={true} textSize="sm" className="text-primary" />
+            ) : (
+              <WaslaLogo size={32} />
+            )}
+          </div>
+          
+          {/* Toggle Button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`p-2 transition-all duration-300 ${isSidebarExpanded ? 'opacity-100' : 'opacity-0 w-0 overflow-hidden'}`}
+            onClick={toggleSidebar}
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
+
+        {/* Menu Toggle Button (when collapsed) */}
+        {!isSidebarExpanded && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-12 h-12 p-0 mb-2"
+            onClick={toggleSidebar}
+            title="Ouvrir le menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+        )}
 
         {/* Supervisor Mode Toggle */}
         {isSupervisor && (
@@ -74,7 +117,11 @@ export default function Layout() {
             <Button
               variant={isSupervisorMode ? "default" : "outline"}
               size="sm"
-              className="w-12 h-12 p-0 justify-center group-hover:w-44 group-hover:justify-start group-hover:px-3 transition-all duration-500 ease-in-out"
+              className={`transition-all duration-300 ease-in-out ${
+                isSidebarExpanded 
+                  ? 'w-44 justify-start px-3' 
+                  : 'w-12 h-12 p-0 justify-center'
+              }`}
               onClick={toggleSupervisorMode}
               title={isSupervisorMode ? "Quitter le Mode Superviseur" : "Entrer en Mode Superviseur"}
             >
@@ -84,9 +131,11 @@ export default function Layout() {
                 ) : (
                   <Shield className="w-5 h-5 flex-shrink-0" />
                 )}
-                <span className="hidden group-hover:block text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-200">
-                  {isSupervisorMode ? "Quitter Superviseur" : "Mode Superviseur"}
-                </span>
+                {isSidebarExpanded && (
+                  <span className="text-xs font-medium">
+                    {isSupervisorMode ? "Quitter Superviseur" : "Mode Superviseur"}
+                  </span>
+                )}
               </div>
             </Button>
           </div>
@@ -101,7 +150,10 @@ export default function Layout() {
               <Link 
                 key={item.path}
                 className={clsx(
-                  "hover:text-primary hover:bg-primary/5 w-12 h-12 flex items-center justify-center rounded-lg transition-all duration-500 ease-in-out group-hover:w-44 group-hover:justify-start group-hover:px-3",
+                  "hover:text-primary hover:bg-primary/5 flex items-center rounded-lg transition-all duration-300 ease-in-out",
+                  isSidebarExpanded 
+                    ? "w-44 justify-start px-3 py-3" 
+                    : "w-12 h-12 justify-center",
                   {
                     [selectedClass]: isActive,
                   }
@@ -111,9 +163,11 @@ export default function Layout() {
               >
                 <div className="flex items-center space-x-3">
                   <Icon className={clsx(defaultClass, "flex-shrink-0")} />
-                  <span className="hidden group-hover:block text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-200">
-                    {item.label}
-                  </span>
+                  {isSidebarExpanded && (
+                    <span className="text-sm font-medium">
+                      {item.label}
+                    </span>
+                  )}
                 </div>
               </Link>
             );
@@ -126,26 +180,34 @@ export default function Layout() {
         {/* User Info */}
         {currentStaff && (
           <div className="mb-2 px-1">
-            <div className={`w-12 h-12 rounded-lg flex items-center justify-center mb-2 group-hover:w-44 group-hover:justify-start group-hover:px-3 transition-all duration-500 ease-in-out ${
+            <div className={`rounded-lg flex items-center transition-all duration-300 ease-in-out ${
+              isSidebarExpanded 
+                ? 'w-44 justify-start px-3 py-3' 
+                : 'w-12 h-12 justify-center'
+            } ${
               isSupervisorMode ? 'bg-primary text-white' : 'bg-secondary text-secondary-foreground'
             }`} 
             title={`${currentStaff.firstName} ${currentStaff.lastName}${isSupervisorMode ? ' (Supervisor Mode)' : ''}`}>
               <div className="flex items-center space-x-3">
                 <User className="w-5 h-5 flex-shrink-0" />
-                <div className="hidden group-hover:block text-left opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-200">
-                  <div className="text-xs font-medium">{currentStaff.firstName} {currentStaff.lastName}</div>
-                  <div className="text-[10px] opacity-75">
-                    {isSupervisorMode ? 'MODE SUPERVISEUR' : currentStaff.role}
+                {isSidebarExpanded && (
+                  <div className="text-left">
+                    <div className="text-xs font-medium">{currentStaff.firstName} {currentStaff.lastName}</div>
+                    <div className="text-[10px] opacity-75">
+                      {isSupervisorMode ? 'MODE SUPERVISEUR' : currentStaff.role}
+                    </div>
                   </div>
+                )}
+              </div>
+            </div>
+            {!isSidebarExpanded && (
+              <div className="text-xs text-center text-muted-foreground mt-1">
+                <div className="font-medium">{currentStaff.firstName}</div>
+                <div className="text-[8px]">
+                  {isSupervisorMode ? 'SUPERVISEUR' : currentStaff.role}
                 </div>
               </div>
-            </div>
-            <div className="text-xs text-center text-muted-foreground group-hover:hidden">
-              <div className="font-medium">{currentStaff.firstName}</div>
-              <div className="text-[8px]">
-                {isSupervisorMode ? 'SUPERVISEUR' : currentStaff.role}
-              </div>
-            </div>
+            )}
           </div>
         )}
         
@@ -155,7 +217,10 @@ export default function Layout() {
           {!isSupervisorMode && (
             <Link 
               className={clsx(
-                "hover:text-primary hover:bg-primary/5 w-12 h-12 flex items-center justify-center rounded-lg transition-all duration-500 ease-in-out group-hover:w-44 group-hover:justify-start group-hover:px-3",
+                "hover:text-primary hover:bg-primary/5 flex items-center rounded-lg transition-all duration-300 ease-in-out",
+                isSidebarExpanded 
+                  ? "w-44 justify-start px-3 py-3" 
+                  : "w-12 h-12 justify-center",
                 {
                   [selectedClass]: location.pathname === "/settings",
                 }
@@ -165,9 +230,11 @@ export default function Layout() {
             >
               <div className="flex items-center space-x-3">
                 <Settings className={clsx(defaultClass, "flex-shrink-0")} />
-                                  <span className="hidden group-hover:block text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-200">
+                {isSidebarExpanded && (
+                  <span className="text-sm font-medium">
                     Paramètres
                   </span>
+                )}
               </div>
             </Link>
           )}
@@ -175,21 +242,30 @@ export default function Layout() {
           <Button
             variant="ghost"
             size="sm"
-            className="w-12 h-12 p-0 justify-center hover:bg-red-50 hover:text-red-600 group-hover:w-44 group-hover:justify-start group-hover:px-3 transition-all duration-500 ease-in-out"
+            className={`hover:bg-red-50 hover:text-red-600 flex items-center transition-all duration-300 ease-in-out ${
+              isSidebarExpanded 
+                ? 'w-44 justify-start px-3 py-3' 
+                : 'w-12 h-12 p-0 justify-center'
+            }`}
             onClick={handleLogout}
-                          title="Déconnexion"
+            title="Déconnexion"
           >
             <div className="flex items-center space-x-3">
               <LogOut className="w-5 h-5 flex-shrink-0" />
-              <span className="hidden group-hover:block text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-200">
-                Déconnexion
-              </span>
+              {isSidebarExpanded && (
+                <span className="text-sm font-medium">
+                  Déconnexion
+                </span>
+              )}
             </div>
           </Button>
         </div>
       </div>
       
-      <div className="flex-1 min-h-screen overflow-auto ml-16 group-hover:ml-48 transition-all duration-500 ease-in-out">
+      {/* Main Content Area */}
+      <div className={`flex-1 min-h-screen overflow-auto transition-all duration-300 ease-in-out ${
+        isSidebarExpanded ? 'ml-48' : 'ml-16'
+      }`}>
         <Outlet />
       </div>
     </div>

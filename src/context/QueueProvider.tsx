@@ -29,6 +29,10 @@ interface QueueSummary {
   loadingVehicles: number;
   readyVehicles: number;
   estimatedNextDeparture?: string;
+  governorate?: string | undefined;
+  governorateAr?: string | undefined;
+  delegation?: string | undefined;
+  delegationAr?: string | undefined;
 }
 
 interface QueueContextType {

@@ -307,7 +307,7 @@ export function TicketPrintout({ booking }: { booking: any }) {
           }}
         />
 
-        <h2 style={printStyles.companyName}>NQLIX COMPANY</h2>
+        <h2 style={printStyles.companyName}>WASLA TRANSPORTATION</h2>
 
         <div style={printStyles.bilingualTitle}>
           <span style={printStyles.englishTitle}>PASSENGER TICKET</span>

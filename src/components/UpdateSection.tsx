@@ -31,7 +31,7 @@ export const UpdateSection: React.FC = () => {
       } catch (err) {
         console.error('Failed to load app info:', err);
         setCurrentVersion('Unknown');
-        setAppName('Nqlix');
+        setAppName('Wasla');
       }
     };
 

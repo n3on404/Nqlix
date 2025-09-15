@@ -56,6 +56,19 @@ interface BookingData {
   bookingType: 'CASH' | 'ONLINE';
   createdAt: string;
   verificationCode: string;
+  staffName?: string;
+  customerPhone?: string;
+}
+
+interface ActivityData {
+  id: string;
+  type: 'operation' | 'booking' | 'vehicle_entry' | 'vehicle_exit';
+  action: string;
+  description: string;
+  timestamp: Date;
+  staffName: string;
+  success: boolean;
+  details?: any;
 }
 
 interface DashboardStats {
@@ -104,6 +117,7 @@ function StaffDashboard() {
   const [queues, setQueues] = useState<QueueData[]>([]);
   const [vehicles, setVehicles] = useState<VehicleData[]>([]);
   const [recentBookings, setRecentBookings] = useState<BookingData[]>([]);
+  const [activityLog, setActivityLog] = useState<ActivityData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
@@ -115,12 +129,12 @@ function StaffDashboard() {
       setIsLoading(true);
       
       // Fetch all data in parallel
-      const [statsRes, queuesRes, vehiclesRes, bookingsRes] = await Promise.all([
+      const [statsRes, queuesRes, vehiclesRes, bookingsRes, activityRes] = await Promise.all([
         api.getDashboardStats(),
-        api.getAvailableQueues(),
         api.getDashboardQueues(),
         api.getDashboardVehicles(),
-        api.getDashboardBookings()
+        api.getDashboardBookings(),
+        api.getActivityLog(20)
       ]);
 
       if (statsRes.success) {
@@ -137,6 +151,10 @@ function StaffDashboard() {
       
       if (bookingsRes.success) {
         setRecentBookings(bookingsRes.data?.slice(0, 10) || []);
+      }
+
+      if (activityRes.success) {
+        setActivityLog(activityRes.data || []);
       }
       
       setLastUpdate(new Date());
@@ -490,33 +508,74 @@ function StaffDashboard() {
             </h2>
           </div>
           <div className="flex-1 overflow-auto">
-            {recentBookings.length > 0 ? (
-              <div className="p-6 space-y-4">
-                {recentBookings.map((booking) => (
-                  <div key={booking.id} className="border rounded-lg p-3">
+            {activityLog.length > 0 ? (
+              <div className="p-6 space-y-3">
+                {activityLog.map((activity) => (
+                  <div key={activity.id} className="border rounded-lg p-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center space-x-2">
-                        <Badge variant={booking.bookingType === 'CASH' ? 'default' : 'secondary'}>
-                          {booking.bookingType}
-                        </Badge>
-                        <span className="text-sm font-medium">{booking.vehicleLicensePlate}</span>
+                        {activity.type === 'booking' && (
+                          <Badge variant="default" className="bg-green-500">
+                            <Ticket className="h-3 w-3 mr-1" />
+                            Réservation
+                          </Badge>
+                        )}
+                        {activity.type === 'vehicle_entry' && (
+                          <Badge variant="secondary" className="bg-blue-500 text-white">
+                            <ArrowDownRight className="h-3 w-3 mr-1" />
+                            Entrée
+                          </Badge>
+                        )}
+                        {activity.type === 'vehicle_exit' && (
+                          <Badge variant="secondary" className="bg-orange-500 text-white">
+                            <ArrowUpRight className="h-3 w-3 mr-1" />
+                            Sortie
+                          </Badge>
+                        )}
+                        {activity.type === 'operation' && (
+                          <Badge variant="outline">
+                            <Activity className="h-3 w-3 mr-1" />
+                            Opération
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {activity.staffName}
+                        </span>
                       </div>
-                      <span className="text-sm text-muted-foreground">
-                        {formatTime(booking.createdAt)}
-                      </span>
+                      <div className="flex items-center space-x-2">
+                        {activity.success ? (
+                          <CheckCircle className="h-3 w-3 text-green-500" />
+                        ) : (
+                          <XCircle className="h-3 w-3 text-red-500" />
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {formatTime(activity.timestamp.toString())}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-sm">
-                      <p className="font-medium">{booking.destinationName}</p>
-                      <p className="text-muted-foreground">
-                        {booking.seatsBooked} places • {formatCurrency(booking.totalAmount)}
-                      </p>
+                      <p className="text-muted-foreground">{activity.description}</p>
+                      {activity.details && (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {activity.details.vehicleLicensePlate && (
+                            <span className="font-mono bg-muted px-1 rounded">
+                              {activity.details.vehicleLicensePlate}
+                            </span>
+                          )}
+                          {activity.details.totalAmount && (
+                            <span className="ml-2 text-green-600 font-medium">
+                              {formatCurrency(activity.details.totalAmount)}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="p-6 text-center text-muted-foreground">
-                <Ticket className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <Activity className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>Aucune activité récente</p>
               </div>
             )}

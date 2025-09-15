@@ -15,7 +15,8 @@ import {
   Edit,
   UserCheck,
   AlertCircle,
-  TrendingUp
+  TrendingUp,
+  X
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQueue } from "../context/QueueProvider";
@@ -47,6 +48,7 @@ import { getWebSocketClient, initializeWebSocket } from "../lib/websocket";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import api from "../lib/api";
+import React from "react";
 
 // Sortable queue item component
 interface SortableQueueItemProps {
@@ -55,9 +57,11 @@ interface SortableQueueItemProps {
   formatTime: (dateString: string) => string;
   getBasePriceForDestination: (destinationName: string) => number | undefined;
   onVehicleClick: (vehicle: any) => void;
+  onExitQueue: (licensePlate: string) => void;
+  actionLoading: string | null;
 }
 
-function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick }: SortableQueueItemProps) {
+function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, actionLoading }: SortableQueueItemProps) {
   const {
     attributes,
     listeners,
@@ -78,8 +82,13 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex flex-col md:flex-row items-center justify-between gap-6 p-6 bg-gradient-to-br from-card to-muted border border-primary/30 rounded-2xl shadow-lg transition-all duration-200 ${
-        isDragging ? 'opacity-70 shadow-2xl scale-105 border-primary' : 'hover:shadow-xl hover:border-primary/60'
+      className={`flex flex-col md:flex-row items-center justify-between gap-6 p-6 bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 border-2 rounded-2xl shadow-lg transition-all duration-200 ${
+        queue.status === 'WAITING' ? 'border-yellow-300 dark:border-yellow-600' :
+        queue.status === 'LOADING' ? 'border-blue-300 dark:border-blue-600' :
+        queue.status === 'READY' ? 'border-green-300 dark:border-green-600' :
+        'border-blue-200 dark:border-blue-700'
+      } ${
+        isDragging ? 'opacity-70 shadow-2xl scale-105' : 'hover:shadow-xl'
       }`}
     >
       {/* Left: Drag Handle, Position, Vehicle Info */}
@@ -88,13 +97,13 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
         <div className="flex flex-col items-center mr-2">
           <GripVertical className="h-6 w-6 text-white opacity-60 mb-2 cursor-grab" {...attributes} {...listeners} />
           {/* Position Badge */}
-          <div className="bg-gradient-to-br from-primary to-primary/80 text-white rounded-full w-14 h-14 flex items-center justify-center font-extrabold text-2xl shadow-lg border-4 border-white/20">
+          <div className="bg-gradient-to-br from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 text-white rounded-full w-14 h-14 flex items-center justify-center font-extrabold text-2xl shadow-lg border-4 border-white/20 dark:border-gray-700/20">
             {queue.queuePosition}
           </div>
         </div>
         {/* Vehicle Info - Now Clickable */}
         <div 
-          className="flex items-center gap-4 flex-1 cursor-pointer hover:bg-primary/10 p-3 rounded-lg transition-colors group"
+          className="flex items-center gap-4 flex-1 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 p-3 rounded-lg transition-colors group"
           onClick={() => onVehicleClick({ 
             licensePlate: queue.licensePlate,
             firstName: queue.vehicle?.driver?.firstName,
@@ -104,21 +113,35 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             queueId: queue.id 
           })}
         >
-          <div className="p-3 bg-accent rounded-xl flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-            <Car className="h-7 w-7 text-primary-foreground" />
+          <div className="p-3 bg-blue-100 dark:bg-blue-800 rounded-xl flex items-center justify-center group-hover:bg-blue-200 dark:group-hover:bg-blue-700 transition-colors">
+            <Car className="h-7 w-7 text-blue-600 dark:text-blue-400" />
           </div>
                       <div className="flex-1">
               <div className="flex items-center gap-2">
-                <p className="font-bold text-white text-lg tracking-wide">{queue.licensePlate}</p>
-                <Edit className="h-4 w-4 text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                <p className="font-bold text-gray-900 dark:text-white text-lg tracking-wide">{queue.licensePlate}</p>
+                <Edit className="h-4 w-4 text-blue-600 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
-              <p className="text-sm text-muted-foreground font-medium">{queue.vehicle?.driver?.firstName} {queue.vehicle?.driver?.lastName}</p>
-              <p className="text-xs text-blue-400 group-hover:text-blue-300">Cliquez pour changer la destination</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">{queue.vehicle?.driver?.firstName} {queue.vehicle?.driver?.lastName}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">Cliquez pour changer la destination</p>
+                {/* Status Badge */}
+                <div className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                  queue.status === 'WAITING' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
+                  queue.status === 'LOADING' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' :
+                  queue.status === 'READY' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
+                  'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+                }`}>
+                  {queue.status === 'WAITING' ? 'En attente' :
+                   queue.status === 'LOADING' ? 'En charge' :
+                   queue.status === 'READY' ? 'Prêt' :
+                   queue.status}
+                </div>
+              </div>
             </div>
         </div>
       </div>
       {/* Divider for wide screens */}
-      <div className="hidden md:block h-16 w-px bg-primary/20 mx-4" />
+      <div className="hidden md:block h-16 w-px bg-blue-200 dark:bg-blue-700 mx-4" />
               {/* Right: Status & Actions */}
         <div className="flex flex-col md:flex-row items-center gap-6 flex-shrink-0">
           {/* Enhanced Seat Booking Display */}
@@ -132,8 +155,8 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
                 <div className="space-y-2">
                   {/* Seat Count */}
                   <div className="flex items-center justify-center gap-2">
-                    <Users className={`h-5 w-5 ${isFullyBooked ? 'text-red-400' : 'text-white'}`} />
-                    <span className={`font-bold text-lg ${isFullyBooked ? 'text-red-400' : 'text-white'}`}>
+                    <Users className={`h-5 w-5 ${isFullyBooked ? 'text-red-500 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`} />
+                    <span className={`font-bold text-lg ${isFullyBooked ? 'text-red-500 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
                       {queue.availableSeats}/{queue.totalSeats}
                     </span>
                   </div>
@@ -151,7 +174,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
                         {bookedSeats} réservé{bookedSeats > 1 ? 's' : ''}
                       </div>
                     ) : (
-                      <div className="text-muted-foreground flex items-center gap-1">
+                      <div className="text-gray-600 dark:text-gray-400 flex items-center gap-1">
                         <TrendingUp className="h-3 w-3" />
                         places libres
                       </div>
@@ -171,7 +194,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
                   </div>
                   
                   {/* Booking Percentage */}
-                  <div className="text-xs text-muted-foreground">
+                  <div className="text-xs text-gray-600 dark:text-gray-400">
                     {Math.round(bookingPercentage)}% réservé
                   </div>
                 </div>
@@ -181,22 +204,55 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
         {/* Departure */}
         <div className="text-center">
           <div className="flex items-center justify-center gap-2">
-            <Clock className="h-5 w-5 text-white" />
-            <span className="text-base font-semibold text-white">
+            <Clock className="h-5 w-5 text-gray-700 dark:text-gray-300" />
+            <span className="text-base font-semibold text-gray-900 dark:text-white">
               {queue.estimatedDeparture ? formatTime(queue.estimatedDeparture) : 'TBD'}
             </span>
           </div>
-          <p className="text-xs text-muted-foreground">départ estimé</p>
+          <p className="text-xs text-gray-600 dark:text-gray-400">départ estimé</p>
         </div>
         {/* Price */}
         <div className="text-center">
-          <p className="text-xl font-bold text-primary-foreground bg-primary/80 px-3 py-1 rounded-lg shadow">{formatCurrency(basePrice)}</p>
-          <p className="text-xs text-muted-foreground">prix de base</p>
+          <p className="text-xl font-bold text-white bg-blue-600 dark:bg-blue-700 px-3 py-1 rounded-lg shadow">{formatCurrency(basePrice)}</p>
+          <p className="text-xs text-gray-600 dark:text-gray-400">prix de base</p>
         </div>
-        {/* Action */}
-        <Button variant="default" size="icon" className="ml-2 bg-primary text-white shadow-lg hover:bg-primary/90">
-          <ArrowRight className="h-6 w-6" />
-        </Button>
+        {/* Actions */}
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            size="icon" 
+            className="bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800"
+            onClick={(e) => {
+              e.stopPropagation();
+              onExitQueue(queue.licensePlate);
+            }}
+            disabled={actionLoading === queue.licensePlate || queue.status !== 'WAITING'}
+          >
+            {actionLoading === queue.licensePlate ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <span className="relative group inline-flex">
+                <X className="h-4 w-4" />
+                {queue.status !== 'WAITING' && (
+                  <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap bg-gray-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">Disponible uniquement en attente</span>
+                )}
+              </span>
+            )}
+          </Button>
+          <Button 
+            variant="default" 
+            size="icon" 
+            className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 text-white shadow-lg disabled:opacity-60"
+            disabled={queue.status !== 'WAITING'}
+          >
+            <span className="relative group inline-flex">
+              <ArrowRight className="h-6 w-6" />
+              {queue.status !== 'WAITING' && (
+                <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap bg-gray-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">Changer la destination: uniquement en attente</span>
+              )}
+            </span>
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -220,7 +276,7 @@ export default function QueueManagement() {
     error,
     refreshQueues,
     fetchQueueForDestination,
-    isWebSocketConnected,
+    isConnected,
     enterQueue,
     exitQueue,
     updateVehicleStatus,
@@ -257,6 +313,12 @@ export default function QueueManagement() {
   const [selectedNewDestination, setSelectedNewDestination] = useState<string | null>(null);
   const [changeQueueLoading, setChangeQueueLoading] = useState(false);
   const [changeQueueError, setChangeQueueError] = useState<string | null>(null);
+
+  // Filter state
+  const [governments, setGovernments] = useState<any[]>([]);
+  const [selectedGovernment, setSelectedGovernment] = useState<string>('');
+  const [selectedDelegation, setSelectedDelegation] = useState<string>('');
+  const [availableDelegations, setAvailableDelegations] = useState<any[]>([]);
 
   // Helper to get base price for a destination - updated to work with route table
   function getBasePriceForDestination(destinationName: string) {
@@ -302,6 +364,31 @@ export default function QueueManagement() {
       });
     }
   }, [queueSummaries, queues, isLoading, fetchQueueForDestination]);
+
+  // Fetch queues with filters when filters change
+  useEffect(() => {
+    const fetchQueuesWithFilters = async () => {
+      try {
+        const filters: { governorate?: string; delegation?: string } = {};
+        if (selectedGovernment) filters.governorate = selectedGovernment;
+        if (selectedDelegation) filters.delegation = selectedDelegation;
+        
+        console.log('🔄 Fetching queues with filters:', filters);
+        const response = await api.getAvailableQueues(filters);
+        
+        if (response.success && response.data) {
+          console.log('✅ Filtered queues loaded:', response.data);
+          // Update the queue summaries with filtered data
+          // Note: This would need to be integrated with the QueueProvider context
+          // For now, we'll just log the filtered results
+        }
+      } catch (error) {
+        console.error('❌ Error fetching filtered queues:', error);
+      }
+    };
+
+    fetchQueuesWithFilters();
+  }, [selectedGovernment, selectedDelegation]);
 
   // Enhanced function to get route info for a destination
   function getRouteForDestination(destinationName: string) {
@@ -426,7 +513,7 @@ export default function QueueManagement() {
 
   // Real-time notifications for queue/vehicle events
   useEffect(() => {
-    if (!isWebSocketConnected) return;
+    if (!isConnected) return;
     const wsClient = getWebSocketClient();
     
     const queueHandler = (msg: any) => {
@@ -598,7 +685,7 @@ export default function QueueManagement() {
       wsClient.removeListener('seat_availability_changed', seatHandler);
       wsClient.removeListener('vehicle_status_changed', vehicleStatusChangeHandler);
     };
-  }, [isWebSocketConnected, addNotification, refreshQueues]);
+  }, [isConnected, addNotification, refreshQueues]);
 
   // Initialize WebSocket connection for real-time updates
   useEffect(() => {
@@ -610,7 +697,17 @@ export default function QueueManagement() {
       console.log('🔌 Queue Management: WebSocket not connected, connecting...');
       wsClient.connect();
     }
-  }, []);
+
+    // Set up periodic refresh to ensure data stays current
+    const refreshInterval = setInterval(() => {
+      console.log('🔄 Periodic queue refresh...');
+      refreshQueues();
+    }, 30000); // Refresh every 30 seconds
+
+    return () => {
+      clearInterval(refreshInterval);
+    };
+  }, [refreshQueues]);
 
   // Update lastUpdated timestamp when queues change
   useEffect(() => {
@@ -682,6 +779,63 @@ export default function QueueManagement() {
       setRoutes([]);
     });
   }, []);
+
+  // Fetch governments for filtering
+  const fetchGovernments = async () => {
+    try {
+      const response = await api.getQueueLocations();
+      if (response.success && response.data) {
+        console.log('🏛️ Governments loaded:', response.data);
+        setGovernments(response.data);
+      } else {
+        console.warn('⚠️ Failed to load governments:', response);
+        setGovernments([]);
+      }
+    } catch (error) {
+      console.error('❌ Error loading governments:', error);
+      setGovernments([]);
+    }
+  };
+
+  // Handle government change
+  const handleGovernmentChange = (government: string) => {
+    setSelectedGovernment(government);
+    setSelectedDelegation('');
+    
+    if (government) {
+      const selectedGov = governments.find(g => g.name === government);
+      setAvailableDelegations(selectedGov?.delegations || []);
+    } else {
+      setAvailableDelegations([]);
+    }
+  };
+
+  // Handle delegation change
+  const handleDelegationChange = (delegation: string) => {
+    setSelectedDelegation(delegation);
+  };
+
+  // Clear filters
+  const clearFilters = () => {
+    setSelectedGovernment('');
+    setSelectedDelegation('');
+    setAvailableDelegations([]);
+  };
+
+  // Fetch governments on mount
+  useEffect(() => {
+    fetchGovernments();
+  }, []);
+
+  // Aggregate status counts across all destinations (for header summary)
+  const aggregateStatusCounts = () => {
+    const allItems: any[] = Object.values(queues).flat() as any[];
+    const waiting = allItems.filter((q: any) => q.status === 'WAITING').length;
+    const loading = allItems.filter((q: any) => q.status === 'LOADING').length;
+    const ready = allItems.filter((q: any) => q.status === 'READY').length;
+    const total = allItems.length;
+    return { waiting, loading, ready, total };
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -802,10 +956,25 @@ export default function QueueManagement() {
     }
   };
   const handleExitQueue = async (licensePlate: string) => {
+    // Show confirmation dialog
+    const confirmed = window.confirm(
+      `Êtes-vous sûr de vouloir retirer le véhicule ${licensePlate} de la file d'attente ?\n\nCette action supprimera également toutes les réservations associées.`
+    );
+    
+    if (!confirmed) return;
+    
     setActionLoading(licensePlate);
     const result = await exitQueue(licensePlate);
     setActionLoading(null);
-    if (!result.success) {
+    
+    if (result.success) {
+      addNotification({
+        type: 'success',
+        title: 'Véhicule retiré',
+        message: `Le véhicule ${licensePlate} a été retiré de la file d'attente`,
+        duration: 4000
+      });
+    } else {
       addNotification({
         type: 'error',
         title: 'Échec de la sortie de la file',
@@ -831,29 +1000,45 @@ export default function QueueManagement() {
   return (
     <div className="flex flex-col h-full w-full p-6 space-y-8 bg-muted">
       {/* Enhanced Header */}
-      <div className="bg-card rounded-xl p-6 shadow-sm border border-gray-200">
+      <div className="sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-card/80 bg-card rounded-2xl p-6 shadow-sm border border-gray-200">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           <div className="flex-1">
             <div className="flex items-center space-x-3 mb-2">
               <h1 className="text-3xl font-bold text-primary">Gestion de la file d'attente</h1>
-              {isWebSocketConnected && (
+              {isConnected && (
                 <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 flex items-center gap-1">
                   <Activity className="h-3 w-3 animate-pulse" />
                   <span>Live</span>
                 </Badge>
               )}
             </div>
-            <div className="flex items-center space-x-6">
+            <div className="flex flex-col xl:flex-row xl:items-center xl:space-x-6 space-y-3 xl:space-y-0">
               <p className="text-muted-foreground">Gérer les files d'attente par destination</p>
-            {lastUpdated && (
-              <div className="flex items-center space-x-1 text-sm text-green-700 dark:text-green-400">
-                <CheckCircle className="h-4 w-4" />
-                <span>Mis à jour {lastUpdated.toLocaleTimeString()}</span>
-              </div>
-            )}
+              {lastUpdated && (
+                <div className="flex items-center space-x-1 text-sm text-green-700 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4" />
+                  <span>Mis à jour {lastUpdated.toLocaleTimeString()}</span>
+                </div>
+              )}
+              {(() => {
+                const s = aggregateStatusCounts();
+                return (
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-1 rounded-full text-xs bg-yellow-100 text-yellow-800">En attente: {s.waiting}</span>
+                    <span className="px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">En charge: {s.loading}</span>
+                    <span className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">Prêt: {s.ready}</span>
+                    <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-800">Total: {s.total}</span>
+                  </div>
+                );
+              })()}
+            </div>
+            {/* Compact Status Legend */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500"></span> En attente</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span> En charge</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> Prêt</span>
+            </div>
           </div>
-        </div>
-          
           <div className="flex items-center gap-3">
           <Button 
             variant="outline" 
@@ -882,6 +1067,71 @@ export default function QueueManagement() {
             >
               + Ajouter un véhicule à la file
             </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Section */}
+      <div className="bg-card rounded-2xl p-6 shadow-sm border border-gray-200">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-4">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Filtres de localisation</h2>
+              {(selectedGovernment || selectedDelegation) && (
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                    Filtres actifs ({queueSummaries.length} destination{queueSummaries.length > 1 ? 's' : ''})
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
+                <label className="text-sm font-medium whitespace-nowrap text-gray-700">Gouvernorat:</label>
+                <select 
+                  className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  value={selectedGovernment} 
+                  onChange={(e) => handleGovernmentChange(e.target.value)}
+                >
+                  <option value="">Tous les gouvernorats</option>
+                  {governments.map(gov => (
+                    <option key={gov.name} value={gov.name}>
+                      {gov.nameAr ? `${gov.name} - ${gov.nameAr}` : gov.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {selectedGovernment && (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
+                  <label className="text-sm font-medium whitespace-nowrap text-gray-700">Délégation:</label>
+                  <select 
+                    className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    value={selectedDelegation} 
+                    onChange={(e) => handleDelegationChange(e.target.value)}
+                  >
+                    <option value="">Toutes les délégations</option>
+                    {availableDelegations.map(delegation => (
+                      <option key={delegation.name} value={delegation.name}>
+                        {delegation.nameAr ? `${delegation.name} - ${delegation.nameAr}` : delegation.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              
+              {(selectedGovernment || selectedDelegation) && (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="w-full sm:w-auto border-gray-300 text-gray-700 hover:bg-gray-50"
+                  onClick={clearFilters}
+                >
+                  Effacer les filtres
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1241,13 +1491,36 @@ export default function QueueManagement() {
             >
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg font-semibold text-gray-900">{summary.destinationName}</CardTitle>
+                  <div className="flex-1">
+                    <CardTitle className="text-lg font-semibold text-gray-900 dark:text-white">{summary.destinationName}</CardTitle>
+                    {/* Location information */}
+                    {(summary.governorate || summary.delegation) && (
+                      <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                        {summary.governorate && summary.delegation ? (
+                          <span className="flex items-center gap-1">
+                            <span className="font-medium">{summary.governorate}</span>
+                            <span>•</span>
+                            <span>{summary.delegation}</span>
+                          </span>
+                        ) : summary.governorate ? (
+                          <span className="font-medium">{summary.governorate}</span>
+                        ) : summary.delegation ? (
+                          <span>{summary.delegation}</span>
+                        ) : null}
+                        {summary.governorateAr && summary.delegationAr && (
+                          <div className="text-xs text-gray-500 dark:text-gray-500 font-arabic">
+                            {summary.governorateAr} - {summary.delegationAr}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   {(() => {
                     const route = getRouteForDestination(summary.destinationName);
                     return route ? (
                       <div className="text-right">
-                        <p className="text-sm font-bold text-green-600">{formatCurrency(route.basePrice)}</p>
-                        <p className="text-xs text-muted-foreground">Prix route</p>
+                        <p className="text-sm font-bold text-green-600 dark:text-green-400">{formatCurrency(route.basePrice)}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Prix route</p>
                       </div>
                     ) : null;
                   })()}
@@ -1267,16 +1540,30 @@ export default function QueueManagement() {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="text-center p-3 bg-yellow-50 rounded-lg">
-                      <p className="text-lg font-semibold text-yellow-700">{summary.waitingVehicles}</p>
-                      <p className="text-xs text-yellow-600">En attente</p>
-                    </div>
-                    <div className="text-center p-3 bg-blue-50 rounded-lg">
-                      <p className="text-lg font-semibold text-blue-700">{summary.loadingVehicles}</p>
-                      <p className="text-xs text-blue-600">En charge</p>
-                    </div>
-                  </div>
+                  {(() => {
+                    // Calculate actual status counts from detailed queue data
+                    const destinationQueues = queues[summary.destinationName] || [];
+                    const waitingCount = destinationQueues.filter((q: any) => q.status === 'WAITING').length;
+                    const loadingCount = destinationQueues.filter((q: any) => q.status === 'LOADING').length;
+                    const readyCount = destinationQueues.filter((q: any) => q.status === 'READY').length;
+                    
+                    return (
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="text-center p-3 bg-yellow-50 rounded-lg">
+                          <p className="text-lg font-semibold text-yellow-700">{waitingCount}</p>
+                          <p className="text-xs text-yellow-600">En attente</p>
+                        </div>
+                        <div className="text-center p-3 bg-blue-50 rounded-lg">
+                          <p className="text-lg font-semibold text-blue-700">{loadingCount}</p>
+                          <p className="text-xs text-blue-600">En charge</p>
+                        </div>
+                        <div className="text-center p-3 bg-green-50 rounded-lg">
+                          <p className="text-lg font-semibold text-green-700">{readyCount}</p>
+                          <p className="text-xs text-green-600">Prêt</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   
                   {/* Booking Summary */}
                   {(() => {
@@ -1331,11 +1618,15 @@ export default function QueueManagement() {
 
       {/* Enhanced Loading indicator */}
       {isLoading && (
-        <div className="flex justify-center items-center py-12">
-          <div className="text-center">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-3" />
-            <p className="text-gray-600">Chargement des données de la file...</p>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="bg-card rounded-2xl p-6 border border-gray-200 animate-pulse">
+              <div className="h-6 w-1/3 bg-gray-200 rounded mb-4"></div>
+              <div className="h-3 w-2/3 bg-gray-200 rounded mb-2"></div>
+              <div className="h-3 w-1/2 bg-gray-200 rounded mb-6"></div>
+              <div className="h-12 w-full bg-gray-100 rounded"></div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -1365,11 +1656,11 @@ export default function QueueManagement() {
               const destinationQueues = queues[destination] || [];
               
               return (
-                <div key={destination} className="bg-card rounded-xl p-6 shadow-sm border border-gray-200">
-                  <div className="flex justify-between items-center mb-6">
+                <div key={destination} className="bg-card rounded-2xl p-6 shadow-sm border border-gray-200">
+                  <div className="sticky top-16 z-10 bg-card/90 backdrop-blur rounded-xl -mx-6 px-6 py-3 border-b border-gray-200 flex justify-between items-center mb-6">
                     <div className="flex items-center space-x-3">
                       <h2 className="text-2xl dark:text-white font-bold text-gray-900">{destination}</h2>
-                    {isWebSocketConnected && (
+                    {isConnected && (
                         <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 flex items-center gap-1">
                         <Activity className="h-3 w-3 animate-pulse" />
                         <span>Live</span>
@@ -1384,6 +1675,45 @@ export default function QueueManagement() {
                     )}
                   </div>
                   
+                  {/* Real-time Status Summary */}
+                  {destinationQueues.length > 0 && (
+                    <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Statut des véhicules</h3>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          Mis à jour en temps réel
+                        </div>
+                      </div>
+                      {(() => {
+                        const waitingCount = destinationQueues.filter((q: any) => q.status === 'WAITING').length;
+                        const loadingCount = destinationQueues.filter((q: any) => q.status === 'LOADING').length;
+                        const readyCount = destinationQueues.filter((q: any) => q.status === 'READY').length;
+                        const totalCount = destinationQueues.length;
+                        
+                        return (
+                          <div className="grid grid-cols-4 gap-3">
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalCount}</div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400">Total</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{waitingCount}</div>
+                              <div className="text-xs text-yellow-600 dark:text-yellow-400">En attente</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{loadingCount}</div>
+                              <div className="text-xs text-blue-600 dark:text-blue-400">En charge</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">{readyCount}</div>
+                              <div className="text-xs text-green-600 dark:text-green-400">Prêt</div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                  
                   {summary && summary.totalVehicles > 0 ? (
                     destinationQueues.length > 0 ? (
                       <DndContext
@@ -1395,16 +1725,20 @@ export default function QueueManagement() {
                           items={destinationQueues.map(q => q.id) || []}
                           strategy={verticalListSortingStrategy}
                         >
-                          <div className="space-y-3">
+                          <div className="space-y-3 transition-all">
                             {destinationQueues.map((queue) => (
-                                                              <SortableQueueItem
+                                                              <div className="animate-[fadeIn_0.3s_ease]" key={`anim-${queue.id}`}>
+                                <SortableQueueItem
                                   key={queue.id}
                                   queue={queue}
                                   getStatusColor={getStatusColor}
                                   formatTime={formatTime}
                                   getBasePriceForDestination={getBasePriceForDestination}
                                   onVehicleClick={handleVehicleClick}
+                                  onExitQueue={handleExitQueue}
+                                  actionLoading={actionLoading}
                                 />
+                              </div>
                             ))}
                           </div>
                         </SortableContext>

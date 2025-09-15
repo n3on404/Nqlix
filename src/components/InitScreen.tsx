@@ -7,6 +7,7 @@ import { Badge } from './ui/badge';
 import { useInit } from '../context/InitProvider';
 import { useTauri } from '../context/TauriProvider';
 import api from '../lib/api';
+import { WaslaLogo } from './WaslaLogo';
 
 interface SystemCheck {
   name: string;
@@ -403,11 +404,11 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
         <CardContent className="p-8">
           {/* Logo and Title */}
           <div className="text-center mb-8">
-            <div className="w-16 h-16 bg-primary rounded-xl flex items-center justify-center mx-auto mb-4">
-              <span className="text-white font-bold text-2xl">L</span>
+            <div className="flex justify-center mb-4">
+              <WaslaLogo size={64} />
             </div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-              Nqlix
+              Wasla
             </h1>
             <div className="flex items-center justify-center gap-2 mb-2">
               <Badge variant="outline" className="text-xs">

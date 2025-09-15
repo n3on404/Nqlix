@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
 import { getLocalStorage } from './storage';
+import api from './api';
 
 export interface WebSocketMessage {
   type: string;
@@ -40,7 +41,13 @@ export class WebSocketClient {
     
     console.log('🔌 Connecting to WebSocket...');
     
-    invoke('start_ws_relay')
+    // Get the current server URL from API config
+    const apiConfig = api.getConfig();
+    const serverUrl = apiConfig.baseUrl.replace('/api', '');
+    
+    console.log('🔌 Using server URL for WebSocket:', serverUrl);
+    
+    invoke('start_ws_relay', { serverUrl })
       .then(() => {
         this.setConnectionState(ConnectionState.CONNECTED);
         this.emit('connected');

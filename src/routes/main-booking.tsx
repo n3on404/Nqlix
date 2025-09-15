@@ -22,12 +22,29 @@ import { usePaymentNotifications } from '../components/NotificationToast';
 import { TicketPrintout } from '../components/TicketPrintout';
 import { renderToString } from 'react-dom/server';
 import { printerService, type TicketData } from '../services/printerService';
+import { useThermalPrinter } from '../hooks/useThermalPrinter';
+import { ThermalPrinterSettings } from '../components/ThermalPrinterSettings';
+import { type ThermalTicketData } from '../services/thermalPrinter';
+import { Settings } from 'lucide-react';
 
 interface Destination {
   destinationId: string;
   destinationName: string;
   totalAvailableSeats: number;
   vehicleCount: number;
+  governorate?: string;
+  governorateAr?: string;
+  delegation?: string;
+  delegationAr?: string;
+}
+
+interface Government {
+  name: string;
+  nameAr?: string;
+  delegations: Array<{
+    name: string;
+    nameAr?: string;
+  }>;
 }
 
 export default function MainBooking() {
@@ -39,6 +56,13 @@ export default function MainBooking() {
     notifySeatUpdate, 
     notifyVehicleReady 
   } = usePaymentNotifications();
+  
+  // Thermal printer integration
+  const {
+    isInitialized: thermalInitialized,
+    selectedPrinter,
+    printTicket: printThermalTicket
+  } = useThermalPrinter();
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null);
   const [availableSeats, setAvailableSeats] = useState<number>(1);
@@ -47,11 +71,28 @@ export default function MainBooking() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [basePrice, setBasePrice] = useState<number>(0);
+  
+  // Filter states
+  const [governments, setGovernments] = useState<Government[]>([]);
+  const [selectedGovernment, setSelectedGovernment] = useState<string>('');
+  const [selectedDelegation, setSelectedDelegation] = useState<string>('');
+  const [availableDelegations, setAvailableDelegations] = useState<Array<{ name: string; nameAr?: string; }>>([]);
+  
+  // Tab state for thermal printer settings
+  const [activeTab, setActiveTab] = useState<'bookings' | 'printers'>('bookings');
 
   // Fetch available destinations from API (only destinations with available seats)
   const fetchDestinations = async () => {
     setIsLoading(true);
-    const response = await api.getAvailableDestinationsForBooking();
+    const filters: { governorate?: string; delegation?: string } = {};
+    if (selectedGovernment) {
+      filters.governorate = selectedGovernment;
+    }
+    if (selectedDelegation) {
+      filters.delegation = selectedDelegation;
+    }
+    
+    const response = await api.getAvailableDestinationsForBooking(filters);
     if (response.success && response.data) {
       // Filter out destinations with no available seats
       const availableDestinations = response.data.filter((dest: Destination) => dest.totalAvailableSeats > 0);
@@ -61,10 +102,58 @@ export default function MainBooking() {
     setIsLoading(false);
   };
 
+  // Fetch available governments and delegations
+  const fetchGovernments = async () => {
+    try {
+      const response = await api.getAvailableLocations();
+      if (response.success && response.data) {
+        setGovernments(response.data);
+        console.log(`🏛️ Fetched ${response.data.length} governments`);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching governments:', error);
+    }
+  };
+
+  // Handle government selection change
+  const handleGovernmentChange = (governmentName: string) => {
+    setSelectedGovernment(governmentName);
+    setSelectedDelegation(''); // Reset delegation when government changes
+    
+    if (governmentName) {
+      const selectedGov = governments.find(gov => gov.name === governmentName);
+      if (selectedGov) {
+        setAvailableDelegations(selectedGov.delegations);
+      }
+    } else {
+      setAvailableDelegations([]);
+    }
+  };
+
+  // Handle delegation selection change
+  const handleDelegationChange = (delegationName: string) => {
+    setSelectedDelegation(delegationName);
+  };
+
+  // Clear all filters
+  const clearFilters = () => {
+    setSelectedGovernment('');
+    setSelectedDelegation('');
+    setAvailableDelegations([]);
+  };
+
   // Optimized function to update only if destinations have actually changed
   const updateDestinationsIfChanged = async () => {
     try {
-      const response = await api.getAvailableDestinationsForBooking();
+      const filters: { governorate?: string; delegation?: string } = {};
+      if (selectedGovernment) {
+        filters.governorate = selectedGovernment;
+      }
+      if (selectedDelegation) {
+        filters.delegation = selectedDelegation;
+      }
+      
+      const response = await api.getAvailableDestinationsForBooking(filters);
       if (response.success && response.data) {
         const availableDestinations = response.data.filter((dest: Destination) => dest.totalAvailableSeats > 0);
         
@@ -120,6 +209,7 @@ export default function MainBooking() {
 
   // Initial fetch and WebSocket subscription for real-time updates
   useEffect(() => {
+    fetchGovernments();
     fetchDestinations();
     const wsClient = getWebSocketClient();
     
@@ -329,6 +419,11 @@ export default function MainBooking() {
     }
   }, [selectedDestination]);
 
+  // When filters change, refetch destinations
+  useEffect(() => {
+    fetchDestinations();
+  }, [selectedGovernment, selectedDelegation]);
+
   // Check if selected destination becomes fully booked and clear selection
   useEffect(() => {
     if (selectedDestination && availableSeats === 0) {
@@ -354,17 +449,62 @@ export default function MainBooking() {
     return basePrice * bookingData.seats;
   };
 
-  // Print ticket using the new printer service
+  // Helper function to automatically print thermal tickets
+  const printBookingTicketAutomatically = async (booking: any) => {
+    if (!thermalInitialized || !selectedPrinter) {
+      console.log('Thermal printing not available - using fallback printing');
+      await printTicketFallback(booking);
+      return;
+    }
+
+    try {
+      const thermalData: ThermalTicketData = {
+        ticketNumber: booking.verificationCode || booking.ticketId || booking.id || 'UNKNOWN',
+        licensePlate: booking.vehicleLicensePlate || 'N/A',
+        stationName: booking.startStationName || 'Station Actuelle',
+        datetime: new Date(booking.bookingTime || booking.createdAt || new Date()),
+        ticketType: 'booking',
+        queuePosition: undefined,
+        nextVehicle: undefined,
+        price: booking.totalAmount || (booking.basePrice * (booking.seatsBooked || 1)) || 0,
+        departureStation: booking.startStationName || 'Station Actuelle',
+        destinationStation: booking.destinationName,
+        customerName: booking.customerName,
+        seatsBooked: booking.seatsBooked || booking.seats || 1,
+        verificationCode: booking.verificationCode
+      };
+
+      const success = await printThermalTicket(thermalData);
+      if (success) {
+        console.log(`Thermal booking ticket printed successfully for ${booking.customerName}`);
+        alert('Ticket imprimé avec succès sur l\'imprimante thermique!');
+      } else {
+        await printTicketFallback(booking);
+      }
+    } catch (error) {
+      console.error('Thermal printing failed:', error);
+      await printTicketFallback(booking);
+    }
+  };
+
+  // Print ticket using thermal printer with fallback
   async function printTicket(booking: any) {
     try {
-      // Check if printer is available
-      const isPrinterAvailable = await printerService.isPrinterAvailable();
-      if (!isPrinterAvailable) {
-        alert('Aucune imprimante disponible. Veuillez connecter une imprimante et réessayer.');
+      // Try thermal printing first if available
+      if (thermalInitialized && selectedPrinter) {
+        await printBookingTicketAutomatically(booking);
         return;
       }
 
-      // Prepare ticket data
+      // Check if legacy printer is available
+      const isPrinterAvailable = await printerService.isPrinterAvailable();
+      if (!isPrinterAvailable) {
+        console.log('No legacy printer available, using browser fallback');
+        await printTicketFallback(booking);
+        return;
+      }
+
+      // Prepare ticket data for legacy printer
       const ticketData: TicketData = {
         ticketId: booking.ticketId || booking.verificationCode || booking.id || 'UNKNOWN',
         customerName: booking.customerName,
@@ -379,25 +519,49 @@ export default function MainBooking() {
         qrCodeData: booking.verificationCode || booking.id // Use verification code for QR
       };
 
-      // Print the ticket
+      // Print using legacy service
       await printerService.printTicket(ticketData);
-      
-      // Show success message
       alert('Ticket imprimé avec succès!');
       
     } catch (error) {
       console.error('Print error:', error);
       alert(`Erreur lors de l'impression: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
       
-      // Fallback to browser print if tauri print fails
+      // Fallback to browser print if all else fails
       console.log('Falling back to browser print...');
-      printTicketFallback(booking);
+      await printTicketFallback(booking);
     }
   }
 
   // Test printer functionality
   async function testPrinter() {
     try {
+      // Try thermal printer first if available
+      if (thermalInitialized && selectedPrinter) {
+        const testData: ThermalTicketData = {
+          ticketNumber: 'TEST-' + Date.now(),
+          licensePlate: 'TEST-1234-TN',
+          stationName: 'Station Test',
+          datetime: new Date(),
+          ticketType: 'booking',
+          queuePosition: undefined,
+          nextVehicle: undefined,
+          price: 15.50,
+          departureStation: 'Station Test',
+          destinationStation: 'Destination Test',
+          customerName: 'Client Test',
+          seatsBooked: 2,
+          verificationCode: 'TEST-CODE-123'
+        };
+
+        const success = await printThermalTicket(testData);
+        if (success) {
+          alert('Test d\'impression thermique réussi!');
+          return;
+        }
+      }
+
+      // Fallback to legacy printer test
       const isPrinterAvailable = await printerService.isPrinterAvailable();
       if (!isPrinterAvailable) {
         alert('Aucune imprimante disponible. Veuillez connecter une imprimante et réessayer.');
@@ -488,6 +652,16 @@ export default function MainBooking() {
         console.log('✅ Booking created successfully:', response.data);
         setShowSuccess(true);
         
+        // Automatically print ticket after successful booking
+        if (response.data.booking) {
+          try {
+            await printBookingTicketAutomatically(response.data.booking);
+          } catch (printError) {
+            console.error('Failed to print ticket automatically:', printError);
+            // Don't fail the booking process if printing fails
+          }
+        }
+        
         // Clear selection after successful booking
         setTimeout(() => {
           setSelectedDestination(null);
@@ -541,24 +715,36 @@ export default function MainBooking() {
                 De {destinations.length} destinations
               </p>
               
-              {/* Printer Status Indicator */}
+              {/* Printer Status Indicators */}
               <div className="mt-2 flex items-center space-x-3">
+                {/* Thermal Printer Status */}
+                <div className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg text-xs font-medium ${
+                  thermalInitialized && selectedPrinter
+                    ? 'bg-green-100 text-green-700 border border-green-200' 
+                    : 'bg-orange-100 text-orange-700 border border-orange-200'
+                }`}>
+                  <Printer className="h-3 w-3" />
+                  <span>
+                    {thermalInitialized && selectedPrinter 
+                      ? `Thermique: ${selectedPrinter.name}` 
+                      : 'Imprimante thermique non configurée'
+                    }
+                  </span>
+                </div>
+                
+                {/* Legacy Printer Status */}
                 <div className={`inline-flex items-center space-x-2 px-3 py-1 rounded-lg text-xs font-medium ${
                   systemStatus.printerConnected 
-                    ? 'bg-green-100 text-green-700 border border-green-200' 
-                    : 'bg-red-100 text-red-700 border border-red-200'
+                    ? 'bg-blue-100 text-blue-700 border border-blue-200' 
+                    : 'bg-gray-100 text-gray-700 border border-gray-200'
                 }`}>
-                  {systemStatus.printerConnected ? (
-                    <>
-                      <Printer className="h-3 w-3" />
-                      <span>Imprimante prête</span>
-                    </>
-                  ) : (
-                    <>
-                      <PrinterIcon className="h-3 w-3" />
-                      <span>Imprimante indisponible</span>
-                    </>
-                  )}
+                  <PrinterIcon className="h-3 w-3" />
+                  <span>
+                    {systemStatus.printerConnected 
+                      ? 'Imprimante standard prête' 
+                      : 'Imprimante standard indisponible'
+                    }
+                  </span>
                 </div>
                 
                 {/* Test Printer Button */}
@@ -567,7 +753,7 @@ export default function MainBooking() {
                   size="sm"
                   onClick={testPrinter}
                   className="text-xs h-7 px-2"
-                  disabled={!systemStatus.printerConnected}
+                  disabled={!thermalInitialized && !systemStatus.printerConnected}
                 >
                   <Printer className="h-3 w-3 mr-1" />
                   Test
@@ -583,77 +769,153 @@ export default function MainBooking() {
             )}
           </div>
           
-          {/* Compact Filters */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
-              <label className="text-sm font-medium whitespace-nowrap">Filtrer:</label>
-              <select 
-                className="w-full sm:w-auto px-3 py-2 border rounded-lg bg-card dark:bg-card"
-                value={selectedDestination?.destinationId} 
-                onChange={(e) => handleDestinationSelect(destinations.find(d => d.destinationId === e.target.value) || null)}
-              >
-                <option value="">Tout</option>
-                {destinations.map(d => (
-                  <option key={d.destinationId} value={d.destinationId}>{d.destinationName}</option>
-                ))}
-              </select>
-            </div>
-            
-            {(selectedDestination) && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                className="w-full sm:w-auto"
-                onClick={() => {
-                  setSelectedDestination(null);
-                }}
-              >
-                Effacer les filtres
-              </Button>
-            )}
+          {/* Tab Navigation */}
+          <div className="flex items-center space-x-1 mb-4">
+            <Button
+              variant={activeTab === 'bookings' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('bookings')}
+              className="flex items-center space-x-2"
+            >
+              <Ticket className="h-4 w-4" />
+              <span>Réservations</span>
+            </Button>
+            <Button
+              variant={activeTab === 'printers' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab('printers')}
+              className="flex items-center space-x-2"
+            >
+              <Settings className="h-4 w-4" />
+              <span>Imprimantes</span>
+            </Button>
           </div>
+
+          {/* Location Filters - Only show on bookings tab */}
+          {activeTab === 'bookings' && (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
+                <label className="text-sm font-medium whitespace-nowrap">Gouvernorat:</label>
+                <select 
+                  className="w-full sm:w-auto px-3 py-2 border rounded-lg bg-card dark:bg-card"
+                  value={selectedGovernment} 
+                  onChange={(e) => handleGovernmentChange(e.target.value)}
+                >
+                  <option value="">Tous les gouvernorats</option>
+                  {governments.map(gov => (
+                    <option key={gov.name} value={gov.name}>
+                      {gov.nameAr ? `${gov.name} - ${gov.nameAr}` : gov.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {selectedGovernment && (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
+                  <label className="text-sm font-medium whitespace-nowrap">Délégation:</label>
+                  <select 
+                    className="w-full sm:w-auto px-3 py-2 border rounded-lg bg-card dark:bg-card"
+                    value={selectedDelegation} 
+                    onChange={(e) => handleDelegationChange(e.target.value)}
+                  >
+                    <option value="">Toutes les délégations</option>
+                    {availableDelegations.map(delegation => (
+                      <option key={delegation.name} value={delegation.name}>
+                        {delegation.nameAr ? `${delegation.name} - ${delegation.nameAr}` : delegation.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              
+              {(selectedGovernment || selectedDelegation) && (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={clearFilters}
+                >
+                  Effacer les filtres
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className={`max-w-7xl mx-auto p-4 sm:p-6 ${selectedDestination ? 'pb-48 sm:pb-36' : 'pb-6'}`}>
-        {/* Stations Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
-          {destinations.map((destination: Destination) => (
-            <Card
-              key={destination.destinationId}
-              className={`cursor-pointer transition-all duration-200 hover:shadow-lg hover:scale-105 ${
-                selectedDestination?.destinationId === destination.destinationId 
-                  ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' 
-                  : 'hover:bg-muted dark:hover:bg-muted'
-              }`}
-              onClick={() => handleDestinationSelect(destination)}
-            >
-              <CardContent className="p-4">
-                <div className="space-y-2">
-                  <div className="flex items-start justify-between">
-                    <h3 className="font-bold text-lg leading-tight">{destination.destinationName}</h3>
-                    {selectedDestination?.destinationId === destination.destinationId && (
-                      <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                    )}
-                  </div>
-                  
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {destination.totalAvailableSeats} places disponibles
-                  </p>
-                  
-                  <div className="flex justify-end">
-                    <Button size="sm" variant="outline">
-                      Sélectionner
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+      <div className={`max-w-7xl mx-auto p-4 sm:p-6 ${selectedDestination && activeTab === 'bookings' ? 'pb-48 sm:pb-36' : 'pb-6'}`}>
+        {/* Thermal Printer Settings Tab */}
+        {activeTab === 'printers' && (
+          <div className="space-y-6">
+            <div className="bg-card dark:bg-card rounded-lg border p-6">
+              <h2 className="text-xl font-bold mb-4 flex items-center space-x-2">
+                <Settings className="h-5 w-5" />
+                <span>Configuration des Imprimantes Thermiques</span>
+              </h2>
+              <p className="text-gray-600 dark:text-gray-400 mb-6">
+                Configurez vos imprimantes thermiques pour l'impression automatique des tickets de réservation.
+              </p>
+              <ThermalPrinterSettings />
+            </div>
+          </div>
+        )}
 
-        {/* Empty State */}
-        {destinations.length === 0 && !isLoading && (
+        {/* Booking Content - Only show on bookings tab */}
+        {activeTab === 'bookings' && (
+          <>
+            {/* Stations Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-6">
+              {destinations.map((destination: Destination) => (
+                <Card
+                  key={destination.destinationId}
+                  className={`cursor-pointer transition-all duration-200 hover:shadow-lg hover:scale-105 ${
+                    selectedDestination?.destinationId === destination.destinationId 
+                      ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' 
+                      : 'hover:bg-muted dark:hover:bg-muted'
+                  }`}
+                  onClick={() => handleDestinationSelect(destination)}
+                >
+                  <CardContent className="p-4">
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between">
+                        <h3 className="font-bold text-lg leading-tight">{destination.destinationName}</h3>
+                        {selectedDestination?.destinationId === destination.destinationId && (
+                          <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                        )}
+                      </div>
+                      
+                      {/* Location information */}
+                      {(destination.governorate || destination.delegation) && (
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          {destination.governorate && destination.delegation ? (
+                            <span>{destination.governorate}, {destination.delegation}</span>
+                          ) : destination.governorate ? (
+                            <span>{destination.governorate}</span>
+                          ) : destination.delegation ? (
+                            <span>{destination.delegation}</span>
+                          ) : null}
+                        </div>
+                      )}
+                      
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {destination.totalAvailableSeats} places disponibles
+                      </p>
+                      
+                      <div className="flex justify-end">
+                        <Button size="sm" variant="outline">
+                          Sélectionner
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Empty State - Only show on bookings tab */}
+        {activeTab === 'bookings' && destinations.length === 0 && !isLoading && (
           <div className="text-center py-12">
             <MapPin className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-gray-600 dark:text-gray-400 mb-2">
@@ -665,8 +927,8 @@ export default function MainBooking() {
           </div>
         )}
 
-        {/* Loading State */}
-        {isLoading && (
+        {/* Loading State - Only show on bookings tab */}
+        {activeTab === 'bookings' && isLoading && (
           <div className="text-center py-12">
             <Loader2 className="w-8 h-8 text-blue-600 mx-auto mb-4 animate-spin" />
             <h3 className="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">
@@ -679,8 +941,8 @@ export default function MainBooking() {
         )}
       </div>
 
-            {/* Floating Booking Panel */}
-      {selectedDestination && (
+            {/* Floating Booking Panel - Only show on bookings tab */}
+      {selectedDestination && activeTab === 'bookings' && (
         <div className="fixed bottom-0 left-0 right-0 bg-card dark:bg-card border-t border-gray-200 dark:border-gray-700 shadow-xl max-h-80 overflow-y-auto">
           <div className="max-w-4xl mx-auto p-4 sm:p-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">

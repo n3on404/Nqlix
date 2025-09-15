@@ -8,7 +8,11 @@ use tokio::time::timeout;
 use reqwest::Client;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
-use tauri::Manager;
+use tauri::{
+    CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem,
+    WindowEvent, GlobalShortcutManager
+};
+use auto_launch::AutoLaunchBuilder;
 
 // WebSocket relay state
 static WS_SENDER: Lazy<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> = Lazy::new(|| Mutex::new(None));
@@ -155,8 +159,25 @@ async fn proxy_localnode(
     
     let client = Client::new();
     
-    // Use provided server URL or default to localhost
-    let base_url = server_url.unwrap_or_else(|| "http://127.0.0.1:3001".to_string());
+    let base_url = if let Some(url) = server_url {
+        // Use provided server URL
+        url
+    } else {
+        // Auto-discover the best server URL
+        match discover_local_servers().await {
+            Ok(discovery_result) => {
+                if let Some(server) = discovery_result.servers.first() {
+                    server.url.clone()
+                } else {
+                    "http://127.0.0.1:3001".to_string()
+                }
+            }
+            Err(_) => {
+                "http://127.0.0.1:3001".to_string()
+            }
+        }
+    };
+    
     let url = format!("{}{}", base_url, endpoint);
 
     let mut req = match method.as_str() {
@@ -196,13 +217,38 @@ async fn proxy_localnode(
 }
 
 #[tauri::command]
-async fn start_ws_relay(window: tauri::Window) -> Result<(), String> {
+async fn start_ws_relay(window: tauri::Window, server_url: Option<String>) -> Result<(), String> {
     use tokio_tungstenite::connect_async;
     use futures::{StreamExt, SinkExt};
     use tokio::sync::mpsc;
 
-    let url = "ws://127.0.0.1:3001/ws";
-    let (ws_stream, _) = connect_async(url).await.map_err(|e| format!("WebSocket connect error: {}", e))?;
+    let base_url = if let Some(url) = server_url {
+        // Use provided server URL
+        url
+    } else {
+        // Auto-discover the best server URL
+        println!("🔍 Auto-discovering local server...");
+        match discover_local_servers().await {
+            Ok(discovery_result) => {
+                if let Some(server) = discovery_result.servers.first() {
+                    println!("🎯 Found server at: {} ({}ms response time)", server.url, server.response_time);
+                    server.url.clone()
+                } else {
+                    println!("⚠️ No servers discovered, falling back to localhost");
+                    "http://127.0.0.1:3001".to_string()
+                }
+            }
+            Err(e) => {
+                println!("❌ Discovery failed: {}, falling back to localhost", e);
+                "http://127.0.0.1:3001".to_string()
+            }
+        }
+    };
+    
+    let ws_url = base_url.replace("http://", "ws://").replace("https://", "wss://") + "/ws";
+    
+    println!("🔌 Connecting to WebSocket: {}", ws_url);
+    let (ws_stream, _) = connect_async(&ws_url).await.map_err(|e| format!("WebSocket connect error: {}", e))?;
     let (mut write, mut read) = ws_stream.split();
 
     // Channel for sending messages from frontend to backend
@@ -242,6 +288,81 @@ fn ws_relay_send(message: String) -> Result<(), String> {
     } else {
         Err("WebSocket relay not started".to_string())
     }
+}
+
+#[tauri::command]
+fn toggle_fullscreen(window: tauri::Window) -> Result<(), String> {
+    let is_fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+    window.set_fullscreen(!is_fullscreen).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn minimize_to_tray(window: tauri::Window) -> Result<(), String> {
+    window.hide().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn show_window(window: tauri::Window) -> Result<(), String> {
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn setup_auto_startup() -> Result<String, String> {
+    let app_name = "Nqlix";
+    let app_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    
+    let auto = AutoLaunchBuilder::new()
+        .set_app_name(app_name)
+        .set_app_path(&app_path.to_string_lossy())
+        .set_use_launch_agent(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    if auto.is_enabled().map_err(|e| e.to_string())? {
+        Ok("Auto-startup is already enabled".to_string())
+    } else {
+        auto.enable().map_err(|e| e.to_string())?;
+        Ok("Auto-startup enabled successfully".to_string())
+    }
+}
+
+#[tauri::command]
+fn disable_auto_startup() -> Result<String, String> {
+    let app_name = "Nqlix";
+    let app_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    
+    let auto = AutoLaunchBuilder::new()
+        .set_app_name(app_name)
+        .set_app_path(&app_path.to_string_lossy())
+        .set_use_launch_agent(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    if auto.is_enabled().map_err(|e| e.to_string())? {
+        auto.disable().map_err(|e| e.to_string())?;
+        Ok("Auto-startup disabled successfully".to_string())
+    } else {
+        Ok("Auto-startup was not enabled".to_string())
+    }
+}
+
+#[tauri::command]
+fn check_auto_startup() -> Result<bool, String> {
+    let app_name = "Nqlix";
+    let app_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    
+    let auto = AutoLaunchBuilder::new()
+        .set_app_name(app_name)
+        .set_app_path(&app_path.to_string_lossy())
+        .set_use_launch_agent(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    
+    auto.is_enabled().map_err(|e| e.to_string())
 }
 
 async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<DiscoveredServer>, Box<dyn std::error::Error + Send + Sync>> {
@@ -304,9 +425,83 @@ fn get_network_prefix(ip: &IpAddr) -> String {
     }
 }
 
+fn create_system_tray() -> SystemTray {
+    let show = CustomMenuItem::new("show".to_string(), "Afficher");
+    let hide = CustomMenuItem::new("hide".to_string(), "Masquer");
+    let fullscreen = CustomMenuItem::new("fullscreen".to_string(), "Basculer plein écran");
+    let startup = CustomMenuItem::new("startup".to_string(), "Démarrage automatique");
+    let quit = CustomMenuItem::new("quit".to_string(), "Quitter");
+    
+    let tray_menu = SystemTrayMenu::new()
+        .add_item(show)
+        .add_item(hide)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(fullscreen)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(startup)
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(quit);
+    
+    SystemTray::new().with_menu(tray_menu)
+}
+
+fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) {
+    match event {
+        SystemTrayEvent::LeftClick {
+            position: _,
+            size: _,
+            ..
+        } => {
+            let window = app.get_window("main").unwrap();
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.hide();
+            } else {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+        SystemTrayEvent::MenuItemClick { id, .. } => {
+            let window = app.get_window("main").unwrap();
+            match id.as_str() {
+                "show" => {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                "hide" => {
+                    let _ = window.hide();
+                }
+                "fullscreen" => {
+                    if let Ok(is_fullscreen) = window.is_fullscreen() {
+                        let _ = window.set_fullscreen(!is_fullscreen);
+                    }
+                }
+                "startup" => {
+                    // Toggle auto-startup
+                    if let Ok(is_enabled) = check_auto_startup() {
+                        if is_enabled {
+                            let _ = disable_auto_startup();
+                        } else {
+                            let _ = setup_auto_startup();
+                        }
+                    }
+                }
+                "quit" => {
+                    std::process::exit(0);
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 fn main() {
+    let system_tray = create_system_tray();
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_printer::init())
+        .system_tray(system_tray)
+        .on_system_tray_event(handle_system_tray_event)
         .invoke_handler(tauri::generate_handler![
             greet,
             get_app_version,
@@ -315,10 +510,71 @@ fn main() {
             add_firewall_rule,
             proxy_localnode,
             start_ws_relay,
-            ws_relay_send
+            ws_relay_send,
+            toggle_fullscreen,
+            minimize_to_tray,
+            show_window,
+            setup_auto_startup,
+            disable_auto_startup,
+            check_auto_startup
         ])
         .setup(|app| {
             let app_handle = app.handle();
+            
+            // Auto-enable startup on first run
+            if let Ok(false) = check_auto_startup() {
+                if let Ok(message) = setup_auto_startup() {
+                    println!("🚀 {}", message);
+                }
+            }
+            
+            // Set up global shortcuts
+            let mut shortcut_manager = app.global_shortcut_manager();
+            
+            // F11 to toggle fullscreen
+            let app_handle_f11 = app_handle.clone();
+            shortcut_manager
+                .register("F11", move || {
+                    if let Some(window) = app_handle_f11.get_window("main") {
+                        if let Ok(is_fullscreen) = window.is_fullscreen() {
+                            let _ = window.set_fullscreen(!is_fullscreen);
+                        }
+                    }
+                })
+                .unwrap_or_else(|err| println!("Failed to register F11 shortcut: {}", err));
+            
+            // Ctrl+Shift+H to hide/show window
+            let app_handle_hide = app_handle.clone();
+            shortcut_manager
+                .register("CommandOrControl+Shift+H", move || {
+                    if let Some(window) = app_handle_hide.get_window("main") {
+                        if window.is_visible().unwrap_or(false) {
+                            let _ = window.hide();
+                        } else {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .unwrap_or_else(|err| println!("Failed to register hide/show shortcut: {}", err));
+            
+            // Handle window events
+            let window = app.get_window("main").unwrap();
+            let window_clone = window.clone();
+            window.on_window_event(move |event| {
+                match event {
+                    WindowEvent::CloseRequested { api, .. } => {
+                        // Prevent close, hide to tray instead
+                        api.prevent_close();
+                        let _ = window_clone.hide();
+                    }
+                    _ => {}
+                }
+            });
+            
+            // Force fullscreen on startup
+            let _ = window.set_fullscreen(true);
+            let _ = window.set_focus();
             
             // Handle updater events
             app_handle.listen_global("tauri://update-available", move |event| {
@@ -340,6 +596,10 @@ fn main() {
             app_handle.listen_global("tauri://update-error", move |event| {
                 println!("Update error: {:?}", event.payload());
             });
+            
+            println!("🎯 Nqlix started in fullscreen mode with system tray support");
+            println!("📋 System tray controls: Left-click to show/hide, Right-click for menu");
+            println!("⌨️  Shortcuts: F11 (fullscreen), Ctrl+Shift+H (hide/show)");
             
             Ok(())
         })

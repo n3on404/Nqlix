@@ -35,7 +35,7 @@ jobs:
 
       - name: Setup signing key
         run: |
-          $keyPath = "$env:USERPROFILE\.tauri\nqlix_desktop_app.key"
+          $keyPath = "$env:USERPROFILE\.tauri\wasla_desktop_app.key"
           $keyDir = Split-Path $keyPath -Parent
           if (-not (Test-Path $keyDir)) {
             New-Item -ItemType Directory -Path $keyDir -Force
@@ -67,7 +67,7 @@ jobs:
           Get-ChildItem src-tauri/target/release/bundle/nsis/ -Name
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             src-tauri/target/release/bundle/msi/*.msi
@@ -81,7 +81,7 @@ jobs:
           body: |
             ## What's Changed
             
-            This release includes the latest updates for Nqlix Desktop Application.
+            This release includes the latest updates for Wasla Desktop Application.
             
             ## Installation
             

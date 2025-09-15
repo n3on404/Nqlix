@@ -7,8 +7,9 @@ import { Badge } from '../components/ui/badge';
 import { useAuth } from '../context/AuthProvider';
 import { useNotifications } from '../context/NotificationProvider';
 import api from '../lib/api';
-import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus } from 'lucide-react';
+import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus, MapPin, Globe, AlertCircle, CheckCircle2, Users, Phone, Hash, Building } from 'lucide-react';
 import { Select } from '../components/ui/select';
+import MunicipalityService from '../services/municipalityService';
 
 interface Vehicle {
   id: string;
@@ -60,13 +61,18 @@ const SupervisorVehicleManagement: React.FC = () => {
     originDelegationId: '',
     licensePlate: '',
     capacity: '',
+    model: '',
+    year: '',
+    color: '',
     authorizedStationIds: [] as string[],
     defaultDestinationId: '',
   });
-  const [governorates, setGovernorates] = useState<{ id: string; name: string }[]>([]);
-  const [delegations, setDelegations] = useState<{ id: string; name: string }[]>([]);
+  const [governorates, setGovernorates] = useState<{ id: string; name: string; nameAr?: string }[]>([]);
+  const [delegations, setDelegations] = useState<{ id: string; name: string; nameAr?: string; governorateId: string }[]>([]);
   const [stations, setStations] = useState<{ id: string; name: string }[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingMunicipalities, setIsLoadingMunicipalities] = useState(false);
+  const [municipalityAPIStatus, setMunicipalityAPIStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [vehicleDetails, setVehicleDetails] = useState<Vehicle | null>(null);
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
@@ -117,22 +123,33 @@ const SupervisorVehicleManagement: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch governorates, stations, and station config on mount
+  // Check municipality API availability and fetch data on mount
   useEffect(() => {
-    const fetchGovs = async () => {
-      const res = await api.get('/api/vehicles/governorates');
-      const data: any = res.data;
-      if (res.success && data && Array.isArray(data)) {
-        setGovernorates(data);
-      } else if (res.success && data && Array.isArray((data as any)?.data)) {
-        setGovernorates((data as any).data);
-      } else if (Array.isArray(res)) {
-        setGovernorates(res as any);
-      } else {
+    const initializeMunicipalityData = async () => {
+      setIsLoadingMunicipalities(true);
+      setMunicipalityAPIStatus('checking');
+      
+      try {
+        // Check API availability
+        const isAPIAvailable = await MunicipalityService.checkAPIAvailability();
+        setMunicipalityAPIStatus(isAPIAvailable ? 'available' : 'unavailable');
+        
+        // Fetch governorates from municipality service
+        const municipalityGovs = await MunicipalityService.getGovernorates();
+        setGovernorates(municipalityGovs);
+        
+        console.log(`🌐 Municipality API: ${isAPIAvailable ? 'Available' : 'Using fallback'}`);
+        console.log("governorates from municipality service", municipalityGovs);
+      } catch (error) {
+        console.error('Failed to initialize municipality data:', error);
+        setMunicipalityAPIStatus('unavailable');
+        // Fallback to empty array if everything fails
         setGovernorates([]);
+      } finally {
+        setIsLoadingMunicipalities(false);
       }
-      console.log("governorates", data as any);
     };
+
     const fetchStations = async () => {
       const res = await api.get('/api/vehicles/stations');
       const data: any = res.data;
@@ -146,12 +163,16 @@ const SupervisorVehicleManagement: React.FC = () => {
         setStations([]);
       }
     };
+
     const fetchStationConfig = async () => {
       const res = await api.getStationConfig();
-      if (res.success && res.data) setStationConfig(res.data);
-      console.log("station config", res.data);
+      if (res.success && res.data) {
+        setStationConfig(res.data);
+        console.log("station config", res.data);
+      }
     };
-    fetchGovs();
+
+    initializeMunicipalityData();
     fetchStations();
     fetchStationConfig();
   }, []);
@@ -159,36 +180,96 @@ const SupervisorVehicleManagement: React.FC = () => {
   // When governorate changes, fetch delegations for that governorate
   useEffect(() => {
     if (form.originGovernorateId) {
-      const fetchDels = async () => {
-        const res = await api.get(`/api/vehicles/delegations/${form.originGovernorateId}`);
-        const data: any = res.data;
-        if (res.success && data && Array.isArray(data)) {
-          setDelegations(data);
-          // If the current station's delegation matches, set it as default
-          if (stationConfig) {
-            const del = data.find((d: any) => d.name === stationConfig.delegation);
-            if (del) {
-              setForm(f => ({ ...f, originDelegationId: del.id }));
+      const fetchDelegationsForGovernorate = async () => {
+        setIsLoadingMunicipalities(true);
+        
+        try {
+          // Find governorate name by ID
+          const selectedGovernorate = governorates.find(gov => gov.id === form.originGovernorateId);
+          if (!selectedGovernorate) {
+            setDelegations([]);
+            return;
+          }
+
+          // Fetch delegations using municipality service
+          const municipalityDelegations = await MunicipalityService.getDelegationsByGovernorate(selectedGovernorate.name);
+          setDelegations(municipalityDelegations);
+          
+          // Auto-select current station's delegation if it matches
+          if (stationConfig && municipalityDelegations.length > 0) {
+            const matchingDelegation = municipalityDelegations.find(
+              del => del.name.toLowerCase().includes(stationConfig.delegation.toLowerCase()) ||
+                     stationConfig.delegation.toLowerCase().includes(del.name.toLowerCase())
+            );
+            if (matchingDelegation) {
+              setForm(f => ({ ...f, originDelegationId: matchingDelegation.id }));
             }
           }
-        } else if (res.success && data && Array.isArray((data as any)?.data)) {
-          setDelegations((data as any).data);
-          if (stationConfig) {
-            const del = (data as any).data.find((d: any) => d.name === stationConfig.delegation);
-            if (del) {
-              setForm(f => ({ ...f, originDelegationId: del.id }));
-            }
-          }
-        } else {
+          
+          console.log(`🗺️ Fetched ${municipalityDelegations.length} delegations for ${selectedGovernorate.name}`);
+        } catch (error) {
+          console.error('Failed to fetch delegations:', error);
           setDelegations([]);
+        } finally {
+          setIsLoadingMunicipalities(false);
         }
       };
-      fetchDels();
+      
+      fetchDelegationsForGovernorate();
     } else {
       setDelegations([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.originGovernorateId]);
+  }, [form.originGovernorateId, governorates, stationConfig]);
+
+  // Auto-select current station's governorate when form opens and data is available
+  useEffect(() => {
+    if (showRequestForm && stationConfig && governorates.length > 0 && !form.originGovernorateId) {
+      const matchingGovernorate = governorates.find(
+        gov => gov.name.toLowerCase() === stationConfig.governorate.toLowerCase()
+      );
+      
+      if (matchingGovernorate) {
+        setForm(f => ({ 
+          ...f, 
+          originGovernorateId: matchingGovernorate.id,
+          // Also auto-select current station in authorized stations if available
+          authorizedStationIds: stations.length > 0 && stationConfig.id 
+            ? [stationConfig.id] 
+            : f.authorizedStationIds
+        }));
+        console.log(`🎯 Auto-selected governorate: ${matchingGovernorate.name} for station: ${stationConfig.stationName}`);
+      }
+    }
+  }, [showRequestForm, stationConfig, governorates, stations, form.originGovernorateId]);
+
+  // Handle governorate change for new station creation
+  useEffect(() => {
+    if (showCreateStation && newStation.governorateId && governorates.length > 0) {
+      const fetchDelegationsForNewStation = async () => {
+        setIsLoadingMunicipalities(true);
+        
+        try {
+          const selectedGovernorate = governorates.find(gov => gov.id === newStation.governorateId);
+          if (!selectedGovernorate) {
+            return;
+          }
+
+          const municipalityDelegations = await MunicipalityService.getDelegationsByGovernorate(selectedGovernorate.name);
+          setDelegations(municipalityDelegations);
+          
+          console.log(`🗺️ Fetched ${municipalityDelegations.length} delegations for new station in ${selectedGovernorate.name}`);
+        } catch (error) {
+          console.error('Failed to fetch delegations for new station:', error);
+          setDelegations([]);
+        } finally {
+          setIsLoadingMunicipalities(false);
+        }
+      };
+      
+      fetchDelegationsForNewStation();
+    }
+  }, [showCreateStation, newStation.governorateId, governorates]);
 
   // Approve request
   const handleApprove = async (id: string) => {
@@ -277,7 +358,8 @@ const SupervisorVehicleManagement: React.FC = () => {
       await handleApprove(res.data.id);
       setShowRequestForm(false);
       setForm({
-        cin: '', phoneNumber: '', firstName: '', lastName: '', originGovernorateId: '', originDelegationId: '', licensePlate: '', capacity: '', authorizedStationIds: [], defaultDestinationId: ''
+        cin: '', phoneNumber: '', firstName: '', lastName: '', originGovernorateId: '', originDelegationId: '', 
+        licensePlate: '', capacity: '', model: '', year: '', color: '', authorizedStationIds: [], defaultDestinationId: ''
       });
       addNotification({ type: 'success', title: 'Créé & Approuvé', message: 'Demande de conducteur créée et approuvée.' });
       // Refresh vehicles and pending requests immediately
@@ -452,88 +534,325 @@ const SupervisorVehicleManagement: React.FC = () => {
 
       {/* New Driver Request Form Dialog */}
       <Dialog open={showRequestForm} onOpenChange={setShowRequestForm}>
-        <DialogContent>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nouvelle demande de conducteur</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmitRequest} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">CIN</label>
-                <Input name="cin" value={form.cin} onChange={handleFormChange} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Numéro de téléphone</label>
-                <Input name="phoneNumber" value={form.phoneNumber} onChange={handleFormChange} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Prénom</label>
-                <Input name="firstName" value={form.firstName} onChange={handleFormChange} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Nom</label>
-                <Input name="lastName" value={form.lastName} onChange={handleFormChange} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Gouvernorat</label>
-                <Select name="originGovernorateId" value={form.originGovernorateId} onChange={handleFormChange} options={governorates.map(g => ({ value: g.id, label: g.name }))} placeholder="Sélectionner la gouvernorat" required disabled={governorates.length === 0} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Délégation</label>
-                <Select name="originDelegationId" value={form.originDelegationId} onChange={handleFormChange} options={delegations.map(d => ({ value: d.id, label: d.name }))} placeholder="Sélectionner la délégation" required disabled={!form.originGovernorateId || delegations.length === 0} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Plaque d'immatriculation</label>
-                <Input name="licensePlate" value={form.licensePlate} onChange={handleFormChange} required maxLength={12} placeholder="Ex: 123 TUN 4567" />
-                <div className="text-xs text-muted-foreground mt-1">Format: 2-3 chiffres, TUN, 4 chiffres (ex: 123 TUN 4567)</div>
-                {licensePlateError && <div className="text-xs text-red-500 mt-1">{licensePlateError}</div>}
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Capacité</label>
-                <Input name="capacity" value={form.capacity} onChange={handleFormChange} type="number" min="1" required />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-sm font-medium mb-1">Stations autorisées</label>
-                <div className="flex gap-2 items-center">
-                  <select name="authorizedStationIds" multiple value={form.authorizedStationIds} onChange={handleFormChange} className="w-full border rounded p-2 min-h-[40px]" required disabled={stations.length === 0}>
-                    {stations.length === 0 ? (
-                      <option value="">Aucune station disponible</option>
-                    ) : stations.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setShowCreateStation(true)}>+ Nouvelle station</Button>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <UserPlus className="h-5 w-5" />
+              Nouvelle demande de conducteur et véhicule
+            </DialogTitle>
+            <div className="flex items-center gap-2 mt-2">
+              {municipalityAPIStatus === 'checking' && (
+                <div className="flex items-center gap-1 text-yellow-600">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="text-xs">Vérification des données...</span>
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">Maintenez Ctrl (Windows) ou Cmd (Mac) pour sélectionner plusieurs stations.</div>
-              </div>
-              
-              {/* Default Destination Selection */}
-              <div className="col-span-2">
-                <label className="block text-sm font-medium mb-1">Destination par défaut</label>
-                <select 
-                  name="defaultDestinationId" 
-                  value={form.defaultDestinationId} 
-                  onChange={handleFormChange} 
-                  className="w-full border rounded p-2"
-                  disabled={form.authorizedStationIds.length === 0}
-                >
-                  <option value="">Sélectionner la destination par défaut (optionnel)</option>
-                  {stations
-                    .filter(s => form.authorizedStationIds.includes(s.id))
-                    .map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                </select>
-                <div className="text-xs text-muted-foreground mt-1">
-                  La destination par défaut sera utilisée automatiquement lors de l'ajout à la file d'attente.
+              )}
+              {municipalityAPIStatus === 'available' && (
+                <div className="flex items-center gap-1 text-green-600">
+                  <CheckCircle2 className="h-3 w-3" />
+                  <span className="text-xs">API des municipalités tunisiennes active</span>
+                </div>
+              )}
+              {municipalityAPIStatus === 'unavailable' && (
+                <div className="flex items-center gap-1 text-orange-600">
+                  <AlertCircle className="h-3 w-3" />
+                  <span className="text-xs">Utilisation des données locales</span>
+                </div>
+              )}
+            </div>
+          </DialogHeader>
+          
+          <form onSubmit={handleSubmitRequest} className="space-y-6">
+            {/* Driver Information Section */}
+            <div className="bg-blue-50 dark:bg-blue-950 rounded-lg p-4">
+              <h3 className="flex items-center gap-2 font-medium mb-4 text-blue-800 dark:text-blue-200">
+                <Users className="h-4 w-4" />
+                Informations du conducteur
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
+                    <Hash className="h-3 w-3" />
+                    CIN
+                  </label>
+                  <Input 
+                    name="cin" 
+                    value={form.cin} 
+                    onChange={handleFormChange} 
+                    required 
+                    placeholder="Ex: 12345678"
+                    maxLength={8}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
+                    <Phone className="h-3 w-3" />
+                    Numéro de téléphone
+                  </label>
+                  <Input 
+                    name="phoneNumber" 
+                    value={form.phoneNumber} 
+                    onChange={handleFormChange} 
+                    required 
+                    placeholder="Ex: +216 12 345 678"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Prénom</label>
+                  <Input 
+                    name="firstName" 
+                    value={form.firstName} 
+                    onChange={handleFormChange} 
+                    required 
+                    placeholder="Prénom du conducteur"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Nom de famille</label>
+                  <Input 
+                    name="lastName" 
+                    value={form.lastName} 
+                    onChange={handleFormChange} 
+                    required 
+                    placeholder="Nom de famille"
+                  />
                 </div>
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" type="button" onClick={() => setShowRequestForm(false)} disabled={isSubmitting}>Annuler</Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                Soumettre & Approuver
+
+            {/* Location Information Section */}
+            <div className="bg-green-50 dark:bg-green-950 rounded-lg p-4">
+              <h3 className="flex items-center gap-2 font-medium mb-4 text-green-800 dark:text-green-200">
+                <MapPin className="h-4 w-4" />
+                Localisation du conducteur
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
+                    <Globe className="h-3 w-3" />
+                    Gouvernorat d'origine
+                  </label>
+                  <Select 
+                    name="originGovernorateId" 
+                    value={form.originGovernorateId} 
+                    onChange={handleFormChange} 
+                    options={governorates.map(g => ({ 
+                      value: g.id, 
+                      label: `${g.name}${g.nameAr ? ` (${g.nameAr})` : ''}` 
+                    }))} 
+                    placeholder={isLoadingMunicipalities ? "Chargement..." : "Sélectionner le gouvernorat"} 
+                    required 
+                    disabled={governorates.length === 0 || isLoadingMunicipalities} 
+                  />
+                  {stationConfig && (
+                    <div className="text-xs text-green-600 mt-1">
+                      Station actuelle: {stationConfig.governorate}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
+                    <MapPin className="h-3 w-3" />
+                    Délégation d'origine
+                  </label>
+                  <Select 
+                    name="originDelegationId" 
+                    value={form.originDelegationId} 
+                    onChange={handleFormChange} 
+                    options={delegations.map(d => ({ 
+                      value: d.id, 
+                      label: `${d.name}${d.nameAr ? ` (${d.nameAr})` : ''}` 
+                    }))} 
+                    placeholder={
+                      !form.originGovernorateId ? "Sélectionner d'abord le gouvernorat" :
+                      isLoadingMunicipalities ? "Chargement..." : 
+                      "Sélectionner la délégation"
+                    } 
+                    required 
+                    disabled={!form.originGovernorateId || delegations.length === 0 || isLoadingMunicipalities} 
+                  />
+                  {stationConfig && (
+                    <div className="text-xs text-green-600 mt-1">
+                      Station actuelle: {stationConfig.delegation}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Vehicle Information Section */}
+            <div className="bg-purple-50 dark:bg-purple-950 rounded-lg p-4">
+              <h3 className="flex items-center gap-2 font-medium mb-4 text-purple-800 dark:text-purple-200">
+                <Car className="h-4 w-4" />
+                Informations du véhicule
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="md:col-span-2 lg:col-span-1">
+                  <label className="block text-sm font-medium mb-1">Plaque d'immatriculation *</label>
+                  <Input 
+                    name="licensePlate" 
+                    value={form.licensePlate} 
+                    onChange={handleFormChange} 
+                    required 
+                    maxLength={12} 
+                    placeholder="123 TUN 4567" 
+                    className={licensePlateError ? "border-red-500" : ""}
+                  />
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Format: 2-3 chiffres, TUN, 4 chiffres
+                  </div>
+                  {licensePlateError && (
+                    <div className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      {licensePlateError}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Capacité (places) *</label>
+                  <Input 
+                    name="capacity" 
+                    value={form.capacity} 
+                    onChange={handleFormChange} 
+                    type="number" 
+                    min="1" 
+                    max="50"
+                    required 
+                    placeholder="Ex: 9"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Modèle</label>
+                  <Input 
+                    name="model" 
+                    value={form.model} 
+                    onChange={handleFormChange} 
+                    placeholder="Ex: Peugeot 807"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Année</label>
+                  <Input 
+                    name="year" 
+                    value={form.year} 
+                    onChange={handleFormChange} 
+                    type="number" 
+                    min="1980" 
+                    max={new Date().getFullYear() + 1}
+                    placeholder="Ex: 2018"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Couleur</label>
+                  <Input 
+                    name="color" 
+                    value={form.color} 
+                    onChange={handleFormChange} 
+                    placeholder="Ex: Blanc"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Stations Authorization Section */}
+            <div className="bg-orange-50 dark:bg-orange-950 rounded-lg p-4">
+              <h3 className="flex items-center gap-2 font-medium mb-4 text-orange-800 dark:text-orange-200">
+                <Building className="h-4 w-4" />
+                Autorisations de transport
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Stations autorisées *</label>
+                  <div className="flex gap-2 items-start">
+                    <select 
+                      name="authorizedStationIds" 
+                      multiple 
+                      value={form.authorizedStationIds} 
+                      onChange={handleFormChange} 
+                      className="w-full border rounded-lg p-3 min-h-[120px] bg-white dark:bg-gray-800" 
+                      required 
+                      disabled={stations.length === 0}
+                    >
+                      {stations.length === 0 ? (
+                        <option value="">Aucune station disponible</option>
+                      ) : stations.map(s => (
+                        <option key={s.id} value={s.id} className="py-1">
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => setShowCreateStation(true)}
+                      className="whitespace-nowrap"
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Nouvelle station
+                    </Button>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    Maintenez Ctrl (Windows) ou Cmd (Mac) pour sélectionner plusieurs stations.
+                  </div>
+                  {stationConfig && form.authorizedStationIds.includes(stationConfig.id) && (
+                    <div className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Station actuelle sélectionnée: {stationConfig.stationName}
+                    </div>
+                  )}
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium mb-2">Destination par défaut</label>
+                  <select 
+                    name="defaultDestinationId" 
+                    value={form.defaultDestinationId} 
+                    onChange={handleFormChange} 
+                    className="w-full border rounded-lg p-3 bg-white dark:bg-gray-800"
+                    disabled={form.authorizedStationIds.length === 0}
+                  >
+                    <option value="">Sélectionner la destination par défaut (optionnel)</option>
+                    {stations
+                      .filter(s => form.authorizedStationIds.includes(s.id))
+                      .map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                  </select>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    La destination par défaut sera utilisée automatiquement lors de l'ajout à la file d'attente.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button 
+                variant="outline" 
+                type="button" 
+                onClick={() => setShowRequestForm(false)} 
+                disabled={isSubmitting}
+              >
+                Annuler
+              </Button>
+              <Button 
+                type="submit" 
+                disabled={isSubmitting || isLoadingMunicipalities}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Création en cours...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Créer & Approuver
+                  </>
+                )}
               </Button>
             </div>
           </form>
@@ -613,41 +932,149 @@ const SupervisorVehicleManagement: React.FC = () => {
 
       {/* Create New Station Dialog */}
       <Dialog open={showCreateStation} onOpenChange={setShowCreateStation}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Créer une nouvelle station</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Building className="h-5 w-5" />
+              Créer une nouvelle station
+            </DialogTitle>
+            <div className="flex items-center gap-2 mt-2">
+              {municipalityAPIStatus === 'available' && (
+                <div className="flex items-center gap-1 text-green-600">
+                  <CheckCircle2 className="h-3 w-3" />
+                  <span className="text-xs">Données des municipalités tunisiennes disponibles</span>
+                </div>
+              )}
+              {municipalityAPIStatus === 'unavailable' && (
+                <div className="flex items-center gap-1 text-orange-600">
+                  <AlertCircle className="h-3 w-3" />
+                  <span className="text-xs">Utilisation des données locales</span>
+                </div>
+              )}
+            </div>
           </DialogHeader>
-          <form onSubmit={handleCreateStation} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Nom de la station</label>
-              <Input name="name" value={newStation.name} onChange={e => setNewStation({ ...newStation, name: e.target.value })} required />
+          <form onSubmit={handleCreateStation} className="space-y-6">
+            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+              <h3 className="flex items-center gap-2 font-medium mb-4">
+                <MapPin className="h-4 w-4" />
+                Informations de la station
+              </h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Nom de la station *</label>
+                  <Input 
+                    name="name" 
+                    value={newStation.name} 
+                    onChange={e => setNewStation({ ...newStation, name: e.target.value })} 
+                    required 
+                    placeholder="Ex: Station de Tunis Centre"
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 flex items-center gap-1">
+                      <Globe className="h-3 w-3" />
+                      Gouvernorat *
+                    </label>
+                    <select 
+                      name="governorateId" 
+                      value={newStation.governorateId} 
+                      onChange={e => setNewStation({ ...newStation, governorateId: e.target.value, delegationId: '' })} 
+                      required 
+                      className="w-full border rounded-lg p-3 bg-white dark:bg-gray-800" 
+                      disabled={governorates.length === 0 || isLoadingMunicipalities}
+                    >
+                      <option value="">
+                        {governorates.length === 0 ? 'Aucun gouvernorat disponible' : 'Sélectionner le gouvernorat'}
+                      </option>
+                      {governorates.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}{g.nameAr ? ` (${g.nameAr})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1 flex items-center gap-1">
+                      <MapPin className="h-3 w-3" />
+                      Délégation *
+                    </label>
+                    <select 
+                      name="delegationId" 
+                      value={newStation.delegationId} 
+                      onChange={e => setNewStation({ ...newStation, delegationId: e.target.value })} 
+                      required 
+                      className="w-full border rounded-lg p-3 bg-white dark:bg-gray-800" 
+                      disabled={!newStation.governorateId || delegations.length === 0 || isLoadingMunicipalities}
+                    >
+                      <option value="">
+                        {!newStation.governorateId ? 'Sélectionner d\'abord le gouvernorat' :
+                         delegations.length === 0 ? 'Aucune délégation disponible' : 
+                         'Sélectionner la délégation'}
+                      </option>
+                      {delegations.map(d => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}{d.nameAr ? ` (${d.nameAr})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Adresse *</label>
+                  <Input 
+                    name="address" 
+                    value={newStation.address} 
+                    onChange={e => setNewStation({ ...newStation, address: e.target.value })} 
+                    required 
+                    placeholder="Ex: Avenue Habib Bourguiba, Tunis"
+                  />
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Gouvernorat</label>
-              <select name="governorateId" value={newStation.governorateId} onChange={e => setNewStation({ ...newStation, governorateId: e.target.value })} required className="w-full border rounded p-2" disabled={governorates.length === 0}>
-                <option value="">{governorates.length === 0 ? 'Aucune gouvernorat disponible' : 'Sélectionner la gouvernorat'}</option>
-                {governorates.map(g => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Délégation</label>
-              <select name="delegationId" value={newStation.delegationId} onChange={e => setNewStation({ ...newStation, delegationId: e.target.value })} required className="w-full border rounded p-2" disabled={delegations.length === 0}>
-                <option value="">{delegations.length === 0 ? 'Aucune délégation disponible' : 'Sélectionner la délégation'}</option>
-                {delegations.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Adresse</label>
-              <Input name="address" value={newStation.address} onChange={e => setNewStation({ ...newStation, address: e.target.value })} required />
-            </div>
-            {createStationError && <div className="text-xs text-red-500 mt-1">{createStationError}</div>}
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" type="button" onClick={() => setShowCreateStation(false)} disabled={isCreatingStation}>Annuler</Button>
-              <Button type="submit" disabled={isCreatingStation}>{isCreatingStation ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}Créer</Button>
+            
+            {createStationError && (
+              <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
+                  <AlertCircle className="h-4 w-4" />
+                  <span className="text-sm font-medium">Erreur</span>
+                </div>
+                <div className="text-sm text-red-700 dark:text-red-300 mt-1">
+                  {createStationError}
+                </div>
+              </div>
+            )}
+            
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button 
+                variant="outline" 
+                type="button" 
+                onClick={() => {
+                  setShowCreateStation(false);
+                  setCreateStationError(null);
+                  setNewStation({ name: '', governorateId: '', delegationId: '', address: '' });
+                }} 
+                disabled={isCreatingStation}
+              >
+                Annuler
+              </Button>
+              <Button 
+                type="submit" 
+                disabled={isCreatingStation || isLoadingMunicipalities}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {isCreatingStation ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Création...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Créer la station
+                  </>
+                )}
+              </Button>
             </div>
           </form>
         </DialogContent>

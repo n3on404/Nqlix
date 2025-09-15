@@ -429,17 +429,57 @@ class ApiService {
   }
 
   /**
-   * Get available queues
+   * Get available queues with optional filtering
    */
-  public async getAvailableQueues(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/queue/available', 'GET');
+  public async getAvailableQueues(filters?: {
+    governorate?: string;
+    delegation?: string;
+  }): Promise<ApiResponse<any>> {
+    const params = new URLSearchParams();
+    if (filters?.governorate) {
+      params.append('governorate', filters.governorate);
+    }
+    if (filters?.delegation) {
+      params.append('delegation', filters.delegation);
+    }
+    const queryString = params.toString();
+    const url = queryString ? `/api/queue/available?${queryString}` : '/api/queue/available';
+    return this.requestViaProxy<any>(url, 'GET');
+  }
+
+  /**
+   * Get available locations for queue filtering
+   */
+  public async getQueueLocations(): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/queue/locations', 'GET');
   }
 
   /**
    * Get available destinations for booking (only destinations with available seats)
    */
-  public async getAvailableDestinationsForBooking(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/queue-booking/destinations', 'GET');
+  public async getAvailableDestinationsForBooking(filters?: {
+    governorate?: string;
+    delegation?: string;
+  }): Promise<ApiResponse<any>> {
+    const params = new URLSearchParams();
+    if (filters?.governorate) {
+      params.append('governorate', filters.governorate);
+    }
+    if (filters?.delegation) {
+      params.append('delegation', filters.delegation);
+    }
+    
+    const queryString = params.toString();
+    const url = queryString ? `/api/queue-booking/destinations?${queryString}` : '/api/queue-booking/destinations';
+    
+    return this.requestViaProxy<any>(url, 'GET');
+  }
+
+  /**
+   * Get available locations (governments and delegations) for filtering
+   */
+  public async getAvailableLocations(): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/queue-booking/locations', 'GET');
   }
 
   /**
@@ -560,6 +600,14 @@ class ApiService {
    */
   public async getSupervisorDashboard(): Promise<ApiResponse<any>> {
     return this.requestViaProxy<any>('/api/dashboard/supervisor', 'GET');
+  }
+
+  /**
+   * Get activity log for dashboard
+   */
+  public async getActivityLog(limit?: number): Promise<ApiResponse<any>> {
+    const params = limit ? `?limit=${limit}` : '';
+    return this.get<any>(`/api/dashboard/activity${params}`);
   }
 
   // Overnight Queue Management

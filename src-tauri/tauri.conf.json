@@ -7,8 +7,8 @@
     "withGlobalTauri": false
   },
   "package": {
-    "productName": "Nqlix",
-    "version": "0.0.10"
+    "productName": "Wasla",
+    "version": "1.0.0"
   },
   "tauri": {
     "allowlist": {
@@ -17,12 +17,25 @@
         "all": true,
         "request": true,
         "scope": ["http://**", "https://**"]
+      },
+      "shell": {
+        "all": false,
+        "open": true
+      },
+      "globalShortcut": {
+        "all": true
       }
+    },
+    "systemTray": {
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": true,
+      "menuOnLeftClick": false,
+      "title": "Wasla"
     },
     "bundle": {
       "active": true,
       "targets": ["msi", "nsis", "updater"],
-      "identifier": "com.nqlix.desktop",
+      "identifier": "com.wasla.desktop",
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
@@ -34,7 +47,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://tunimove.vercel.app/api/updater/nqlix"
+        "https://tunimove.vercel.app/api/updater/wasla"
       ],
       "dialog": true,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE3NjQ1QzgxQUIzQTg3OEMKUldTTWh6cXJnVnhrRnkrWXVMR0R2S0hqQnY5UUxYODh6ZzJlRlpuRG0rN05LMHliZk1pQit1UVYK"
@@ -44,11 +57,17 @@
     },
     "windows": [
       {
-        "fullscreen": false,
+        "fullscreen": true,
         "resizable": true,
-        "title": "Nqlix",
-        "height": 600,
-        "width": 800
+        "title": "Wasla",
+        "height": 1080,
+        "width": 1920,
+        "center": true,
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "decorations": true,
+        "visible": true,
+        "focus": true
       }
     ]
   }

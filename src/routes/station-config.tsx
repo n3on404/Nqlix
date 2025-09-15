@@ -9,10 +9,14 @@ import {
   Save, 
   Building,
   Settings,
-  Loader2
+  Loader2,
+  Globe,
+  CheckCircle2,
+  AlertCircle
 } from "lucide-react";
 import { toast } from "sonner"
 import api from "../lib/api";
+import MunicipalityService from "../services/municipalityService";
 
 interface StationConfig {
   id?: string;
@@ -35,6 +39,19 @@ interface GovernorateData {
   delegations: string[];
 }
 
+interface MunicipalityGovernorate {
+  id: string;
+  name: string;
+  nameAr?: string;
+}
+
+interface MunicipalityDelegation {
+  id: string;
+  name: string;
+  nameAr?: string;
+  governorateId: string;
+}
+
 export default function StationConfiguration() {
   const [config, setConfig] = useState<StationConfig>({
     name: '',
@@ -52,33 +69,38 @@ export default function StationConfiguration() {
   const [isLoading, setIsLoading] = useState(true);
   const [originalConfig, setOriginalConfig] = useState<StationConfig | null>(null);
   
-  // Location data
-  const [governorates, setGovernorates] = useState<string[]>([]);
-  const [delegations, setDelegations] = useState<string[]>([]);
+  // Location data with municipality service
+  const [governorates, setGovernorates] = useState<MunicipalityGovernorate[]>([]);
+  const [delegations, setDelegations] = useState<MunicipalityDelegation[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState(false);
+  const [municipalityAPIStatus, setMunicipalityAPIStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
 
-  // Fetch governorates and delegations
+  // Fetch governorates and delegations using municipality service
   const fetchLocationData = async () => {
     try {
       setIsLoadingLocations(true);
-      const response = await api.getAllLocations();
+      setMunicipalityAPIStatus('checking');
       
-      if (response.success && response.data) {
-        const governoratesList = response.data.map((g: GovernorateData) => g.name).sort();
-        setGovernorates(governoratesList);
-        
-        // If we have a governorate selected, load its delegations
-        if (config.governorate) {
-          const governorateData = response.data.find((g: GovernorateData) => g.name === config.governorate);
-          if (governorateData) {
-            setDelegations(governorateData.delegations);
-          }
-        }
-      } else {
-        toast.error('Échec du chargement des données de localisation');
+      // Check API availability
+      const isAPIAvailable = await MunicipalityService.checkAPIAvailability();
+      setMunicipalityAPIStatus(isAPIAvailable ? 'available' : 'unavailable');
+      
+      // Fetch governorates from municipality service
+      const municipalityGovs = await MunicipalityService.getGovernorates();
+      setGovernorates(municipalityGovs);
+      
+      // If we have a governorate selected, load its delegations
+      if (config.governorate) {
+        const municipalityDelegations = await MunicipalityService.getDelegationsByGovernorate(config.governorate);
+        setDelegations(municipalityDelegations);
       }
+      
+      console.log(`🌐 Station Config - Municipality API: ${isAPIAvailable ? 'Available' : 'Using fallback'}`);
+      console.log("Loaded governorates for station config:", municipalityGovs.length);
+      
     } catch (error) {
       console.error('Error fetching location data:', error);
+      setMunicipalityAPIStatus('unavailable');
       toast.error('Échec du chargement des données de localisation');
     } finally {
       setIsLoadingLocations(false);
@@ -92,13 +114,18 @@ export default function StationConfiguration() {
     
     if (governorate) {
       try {
-        const response = await api.getDelegationsByGovernorate(governorate);
-        if (response.success && response.data) {
-          setDelegations(response.data);
-        }
+        setIsLoadingLocations(true);
+        
+        // Fetch delegations using municipality service
+        const municipalityDelegations = await MunicipalityService.getDelegationsByGovernorate(governorate);
+        setDelegations(municipalityDelegations);
+        
+        console.log(`🗺️ Station Config - Fetched ${municipalityDelegations.length} delegations for ${governorate}`);
       } catch (error) {
         console.error('Error fetching delegations:', error);
         toast.error('Échec du chargement des délégations');
+      } finally {
+        setIsLoadingLocations(false);
       }
     }
   };
@@ -239,6 +266,46 @@ export default function StationConfiguration() {
       <div>
         <h1 className="text-3xl font-bold">Configuration de la station</h1>
         <p className="text-muted-foreground">Gérer les paramètres et les heures d'ouverture de la station</p>
+        
+        {/* Municipality API Status */}
+        <div className="mt-4 p-3 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-950 dark:to-green-950 rounded-lg border">
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+              Données de localisation tunisiennes
+            </span>
+            <div className="ml-auto">
+              {municipalityAPIStatus === 'checking' && (
+                <div className="flex items-center gap-1 text-yellow-600">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="text-xs">Vérification...</span>
+                </div>
+              )}
+              {municipalityAPIStatus === 'available' && (
+                <div className="flex items-center gap-1 text-green-600">
+                  <CheckCircle2 className="h-3 w-3" />
+                  <span className="text-xs">API des municipalités active</span>
+                </div>
+              )}
+              {municipalityAPIStatus === 'unavailable' && (
+                <div className="flex items-center gap-1 text-orange-600">
+                  <AlertCircle className="h-3 w-3" />
+                  <span className="text-xs">Utilisation des données locales de secours</span>
+                </div>
+              )}
+            </div>
+          </div>
+          {municipalityAPIStatus === 'available' && (
+            <p className="text-xs text-green-700 dark:text-green-300 mt-1">
+              Connexion à l'API officielle des municipalités tunisiennes pour des données à jour
+            </p>
+          )}
+          {municipalityAPIStatus === 'unavailable' && (
+            <p className="text-xs text-orange-700 dark:text-orange-300 mt-1">
+              Utilisation des données locales - {governorates.length} gouvernorats disponibles
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -277,14 +344,42 @@ export default function StationConfiguration() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-2">Gouvernorat</label>
+              <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                <Globe className="h-4 w-4" />
+                Gouvernorat
+                {isEditing && (
+                  <div className="ml-auto">
+                    {municipalityAPIStatus === 'checking' && (
+                      <div className="flex items-center gap-1 text-yellow-600">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <span className="text-xs">Vérification...</span>
+                      </div>
+                    )}
+                    {municipalityAPIStatus === 'available' && (
+                      <div className="flex items-center gap-1 text-green-600">
+                        <CheckCircle2 className="h-3 w-3" />
+                        <span className="text-xs">API active</span>
+                      </div>
+                    )}
+                    {municipalityAPIStatus === 'unavailable' && (
+                      <div className="flex items-center gap-1 text-orange-600">
+                        <AlertCircle className="h-3 w-3" />
+                        <span className="text-xs">Données locales</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </label>
               {isEditing ? (
                 <Select
                   value={config.governorate}
                   onChange={(e) => handleGovernorateChange(e.target.value)}
-                  options={governorates.map(g => ({ value: g, label: g }))}
-                  placeholder="Sélectionnez le gouvernorat"
-                  disabled={isLoadingLocations}
+                  options={governorates.map(g => ({ 
+                    value: g.name, 
+                    label: `${g.name}${g.nameAr ? ` (${g.nameAr})` : ''}` 
+                  }))}
+                  placeholder={isLoadingLocations ? "Chargement..." : "Sélectionnez le gouvernorat"}
+                  disabled={isLoadingLocations || governorates.length === 0}
                 />
               ) : (
                 <div className="p-3 bg-muted rounded-lg">
@@ -294,14 +389,33 @@ export default function StationConfiguration() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-2">Délégation</label>
+              <label className="block text-sm font-medium mb-2 flex items-center gap-2">
+                <MapPin className="h-4 w-4" />
+                Délégation
+                {isEditing && isLoadingLocations && (
+                  <div className="ml-auto">
+                    <div className="flex items-center gap-1 text-blue-600">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span className="text-xs">Chargement...</span>
+                    </div>
+                  </div>
+                )}
+              </label>
               {isEditing ? (
                 <Select
                   value={config.delegation}
                   onChange={(e) => setConfig(prev => ({ ...prev, delegation: e.target.value }))}
-                  options={delegations.map(d => ({ value: d, label: d }))}
-                  placeholder="Sélectionnez la délégation"
-                  disabled={!config.governorate || delegations.length === 0}
+                  options={delegations.map(d => ({ 
+                    value: d.name, 
+                    label: `${d.name}${d.nameAr ? ` (${d.nameAr})` : ''}` 
+                  }))}
+                  placeholder={
+                    !config.governorate ? "Sélectionnez d'abord le gouvernorat" :
+                    isLoadingLocations ? "Chargement des délégations..." : 
+                    delegations.length === 0 ? "Aucune délégation disponible" :
+                    "Sélectionnez la délégation"
+                  }
+                  disabled={!config.governorate || delegations.length === 0 || isLoadingLocations}
                 />
               ) : (
                 <div className="p-3 bg-muted rounded-lg">

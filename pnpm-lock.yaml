@@ -48,7 +48,7 @@ importers:
         specifier: ^0.263.1
         version: 0.263.1(react@18.3.1)
       mqtt:
-        specifier: ^5.14.1
+        specifier: ^5.3.4
         version: 5.14.1
       next-themes:
         specifier: ^0.2.1

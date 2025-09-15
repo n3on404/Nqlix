@@ -14,6 +14,10 @@ interface Route {
   stationId: string;
   stationName: string;
   basePrice: number;
+  governorate?: string;
+  governorateAr?: string;
+  delegation?: string;
+  delegationAr?: string;
   isActive: boolean;
   syncedAt: string;
   updatedAt: string;
@@ -221,6 +225,7 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
                 <thead className="sticky top-0 bg-card border-b z-10">
                   <tr>
                     <th className="text-left py-3 px-4 font-medium bg-card">Station</th>
+                    <th className="text-left py-3 px-4 font-medium bg-card">Location</th>
                     <th className="text-left py-3 px-4 font-medium bg-card">Base Price</th>
                     <th className="text-left py-3 px-4 font-medium bg-card">Status</th>
                     <th className="text-left py-3 px-4 font-medium bg-card">Last Updated</th>
@@ -236,6 +241,23 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
                         <div>
                           <p className="font-medium">{route.stationName}</p>
                           <p className="text-sm text-muted-foreground">ID: {route.stationId}</p>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div>
+                          {route.governorate && route.delegation ? (
+                            <>
+                              <p className="font-medium text-sm">{route.governorate}</p>
+                              <p className="text-xs text-muted-foreground">{route.delegation}</p>
+                              {route.governorateAr && route.delegationAr && (
+                                <p className="text-xs text-muted-foreground font-arabic">
+                                  {route.governorateAr} - {route.delegationAr}
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">Location not available</p>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-4">
@@ -338,6 +360,11 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
               <div>
                 <label className="text-sm font-medium">Station</label>
                 <p className="text-sm text-muted-foreground">{editingRoute.stationName}</p>
+                {editingRoute.governorate && editingRoute.delegation && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {editingRoute.governorate}, {editingRoute.delegation}
+                  </p>
+                )}
               </div>
               
               <div>

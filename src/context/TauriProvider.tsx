@@ -74,7 +74,7 @@ export const TauriProvider: React.FC<TauriProviderProps> = ({ children }) => {
       return await invoke<string>('get_app_name');
     } catch (error) {
       console.error('Failed to get app name:', error);
-      return 'Nqlix';
+      return 'Wasla';
     }
   };
 

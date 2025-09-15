@@ -941,10 +941,8 @@ class EnhancedLocalNodeApiService {
       console.log('🔍 Discovering local node servers...');
       
       // Use Tauri's network discovery command
-      const discoveredServers = await invoke<string[]>('discover_network', {
-        network: '192.168.1',
-        port: 3001
-      });
+      const result = await invoke<any>('discover_local_servers');
+      const discoveredServers = result.servers ? result.servers.map((server: any) => server.url) : [];
       
       if (discoveredServers && discoveredServers.length > 0) {
         this.setDiscoveredServers(discoveredServers);

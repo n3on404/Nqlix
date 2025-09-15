@@ -20,6 +20,7 @@ import RoutesPage from "./routes/routes";
 import SupervisorVehicleManagement from './routes/supervisor-vehicle-management';
 import DriverTicketsPage from './routes/driver-tickets';
 import PreviewTicket from './routes/preview-ticket';
+import LogoShowcasePage from './routes/logo-showcase';
 import { TauriProvider } from "./context/TauriProvider";
 import { AuthProvider } from "./context/AuthProvider";
 import "./styles.css";
@@ -173,6 +174,10 @@ const router = createBrowserRouter([
         path: "/mqtt-connection-test",
         element: <EnhancedMqttConnectionTest />,
       },
+      {
+        path: "/logo-showcase",
+        element: <LogoShowcasePage />,
+      },
     ],
   },
 ]);
@@ -182,36 +187,12 @@ const App: React.FC = () => {
   useEnhancedSystemInit();
   const { isInitialized, isInitializing, shouldShowLogin, completeInitialization } = useInit();
 
-  // Initialize MQTT connection when app is ready
+  // Initialize WebSocket connection when app is ready (MQTT disabled in favor of WebSocket)
   useEffect(() => {
     if (isInitialized && !isInitializing) {
-      console.log('🚀 App initialized, setting up Enhanced MQTT connection...');
-      // Import and initialize Enhanced MQTT
-      import('./services/enhancedMqttClient').then(({ initializeEnhancedMqtt }) => {
-        const mqttClient = initializeEnhancedMqtt();
-        console.log('✅ Enhanced MQTT client initialized for app');
-        
-        // Connect to MQTT broker
-        mqttClient.connect().then(() => {
-          console.log('🔌 Enhanced MQTT connected successfully');
-          
-          // Subscribe to real-time updates
-          mqttClient.subscribeToUpdates(['queue_update', 'cash_booking_updated', 'seat_availability_changed', 'financial_update', 'dashboard_update']);
-          
-          // Listen for UI refresh events
-          mqttClient.on('ui_refresh_required', (data: any) => {
-            console.log('🔄 UI refresh required:', data);
-            // Trigger UI refresh based on data type
-            window.dispatchEvent(new CustomEvent('ui_refresh', { detail: data }));
-          });
-          
-        }).catch((error: any) => {
-          console.error('❌ Failed to connect Enhanced MQTT:', error);
-        });
-        
-      }).catch((error: any) => {
-        console.error('❌ Failed to initialize Enhanced MQTT:', error);
-      });
+      console.log('🚀 App initialized, WebSocket will handle real-time communication');
+      // WebSocket connection is handled by individual components and contexts
+      // No need for MQTT since WebSocket provides the same functionality
     }
   }, [isInitialized, isInitializing]);
 
