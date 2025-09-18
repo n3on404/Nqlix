@@ -762,12 +762,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
 
 [[package]]
-name = "data-url"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
-
-[[package]]
 name = "deranged"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4008,7 +4002,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cocoa",
- "data-url",
  "dirs-next",
  "dunce",
  "embed_plist",
@@ -4122,16 +4115,6 @@ dependencies = [
  "syn 1.0.109",
  "tauri-codegen",
  "tauri-utils",
-]
-
-[[package]]
-name = "tauri-plugin-printer"
-version = "1.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c12b6bbe194c26960f6a2d82cdd8d90d8999c97c355eca7c64d41f3f04a777d"
-dependencies = [
- "base64 0.21.7",
- "tauri",
 ]
 
 [[package]]
@@ -4771,7 +4754,7 @@ dependencies = [
 
 [[package]]
 name = "wasla_desktop_app"
-version = "0.0.13"
+version = "1.0.0"
 dependencies = [
  "auto-launch",
  "futures",
@@ -4781,9 +4764,9 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
- "tauri-plugin-printer",
  "tokio",
  "tokio-tungstenite",
+ "uuid",
 ]
 
 [[package]]

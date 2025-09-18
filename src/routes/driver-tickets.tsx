@@ -5,10 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge';
 import { DriverEntryTicket } from '../components/DriverEntryTicket';
 import { DriverExitTicket } from '../components/DriverExitTicket';
-import { ThermalPrinterSettings } from '../components/ThermalPrinterSettings';
+import { thermalPrinter } from '../services/thermalPrinterService';
 import { useAuth } from '../context/AuthProvider';
-import { useThermalPrinter } from '../hooks/useThermalPrinter';
-import { ThermalTicketData } from '../services/thermalPrinter';
 import api from '../lib/api';
 import { toast } from 'sonner';
 import { 
@@ -72,11 +70,7 @@ interface DriverTicket {
 
 export default function DriverTicketsPage() {
   const { currentStaff } = useAuth();
-  const { 
-    isInitialized: thermalInitialized, 
-    selectedPrinter, 
-    printTicket: printThermalTicket 
-  } = useThermalPrinter();
+  // Thermal printer functionality removed - keeping console logging
   
   const [activeTab, setActiveTab] = useState<'entry' | 'exit' | 'settings'>('entry');
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -89,6 +83,24 @@ export default function DriverTicketsPage() {
   const [exitTicket, setExitTicket] = useState<DriverTicket | null>(null);
   const [showEntryTicket, setShowEntryTicket] = useState(false);
   const [showExitTicket, setShowExitTicket] = useState(false);
+
+  const reprintLastEntry = async () => {
+    try {
+      await thermalPrinter.reprintLastEntry();
+      console.log('✅ Reprinted last entry ticket');
+    } catch (error) {
+      console.error('❌ Failed to reprint last entry ticket:', error);
+    }
+  };
+
+  const reprintLastExit = async () => {
+    try {
+      await thermalPrinter.reprintLastExit();
+      console.log('✅ Reprinted last exit ticket');
+    } catch (error) {
+      console.error('❌ Failed to reprint last exit ticket:', error);
+    }
+  };
 
   // Load vehicles based on active tab
   useEffect(() => {
@@ -111,19 +123,14 @@ export default function DriverTicketsPage() {
     }
   }, [vehicles, searchTerm]);
 
-  // Helper function to automatically print thermal tickets
-  const printTicketAutomatically = async (
+  // Helper function to log ticket data for development
+  const logTicketData = async (
     ticketData: DriverTicket, 
     vehicle: Vehicle, 
     ticketType: 'entry' | 'exit'
   ) => {
-    if (!thermalInitialized || !selectedPrinter) {
-      console.log('Thermal printing not available - manual printing only');
-      return;
-    }
-
     try {
-      const thermalData: ThermalTicketData = {
+      const thermalData = {
         ticketNumber: ticketData.ticketNumber,
         licensePlate: ticketData.licensePlate,
         stationName: ticketData.stationName || ticketData.departureStationName || 'Station',
@@ -137,12 +144,11 @@ export default function DriverTicketsPage() {
         exitTime: ticketData.exitTime ? new Date(ticketData.exitTime) : undefined
       };
 
-      const success = await printThermalTicket(thermalData);
-      if (success) {
-        console.log(`Thermal ticket printed successfully for ${vehicle.licensePlate}`);
-      }
+      console.log(`Ticket data for ${ticketType} ticket:`, thermalData);
+      console.log(`Full ticket data:`, ticketData);
+      console.log(`Vehicle data:`, vehicle);
     } catch (error) {
-      console.error('Thermal printing failed:', error);
+      console.error('Failed to log ticket data:', error);
     }
   };
 
@@ -260,8 +266,15 @@ export default function DriverTicketsPage() {
         setEntryTicket(ticketData);
         setShowEntryTicket(true);
         
-        // Automatically print thermal ticket
-        await printTicketAutomatically(ticketData, vehicle, 'entry');
+        // Print with thermal printer
+        try {
+          const formattedData = thermalPrinter.formatEntryTicketData(ticketData, vehicle);
+          await thermalPrinter.printEntryTicket(formattedData);
+          console.log('✅ Entry ticket printed successfully with thermal printer');
+        } catch (printError) {
+          console.error('Thermal printer error:', printError);
+          // Don't fail the ticket generation if printing fails
+        }
         
         toast.success('Ticket d\'entrée généré avec succès');
         // Reload vehicles to update the list
@@ -297,8 +310,15 @@ export default function DriverTicketsPage() {
         setExitTicket(ticketData);
         setShowExitTicket(true);
         
-        // Automatically print thermal ticket
-        await printTicketAutomatically(ticketData, vehicle, 'exit');
+        // Print with thermal printer
+        try {
+          const formattedData = thermalPrinter.formatExitTicketData(ticketData, vehicle);
+          await thermalPrinter.printExitTicket(formattedData);
+          console.log('✅ Exit ticket printed successfully with thermal printer');
+        } catch (printError) {
+          console.error('Thermal printer error:', printError);
+          // Don't fail the ticket generation if printing fails
+        }
         
         toast.success('Ticket de sortie généré avec succès - Véhicule marqué comme parti');
         // Reload vehicles to remove the departed vehicle from the list
@@ -1601,9 +1621,7 @@ export default function DriverTicketsPage() {
                   <Printer className={`w-5 h-5 ${activeTab === 'settings' ? 'text-white' : 'text-blue-600 dark:text-blue-400'}`} />
                 </div>
                 <span className="text-lg">Imprimantes</span>
-                {thermalInitialized && selectedPrinter && (
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                )}
+                {/* Printer status indicator removed */}
               </div>
               {activeTab === 'settings' && (
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-purple-600/20 rounded-xl animate-pulse" />
@@ -1614,7 +1632,20 @@ export default function DriverTicketsPage() {
 
         {/* Settings Tab Content */}
         {activeTab === 'settings' && (
-          <ThermalPrinterSettings />
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-6">
+            <div className="text-center py-8">
+              <Printer className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                Gestion des Imprimantes
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400 mb-4">
+                Les fonctionnalités d'impression thermique ont été temporairement supprimées.
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-500">
+                Les données de tickets sont disponibles dans la console du navigateur pour le développement.
+              </p>
+            </div>
+          </div>
         )}
 
         {/* Search Section - Modern Design */}
@@ -1745,6 +1776,14 @@ export default function DriverTicketsPage() {
                       Actualiser
                     </>
                   )}
+                </Button>
+                <Button
+                  onClick={activeTab === 'entry' ? reprintLastEntry : reprintLastExit}
+                  variant="outline"
+                  size="sm"
+                  className="border-slate-300 dark:border-slate-600"
+                >
+                  <Printer className="w-4 h-4 mr-2" /> Réimprimer dernier
                 </Button>
               </div>
             </div>

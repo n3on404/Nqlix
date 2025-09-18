@@ -45,6 +45,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { useNotifications } from "../context/NotificationProvider";
 import { usePaymentNotifications } from "../components/NotificationToast";
 import { getWebSocketClient, initializeWebSocket } from "../lib/websocket";
+import { thermalPrinter } from "../services/thermalPrinterService";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import api from "../lib/api";
@@ -82,146 +83,79 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex flex-col md:flex-row items-center justify-between gap-6 p-6 bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 border-2 rounded-2xl shadow-lg transition-all duration-200 ${
-        queue.status === 'WAITING' ? 'border-yellow-300 dark:border-yellow-600' :
-        queue.status === 'LOADING' ? 'border-blue-300 dark:border-blue-600' :
-        queue.status === 'READY' ? 'border-green-300 dark:border-green-600' :
-        'border-blue-200 dark:border-blue-700'
-      } ${
-        isDragging ? 'opacity-70 shadow-2xl scale-105' : 'hover:shadow-xl'
-      }`}
+      className={`bg-white border-2 rounded-lg p-4 transition-all ${
+        queue.status === 'WAITING' ? 'border-yellow-300' :
+        queue.status === 'LOADING' ? 'border-blue-300' :
+        queue.status === 'READY' ? 'border-green-300' :
+        'border-gray-200'
+      } ${isDragging ? 'opacity-70 shadow-lg' : 'hover:shadow-md'}`}
     >
-      {/* Left: Drag Handle, Position, Vehicle Info */}
-      <div className="flex items-center gap-6 flex-1 w-full">
-        {/* Drag Handle */}
-        <div className="flex flex-col items-center mr-2">
-          <GripVertical className="h-6 w-6 text-white opacity-60 mb-2 cursor-grab" {...attributes} {...listeners} />
-          {/* Position Badge */}
-          <div className="bg-gradient-to-br from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 text-white rounded-full w-14 h-14 flex items-center justify-center font-extrabold text-2xl shadow-lg border-4 border-white/20 dark:border-gray-700/20">
+      <div className="flex items-center justify-between">
+        {/* Left: Position and Vehicle Info */}
+        <div className="flex items-center gap-4 flex-1">
+          {/* Position */}
+          <div className="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold text-sm">
             {queue.queuePosition}
           </div>
-        </div>
-        {/* Vehicle Info - Now Clickable */}
-        <div 
-          className="flex items-center gap-4 flex-1 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 p-3 rounded-lg transition-colors group"
-          onClick={() => onVehicleClick({ 
-            licensePlate: queue.licensePlate,
-            firstName: queue.vehicle?.driver?.firstName,
-            lastName: queue.vehicle?.driver?.lastName,
-            currentDestination: queue.destinationName, 
-            currentDestinationId: queue.destinationId,
-            queueId: queue.id 
-          })}
-        >
-          <div className="p-3 bg-blue-100 dark:bg-blue-800 rounded-xl flex items-center justify-center group-hover:bg-blue-200 dark:group-hover:bg-blue-700 transition-colors">
-            <Car className="h-7 w-7 text-blue-600 dark:text-blue-400" />
-          </div>
-                      <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <p className="font-bold text-gray-900 dark:text-white text-lg tracking-wide">{queue.licensePlate}</p>
-                <Edit className="h-4 w-4 text-blue-600 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-              <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">{queue.vehicle?.driver?.firstName} {queue.vehicle?.driver?.lastName}</p>
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-blue-600 dark:text-blue-400 group-hover:text-blue-700 dark:group-hover:text-blue-300">Cliquez pour changer la destination</p>
-                {/* Status Badge */}
-                <div className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                  queue.status === 'WAITING' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
-                  queue.status === 'LOADING' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' :
-                  queue.status === 'READY' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
-                  'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-                }`}>
-                  {queue.status === 'WAITING' ? 'En attente' :
-                   queue.status === 'LOADING' ? 'En charge' :
-                   queue.status === 'READY' ? 'Prêt' :
-                   queue.status}
-                </div>
-              </div>
+          
+          {/* Vehicle Info */}
+          <div 
+            className="flex items-center gap-3 flex-1 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
+            onClick={() => onVehicleClick({ 
+              licensePlate: queue.licensePlate,
+              firstName: queue.vehicle?.driver?.firstName,
+              lastName: queue.vehicle?.driver?.lastName,
+              currentDestination: queue.destinationName, 
+              currentDestinationId: queue.destinationId,
+              queueId: queue.id 
+            })}
+          >
+            <Car className="h-5 w-5 text-gray-600" />
+            <div>
+              <div className="font-semibold text-gray-900">{queue.licensePlate}</div>
+              <div className="text-sm text-gray-600">{queue.vehicle?.driver?.firstName} {queue.vehicle?.driver?.lastName}</div>
             </div>
+          </div>
         </div>
-      </div>
-      {/* Divider for wide screens */}
-      <div className="hidden md:block h-16 w-px bg-blue-200 dark:bg-blue-700 mx-4" />
-              {/* Right: Status & Actions */}
-        <div className="flex flex-col md:flex-row items-center gap-6 flex-shrink-0">
-          {/* Enhanced Seat Booking Display */}
+        
+        {/* Center: Status and Seats */}
+        <div className="flex items-center gap-6">
+          {/* Status */}
           <div className="text-center">
-            {(() => {
-              const bookedSeats = queue.totalSeats - queue.availableSeats;
-              const bookingPercentage = (bookedSeats / queue.totalSeats) * 100;
-              const isFullyBooked = queue.availableSeats === 0 || queue.status === 'READY';
-              
-              return (
-                <div className="space-y-2">
-                  {/* Seat Count */}
-                  <div className="flex items-center justify-center gap-2">
-                    <Users className={`h-5 w-5 ${isFullyBooked ? 'text-red-500 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'}`} />
-                    <span className={`font-bold text-lg ${isFullyBooked ? 'text-red-500 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
-                      {queue.availableSeats}/{queue.totalSeats}
-                    </span>
-                  </div>
-                  
-                  {/* Booking Status */}
-                  <div className="text-xs">
-                    {isFullyBooked ? (
-                      <div className="bg-red-500 text-white px-2 py-1 rounded-full font-semibold flex items-center gap-1">
-                        <AlertCircle className="h-3 w-3" />
-                        COMPLET
-                      </div>
-                    ) : bookedSeats > 0 ? (
-                      <div className="bg-orange-500 text-white px-2 py-1 rounded-full flex items-center gap-1">
-                        <UserCheck className="h-3 w-3" />
-                        {bookedSeats} réservé{bookedSeats > 1 ? 's' : ''}
-                      </div>
-                    ) : (
-                      <div className="text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                        <TrendingUp className="h-3 w-3" />
-                        places libres
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Booking Progress Bar */}
-                  <div className="w-16 h-2 bg-gray-300 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full transition-all duration-300 ${
-                        isFullyBooked ? 'bg-red-500' : 
-                        bookingPercentage > 75 ? 'bg-orange-500' : 
-                        bookingPercentage > 50 ? 'bg-yellow-500' : 'bg-green-500'
-                      }`}
-                      style={{ width: `${bookingPercentage}%` }}
-                    />
-                  </div>
-                  
-                  {/* Booking Percentage */}
-                  <div className="text-xs text-gray-600 dark:text-gray-400">
-                    {Math.round(bookingPercentage)}% réservé
-                  </div>
-                </div>
-              );
-            })()}
+            <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+              queue.status === 'WAITING' ? 'bg-yellow-100 text-yellow-800' :
+              queue.status === 'LOADING' ? 'bg-blue-100 text-blue-800' :
+              queue.status === 'READY' ? 'bg-green-100 text-green-800' :
+              'bg-gray-100 text-gray-800'
+            }`}>
+              {queue.status === 'WAITING' ? 'En attente' :
+               queue.status === 'LOADING' ? 'En charge' :
+               queue.status === 'READY' ? 'Prêt' : queue.status}
+            </div>
           </div>
-        {/* Departure */}
-        <div className="text-center">
-          <div className="flex items-center justify-center gap-2">
-            <Clock className="h-5 w-5 text-gray-700 dark:text-gray-300" />
-            <span className="text-base font-semibold text-gray-900 dark:text-white">
-              {queue.estimatedDeparture ? formatTime(queue.estimatedDeparture) : 'TBD'}
-            </span>
+          
+          {/* Seats */}
+          <div className="text-center">
+            <div className="flex items-center gap-1">
+              <Users className="h-4 w-4 text-gray-600" />
+              <span className="font-medium text-gray-900">{queue.availableSeats}/{queue.totalSeats}</span>
+            </div>
+            <div className="text-xs text-gray-600">places</div>
           </div>
-          <p className="text-xs text-gray-600 dark:text-gray-400">départ estimé</p>
+          
+          {/* Price */}
+          <div className="text-center">
+            <div className="font-semibold text-gray-900">{formatCurrency(basePrice)}</div>
+            <div className="text-xs text-gray-600">prix</div>
+          </div>
         </div>
-        {/* Price */}
-        <div className="text-center">
-          <p className="text-xl font-bold text-white bg-blue-600 dark:bg-blue-700 px-3 py-1 rounded-lg shadow">{formatCurrency(basePrice)}</p>
-          <p className="text-xs text-gray-600 dark:text-gray-400">prix de base</p>
-        </div>
-        {/* Actions */}
+        
+        {/* Right: Actions */}
         <div className="flex items-center gap-2">
           <Button 
             variant="outline" 
-            size="icon" 
-            className="bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800"
+            size="sm"
+            className="text-red-600 border-red-300 hover:bg-red-50"
             onClick={(e) => {
               e.stopPropagation();
               onExitQueue(queue.licensePlate);
@@ -231,26 +165,25 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             {actionLoading === queue.licensePlate ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <span className="relative group inline-flex">
-                <X className="h-4 w-4" />
-                {queue.status !== 'WAITING' && (
-                  <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap bg-gray-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">Disponible uniquement en attente</span>
-                )}
-              </span>
+              <X className="h-4 w-4" />
             )}
           </Button>
+          
           <Button 
-            variant="default" 
-            size="icon" 
-            className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 text-white shadow-lg disabled:opacity-60"
+            variant="outline" 
+            size="sm"
+            className="text-blue-600 border-blue-300 hover:bg-blue-50"
             disabled={queue.status !== 'WAITING'}
+            onClick={() => onVehicleClick({ 
+              licensePlate: queue.licensePlate,
+              firstName: queue.vehicle?.driver?.firstName,
+              lastName: queue.vehicle?.driver?.lastName,
+              currentDestination: queue.destinationName, 
+              currentDestinationId: queue.destinationId,
+              queueId: queue.id 
+            })}
           >
-            <span className="relative group inline-flex">
-              <ArrowRight className="h-6 w-6" />
-              {queue.status !== 'WAITING' && (
-                <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap bg-gray-900 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">Changer la destination: uniquement en attente</span>
-              )}
-            </span>
+            <Edit className="h-4 w-4" />
           </Button>
         </div>
       </div>
@@ -298,6 +231,7 @@ export default function QueueManagement() {
   const [selectedVehicle, setSelectedVehicle] = useState<any | null>(null);
   const [search, setSearch] = useState("");
   const [addVehicleError, setAddVehicleError] = useState<string | null>(null);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const [routes, setRoutes] = useState<any[]>([]);
   
   // Vehicle destination selection state
@@ -313,6 +247,12 @@ export default function QueueManagement() {
   const [selectedNewDestination, setSelectedNewDestination] = useState<string | null>(null);
   const [changeQueueLoading, setChangeQueueLoading] = useState(false);
   const [changeQueueError, setChangeQueueError] = useState<string | null>(null);
+
+  // Day pass state
+  const [showDayPassModal, setShowDayPassModal] = useState(false);
+  const [dayPassLoading, setDayPassLoading] = useState(false);
+  const [dayPassError, setDayPassError] = useState<string | null>(null);
+  const [dayPassPrice, setDayPassPrice] = useState<number>(0);
 
   // Filter state
   const [governments, setGovernments] = useState<any[]>([]);
@@ -731,9 +671,18 @@ export default function QueueManagement() {
       setVehiclesLoading(true);
       setVehiclesError(null);
       import("../lib/api").then(({ default: api }) => {
-        api.getVehicles().then(res => {
+        api.getVehicles().then(async res => {
           if (res.success && res.data) {
-            setVehicles(res.data);
+            // Check day pass status for each vehicle
+            const vehiclesWithDayPassStatus = await Promise.all(
+              res.data.map(async (vehicle: any) => {
+                console.log('Checking day pass status for vehicle:', vehicle.licensePlate);
+                const hasDayPass = await checkDayPassStatus(vehicle.licensePlate);
+                console.log('Day pass status result for', vehicle.licensePlate, ':', hasDayPass);
+                return { ...vehicle, dayPassValid: hasDayPass };
+              })
+            );
+            setVehicles(vehiclesWithDayPassStatus);
           } else {
             setVehiclesError(res.message || "Échec de la récupération des véhicules");
           }
@@ -746,10 +695,11 @@ export default function QueueManagement() {
     }
   }, [showAddVehicleModal]);
 
-  // When modal opens, clear error
+  // When modal opens, clear error and reset focus state
   useEffect(() => {
     if (showAddVehicleModal) {
       setAddVehicleError(null);
+      setIsInputFocused(false);
     }
   }, [showAddVehicleModal]);
 
@@ -822,10 +772,337 @@ export default function QueueManagement() {
     setAvailableDelegations([]);
   };
 
+  // Check if vehicle has valid day pass
+  const checkDayPassStatus = async (licensePlate: string) => {
+    try {
+      const response = await api.get(`/api/day-pass/status-by-license/${licensePlate}`);
+      console.log('Day pass status response for', licensePlate, ':', response);
+      return response.success && (response.data as any)?.hasValidPass;
+    } catch (error) {
+      console.error('Error checking day pass status:', error);
+      return false;
+    }
+  };
+
+  // Purchase day pass for vehicle
+  const purchaseDayPass = async (licensePlate: string) => {
+    setDayPassLoading(true);
+    setDayPassError(null);
+    
+    try {
+      // Find the selected vehicle to get driverId and vehicleId
+      const vehicle = selectedVehicle;
+      // Debug: Log vehicle data for day pass purchase
+      console.log('Vehicle data for day pass purchase:', {
+        vehicle,
+        hasId: !!vehicle?.id,
+        hasDriver: !!vehicle?.driver,
+        hasDriverId: !!vehicle?.driver?.id
+      });
+      
+      if (!vehicle) {
+        setDayPassError('Aucun véhicule sélectionné');
+        return { success: false, message: 'Aucun véhicule sélectionné' };
+      }
+      
+      if (!vehicle.id) {
+        setDayPassError('ID du véhicule manquant');
+        return { success: false, message: 'ID du véhicule manquant' };
+      }
+      
+      // Check for driver ID in different possible locations
+      const driverId = vehicle.driver?.id || vehicle.driverId || vehicle.driver_id;
+      
+      if (!driverId) {
+        setDayPassError('ID du conducteur manquant. Données disponibles: ' + JSON.stringify(vehicle));
+        return { success: false, message: 'ID du conducteur manquant' };
+      }
+
+      const response = await api.post('/api/day-pass/purchase', {
+        licensePlate,
+        driverId: driverId,
+        vehicleId: vehicle.id,
+        paymentMethod: 'cash' // Default to cash payment
+      });
+      
+      if (response.success) {
+        addNotification({
+          type: 'success',
+          title: 'Pass journalier acheté',
+          message: `Pass journalier acheté avec succès pour ${licensePlate}`,
+          duration: 4000
+        });
+        
+        // Print day pass ticket
+        try {
+          const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
+            licensePlate: licensePlate,
+            driverName: vehicle.driver ? `${vehicle.driver.firstName} ${vehicle.driver.lastName}` : 'N/A',
+            amount: dayPassPrice
+          });
+          
+          console.log('🖨️ Printing day pass ticket for:', licensePlate);
+          await thermalPrinter.printDayPassTicket(dayPassTicketData);
+          console.log('✅ Day pass ticket printed successfully');
+        } catch (printError) {
+          console.error('❌ Failed to print day pass ticket:', printError);
+          // Don't fail the purchase if printing fails
+        }
+        
+        return { success: true };
+      } else {
+        // Check if the error is because driver already has a valid day pass
+        if (response.message && response.message.includes('déjà un pass journalier valide')) {
+          addNotification({
+            type: 'info',
+            title: 'Pass journalier déjà valide',
+            message: `Le conducteur a déjà un pass journalier valide pour aujourd'hui`,
+            duration: 4000
+          });
+          return { success: true }; // Treat as success since day pass is valid
+        } else {
+          setDayPassError(response.message || 'Erreur lors de l\'achat du pass journalier');
+          return { success: false, message: response.message };
+        }
+      }
+    } catch (error: any) {
+      const errorMessage = error.message || 'Erreur lors de l\'achat du pass journalier';
+      setDayPassError(errorMessage);
+      return { success: false, message: errorMessage };
+    } finally {
+      setDayPassLoading(false);
+    }
+  };
+
+  // Get day pass price
+  const getDayPassPrice = async () => {
+    try {
+      const response = await api.get('/api/day-pass/price');
+      if (response.success && (response.data as any)?.price) {
+        setDayPassPrice((response.data as any).price);
+      } else {
+        // If price endpoint doesn't exist, use a default price
+        setDayPassPrice(50); // Default day pass price
+      }
+    } catch (error) {
+      console.error('Error fetching day pass price:', error);
+      setDayPassPrice(50); // Default day pass price
+    }
+  };
+
+  // Handle adding vehicle to queue (extracted for keyboard shortcuts)
+  const handleAddVehicleToQueue = async () => {
+    if (!selectedVehicle || !selectedVehicleDestination) return;
+    
+    // Check day pass status first
+    const hasDayPass = await checkDayPassStatus(selectedVehicle.licensePlate);
+    
+    if (!hasDayPass) {
+      // Show day pass purchase modal
+      setShowDayPassModal(true);
+      await getDayPassPrice();
+      return;
+    }
+    
+    // Proceed with adding to queue
+    setActionLoading(selectedVehicle.licensePlate);
+    setAddVehicleError(null);
+    
+    const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
+    
+    const result = await handleEnterQueueWithDestination(
+      selectedVehicle.licensePlate, 
+      selectedVehicleDestination,
+      destinationInfo?.stationName
+    );
+    
+    setActionLoading(null);
+    if (result?.success) {
+      setShowAddVehicleModal(false);
+      setSelectedVehicle(null);
+      setSelectedVehicleDestination(null);
+      setVehicleDestinations([]);
+      setSearch("");
+      setIsInputFocused(false);
+    } else if (result?.message) {
+      setAddVehicleError(result.message);
+    }
+  };
+
+  // Handle day pass purchase (extracted for keyboard shortcuts)
+  const handleDayPassPurchase = async () => {
+    if (!selectedVehicle) return;
+    
+    console.log('Selected vehicle for day pass purchase:', selectedVehicle);
+    const result = await purchaseDayPass(selectedVehicle.licensePlate);
+    
+    if (result.success) {
+      setShowDayPassModal(false);
+      setDayPassError(null);
+      
+      // Now proceed with adding to queue
+      setActionLoading(selectedVehicle.licensePlate);
+      setAddVehicleError(null);
+      
+      const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
+      
+      const queueResult = await handleEnterQueueWithDestination(
+        selectedVehicle.licensePlate, 
+        selectedVehicleDestination!,
+        destinationInfo?.stationName
+      );
+      
+      setActionLoading(null);
+      if (queueResult?.success) {
+        setShowAddVehicleModal(false);
+        setSelectedVehicle(null);
+        setSelectedVehicleDestination(null);
+        setVehicleDestinations([]);
+        setSearch("");
+        setIsInputFocused(false);
+      } else if (queueResult?.message) {
+        setAddVehicleError(queueResult.message);
+      }
+    }
+  };
+
   // Fetch governments on mount
   useEffect(() => {
     fetchGovernments();
   }, []);
+
+  // Keyboard shortcuts and navigation
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      
+      // Handle Alt key to toggle between input focus and vehicle selection
+      if (event.key === 'Alt' && showAddVehicleModal) {
+        event.preventDefault();
+        
+        if (isInputFocused) {
+          // Currently in input focus, switch to vehicle selection
+          const allQueueItems = Object.values(queues).flat();
+          const vehiclesInQueue = allQueueItems.map((q: any) => {
+            return (q.licensePlate || "").toUpperCase().trim();
+          });
+          
+          // Move focus to the first vehicle in the list
+          const firstVehicle = vehicles.find(v => {
+            const plate = (v.licensePlate || '').toUpperCase().trim();
+            return !vehiclesInQueue.includes(plate);
+          });
+          if (firstVehicle) {
+            setSelectedVehicle(firstVehicle);
+          }
+          setIsInputFocused(false);
+        } else {
+          // Currently in vehicle selection, switch to input focus
+          setIsInputFocused(true);
+          // Focus the input element
+          setTimeout(() => {
+            const inputElement = document.querySelector('input[placeholder*="Rechercher"]') as HTMLInputElement;
+            if (inputElement) {
+              inputElement.focus();
+            }
+          }, 0);
+        }
+        return;
+      }
+      
+      // Don't trigger other shortcuts when typing in inputs (except Alt)
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.contentEditable === 'true' ||
+        target.closest('[contenteditable]')
+      ) {
+        return;
+      }
+
+      // Open modal with Ctrl+N or F6
+      if ((event.ctrlKey || event.metaKey) && event.key === 'n') {
+        event.preventDefault();
+        setShowAddVehicleModal(true);
+      }
+      
+      if (event.key === 'F6') {
+        event.preventDefault();
+        setShowAddVehicleModal(true);
+      }
+
+      // Vehicle selection navigation (only when modal is open)
+      if (showAddVehicleModal && vehicles.length > 0) {
+        const currentIndex = selectedVehicle ? vehicles.findIndex(v => v.licensePlate === selectedVehicle.licensePlate) : -1;
+        
+        // Arrow keys or W/S for navigation
+        if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
+          event.preventDefault();
+          const prevIndex = currentIndex > 0 ? currentIndex - 1 : vehicles.length - 1;
+          setSelectedVehicle(vehicles[prevIndex]);
+        }
+        
+        if (event.key === 'ArrowDown' || event.key === 's' || event.key === 'S') {
+          event.preventDefault();
+          const nextIndex = currentIndex < vehicles.length - 1 ? currentIndex + 1 : 0;
+          setSelectedVehicle(vehicles[nextIndex]);
+        }
+        
+        // Space to select vehicle or confirm day pass purchase
+        if (event.code === 'Space') {
+          event.preventDefault();
+          
+          if (selectedVehicle && !selectedVehicleDestination) {
+            // Vehicle is selected but no destination - this shouldn't happen in normal flow
+            return;
+          }
+          
+          if (selectedVehicle && selectedVehicleDestination) {
+            // Both vehicle and destination selected - proceed with adding to queue
+            handleAddVehicleToQueue();
+          }
+        }
+      }
+
+      // Day pass modal navigation and confirmation
+      if (showDayPassModal && selectedVehicle) {
+        // Space to confirm day pass purchase
+        if (event.code === 'Space') {
+          event.preventDefault();
+          handleDayPassPurchase();
+        }
+        
+        // Escape to cancel
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setShowDayPassModal(false);
+          setDayPassError(null);
+        }
+      }
+
+      // Escape to close modals
+      if (event.key === 'Escape') {
+        if (showAddVehicleModal) {
+          setShowAddVehicleModal(false);
+          setSelectedVehicle(null);
+          setSelectedVehicleDestination(null);
+          setVehicleDestinations([]);
+          setAddVehicleError(null);
+          setSearch("");
+        }
+        if (showChangeQueueModal) {
+          setShowChangeQueueModal(false);
+          setSelectedVehicleForQueueChange(null);
+          setSelectedNewDestination(null);
+          setChangeQueueDestinations([]);
+          setChangeQueueError(null);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showAddVehicleModal, showDayPassModal, vehicles, selectedVehicle, selectedVehicleDestination, showChangeQueueModal, queues, isInputFocused]);
 
   // Aggregate status counts across all destinations (for header summary)
   const aggregateStatusCounts = () => {
@@ -998,427 +1275,436 @@ export default function QueueManagement() {
   };
 
   return (
-    <div className="flex flex-col h-full w-full p-6 space-y-8 bg-muted">
-      {/* Enhanced Header */}
-      <div className="sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-card/80 bg-card rounded-2xl p-6 shadow-sm border border-gray-200">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-          <div className="flex-1">
-            <div className="flex items-center space-x-3 mb-2">
-              <h1 className="text-3xl font-bold text-primary">Gestion de la file d'attente</h1>
-              {isConnected && (
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 flex items-center gap-1">
-                  <Activity className="h-3 w-3 animate-pulse" />
-                  <span>Live</span>
-                </Badge>
-              )}
-            </div>
-            <div className="flex flex-col xl:flex-row xl:items-center xl:space-x-6 space-y-3 xl:space-y-0">
-              <p className="text-muted-foreground">Gérer les files d'attente par destination</p>
-              {lastUpdated && (
-                <div className="flex items-center space-x-1 text-sm text-green-700 dark:text-green-400">
-                  <CheckCircle className="h-4 w-4" />
-                  <span>Mis à jour {lastUpdated.toLocaleTimeString()}</span>
-                </div>
-              )}
-              {(() => {
-                const s = aggregateStatusCounts();
-                return (
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 rounded-full text-xs bg-yellow-100 text-yellow-800">En attente: {s.waiting}</span>
-                    <span className="px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">En charge: {s.loading}</span>
-                    <span className="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">Prêt: {s.ready}</span>
-                    <span className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-800">Total: {s.total}</span>
-                  </div>
-                );
-              })()}
-            </div>
-            {/* Compact Status Legend */}
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500"></span> En attente</span>
-              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span> En charge</span>
-              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> Prêt</span>
-            </div>
+    <div className="min-h-screen bg-gray-50">
+      {/* Simple Header */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Gestion des Files</h1>
+            <p className="text-sm text-gray-600 mt-1">Ajouter ou retirer des véhicules des files d'attente</p>
           </div>
           <div className="flex items-center gap-3">
-          <Button 
-            variant="outline" 
-            onClick={() => refreshQueues()}
-            disabled={isLoading}
-              className="border-gray-300 hover:bg-muted"
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            {isLoading ? 'Actualisation...' : 'Actualiser'}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => {
-              console.log('🔄 Manual queue refresh triggered');
-              refreshQueues();
-            }}
-            className="border-blue-300 hover:bg-blue-50 text-blue-600"
-          >
-            <Activity className="h-4 w-4 mr-2" />
-            Test Refresh
-          </Button>
             <Button 
-              variant="default" 
-              onClick={() => setShowAddVehicleModal(true)}
-              className="bg-primary hover:bg-primary/80"
+              variant="outline" 
+              onClick={() => refreshQueues()}
+              disabled={isLoading}
+              className="flex items-center gap-2"
             >
-              + Ajouter un véhicule à la file
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Actualiser
+            </Button>
+            <Button 
+              onClick={() => setShowAddVehicleModal(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-6 py-2 text-base font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
+              title="Ajouter un véhicule à la file (Ctrl+N ou F6)"
+              data-shortcut="add-vehicle"
+            >
+              <Car className="h-5 w-5" />
+              + Ajouter Véhicule
+              <div className="ml-2 text-xs opacity-75">
+                <kbd className="px-1 py-0.5 bg-blue-500 rounded text-xs">F6</kbd>
+              </div>
             </Button>
           </div>
         </div>
+        
+        {/* Quick Stats */}
+        {(() => {
+          const s = aggregateStatusCounts();
+          return (
+            <div className="mt-4 flex items-center gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+                <span className="text-gray-600">En attente: <span className="font-semibold text-gray-900">{s.waiting}</span></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-blue-400"></div>
+                <span className="text-gray-600">En charge: <span className="font-semibold text-gray-900">{s.loading}</span></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-green-400"></div>
+                <span className="text-gray-600">Prêt: <span className="font-semibold text-gray-900">{s.ready}</span></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-gray-400"></div>
+                <span className="text-gray-600">Total: <span className="font-semibold text-gray-900">{s.total}</span></span>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
-      {/* Filter Section */}
-      <div className="bg-card rounded-2xl p-6 shadow-sm border border-gray-200">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-4">
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Filtres de localisation</h2>
-              {(selectedGovernment || selectedDelegation) && (
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                  <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">
-                    Filtres actifs ({queueSummaries.length} destination{queueSummaries.length > 1 ? 's' : ''})
-                  </span>
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
-                <label className="text-sm font-medium whitespace-nowrap text-gray-700">Gouvernorat:</label>
-                <select 
-                  className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  value={selectedGovernment} 
-                  onChange={(e) => handleGovernmentChange(e.target.value)}
-                >
-                  <option value="">Tous les gouvernorats</option>
-                  {governments.map(gov => (
-                    <option key={gov.name} value={gov.name}>
-                      {gov.nameAr ? `${gov.name} - ${gov.nameAr}` : gov.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              {selectedGovernment && (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
-                  <label className="text-sm font-medium whitespace-nowrap text-gray-700">Délégation:</label>
-                  <select 
-                    className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    value={selectedDelegation} 
-                    onChange={(e) => handleDelegationChange(e.target.value)}
-                  >
-                    <option value="">Toutes les délégations</option>
-                    {availableDelegations.map(delegation => (
-                      <option key={delegation.name} value={delegation.name}>
-                        {delegation.nameAr ? `${delegation.name} - ${delegation.nameAr}` : delegation.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              
-              {(selectedGovernment || selectedDelegation) && (
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  className="w-full sm:w-auto border-gray-300 text-gray-700 hover:bg-gray-50"
-                  onClick={clearFilters}
-                >
-                  Effacer les filtres
-                </Button>
-              )}
-            </div>
-          </div>
+      {/* Simple Filter Section */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="flex items-center gap-4">
+          <h3 className="text-sm font-medium text-gray-700">Filtrer par localisation:</h3>
+          <select 
+            className="px-3 py-2 border border-gray-300 rounded-md bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            value={selectedGovernment} 
+            onChange={(e) => handleGovernmentChange(e.target.value)}
+          >
+            <option value="">Tous les gouvernorats</option>
+            {governments.map(gov => (
+              <option key={gov.name} value={gov.name}>
+                {gov.nameAr ? `${gov.name} - ${gov.nameAr}` : gov.name}
+              </option>
+            ))}
+          </select>
+          
+          {selectedGovernment && (
+            <select 
+              className="px-3 py-2 border border-gray-300 rounded-md bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              value={selectedDelegation} 
+              onChange={(e) => handleDelegationChange(e.target.value)}
+            >
+              <option value="">Toutes les délégations</option>
+              {availableDelegations.map(delegation => (
+                <option key={delegation.name} value={delegation.name}>
+                  {delegation.nameAr ? `${delegation.name} - ${delegation.nameAr}` : delegation.name}
+                </option>
+              ))}
+            </select>
+          )}
+          
+          {(selectedGovernment || selectedDelegation) && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={clearFilters}
+              className="text-gray-600 hover:bg-gray-50"
+            >
+              Effacer
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Enhanced Add Vehicle Modal */}
+      {/* Improved Add Vehicle Modal */}
       <Dialog open={showAddVehicleModal} onOpenChange={setShowAddVehicleModal}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Ajouter un véhicule enregistré à la file d'attente</DialogTitle>
-          </DialogHeader>
-          <div className="mb-4">
-            <Input
-              placeholder="Rechercher par plaque d'immatriculation ou nom de conducteur..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="border-gray-300 focus:border-blue-500"
-            />
-          </div>
-          {vehiclesLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="animate-spin mr-3 h-5 w-5" />
-              <span>Chargement des véhicules...</span>
+            <DialogTitle className="text-xl font-semibold text-gray-900">Ajouter un véhicule à la file</DialogTitle>
+            <p className="text-sm text-gray-600">Sélectionnez un véhicule et sa destination</p>
+            <div className="mt-2 text-xs text-gray-500 space-y-1">
+              <div><strong>Raccourcis clavier:</strong></div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Alt</kbd> : Basculer entre recherche et sélection</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">↑</kbd> <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">↓</kbd> ou <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">W</kbd> <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">S</kbd> : Naviguer</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Espace</kbd> : Sélectionner/Confirmer</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Échap</kbd> : Annuler</div>
             </div>
-          ) : vehiclesError ? (
-            <div className="text-destructive bg-destructive/10 p-3 rounded-lg">{vehiclesError}</div>
-          ) : (
-            <div className="max-h-80 overflow-y-auto divide-y border border-gray-200 rounded-lg">
-              {vehicles.filter(v => {
-                const plate = (v.licensePlate || '').toUpperCase().trim();
-                if (vehiclesInAnyQueue.includes(plate)) return false;
-                const q = search.toLowerCase();
-                return (
-                  v.licensePlate?.toLowerCase().includes(q) ||
-                  v.driver?.firstName?.toLowerCase().includes(q) ||
-                  v.driver?.lastName?.toLowerCase().includes(q)
-                );
-              }).map(v => (
-                <div
-                  key={v.id || v.licensePlate}
-                  className={`flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-muted transition-colors ${selectedVehicle?.licensePlate === v.licensePlate ? 'bg-primary/10 border-l-4 border-l-primary' : ''}`}
-                  onClick={() => setSelectedVehicle(v)}
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-accent rounded-lg">
-                      <Car className="h-4 w-4 text-blue-600" />
-                    </div>
-                    <div>
-                      <div className="font-semibold text-primary">{v.licensePlate}</div>
-                      <div className="text-sm text-muted-foreground">{v.driver?.firstName} {v.driver?.lastName}</div>
-                    </div>
-                  </div>
-                  {selectedVehicle?.licensePlate === v.licensePlate && <CheckCircle className="text-green-600 h-5 w-5" />}
+          </DialogHeader>
+          
+          <div className="space-y-6">
+            {/* Step 1: Vehicle Selection */}
+            <div>
+              <h3 className="text-sm font-medium text-gray-900 mb-3">1. Choisir le véhicule</h3>
+              <div className="mb-4">
+                <Input
+                  placeholder="Rechercher par plaque ou nom du conducteur..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  onFocus={() => setIsInputFocused(true)}
+                  onBlur={() => setIsInputFocused(false)}
+                  className="w-full"
+                />
+                <div className="mt-1 text-xs text-gray-500">
+                  Appuyez sur <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Alt</kbd> pour basculer entre la recherche et la sélection
                 </div>
-              ))}
-              {vehicles.filter(v => {
-                const plate = (v.licensePlate || '').toUpperCase().trim();
-                return !vehiclesInAnyQueue.includes(plate);
-              }).length === 0 && (
-                <div className="text-muted-foreground text-center py-8">
-                  <Car className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                  <p>Aucun véhicule disponible à ajouter.</p>
+              </div>
+              
+              {vehiclesLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="animate-spin mr-3 h-5 w-5" />
+                  <span className="text-gray-600">Chargement des véhicules...</span>
+                </div>
+              ) : vehiclesError ? (
+                <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200">
+                  {vehiclesError}
+                </div>
+              ) : (
+                <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
+                  {vehicles.filter(v => {
+                    const plate = (v.licensePlate || '').toUpperCase().trim();
+                    if (vehiclesInAnyQueue.includes(plate)) return false;
+                    const q = search.toLowerCase();
+                    return (
+                      v.licensePlate?.toLowerCase().includes(q) ||
+                      v.driver?.firstName?.toLowerCase().includes(q) ||
+                      v.driver?.lastName?.toLowerCase().includes(q)
+                    );
+                  }).map((v, index) => (
+                    <div
+                      key={v.id || v.licensePlate}
+                      className={`flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 ${
+                        selectedVehicle?.licensePlate === v.licensePlate ? 'bg-blue-50 border-l-4 border-l-blue-500 ring-2 ring-blue-200' : ''
+                      }`}
+                      onClick={() => setSelectedVehicle(v)}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="p-2 bg-gray-100 rounded-lg">
+                          <Car className="h-4 w-4 text-gray-600" />
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <div className="font-semibold text-gray-900">{v.licensePlate}</div>
+                            <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              v.dayPassValid ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {v.dayPassValid ? 'Pass OK' : 'Pas de pass'}
+                            </div>
+                          </div>
+                          <div className="text-sm text-gray-600">{v.driver?.firstName} {v.driver?.lastName}</div>
+                        </div>
+                      </div>
+                      {selectedVehicle?.licensePlate === v.licensePlate && (
+                        <CheckCircle className="text-blue-600 h-5 w-5" />
+                      )}
+                    </div>
+                  ))}
+                  {vehicles.filter(v => {
+                    const plate = (v.licensePlate || '').toUpperCase().trim();
+                    return !vehiclesInAnyQueue.includes(plate);
+                  }).length === 0 && (
+                    <div className="text-gray-500 text-center py-8">
+                      <Car className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                      <p>Aucun véhicule disponible</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
-          
-          {/* Destination Selection */}
-          {selectedVehicle && (
-            <div className="mt-4 space-y-3">
-              <div className="border-t pt-4">
-                <h3 className="text-sm font-medium text-foreground mb-3">
-                  Choisir la destination pour {selectedVehicle.licensePlate}
+            
+            {/* Step 2: Destination Selection */}
+            {selectedVehicle && (
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-3">
+                  2. Choisir la destination pour <span className="font-semibold text-blue-600">{selectedVehicle.licensePlate}</span>
                 </h3>
                 
                 {destinationsLoading ? (
-                  <div className="flex items-center justify-center py-6">
+                  <div className="flex items-center justify-center py-8">
                     <Loader2 className="animate-spin mr-2 h-4 w-4" />
-                    <span className="text-sm text-muted-foreground">Chargement des destinations...</span>
+                    <span className="text-gray-600">Chargement des destinations...</span>
                   </div>
                 ) : vehicleDestinations.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {vehicleDestinations.map((dest: any) => (
                       <div
                         key={dest.stationId}
-                        className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                        className={`p-4 rounded-lg border cursor-pointer transition-all ${
                           selectedVehicleDestination === dest.stationId 
-                            ? 'border-primary bg-primary/10' 
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-muted'
+                            ? 'border-blue-500 bg-blue-50 shadow-sm' 
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                         }`}
                         onClick={() => setSelectedVehicleDestination(dest.stationId)}
                       >
-                        <div className="flex items-center space-x-3">
-                          <div className={`w-3 h-3 rounded-full border-2 ${
-                            selectedVehicleDestination === dest.stationId 
-                              ? 'border-primary bg-primary' 
-                              : 'border-gray-300'
-                          }`} />
-                          <div>
-                            <div className="flex items-center space-x-2">
-                              <span className="font-medium text-foreground">{dest.stationName}</span>
-                              {dest.isDefault && (
-                                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                                  Par défaut
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              Priorité: {dest.priority} • Prix: {formatCurrency(dest.basePrice)}
-                              {/* Show route info if available */}
-                              {(() => {
-                                const route = getRouteForDestination(dest.stationName);
-                                return route ? (
-                                  <span className="text-green-600 ml-1">✓ Route disponible</span>
-                                ) : (
-                                  <span className="text-orange-600 ml-1">⚠ Pas de route</span>
-                                );
-                              })()}
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start space-x-3">
+                            <div className={`w-4 h-4 rounded-full border-2 mt-1 ${
+                              selectedVehicleDestination === dest.stationId 
+                                ? 'border-blue-500 bg-blue-500' 
+                                : 'border-gray-300'
+                            }`} />
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2">
+                                <span className="font-medium text-gray-900">{dest.stationName}</span>
+                                {dest.isDefault && (
+                                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                    Défaut
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-sm text-gray-600 mt-1">
+                                Prix: <span className="font-semibold text-green-600">{formatCurrency(dest.basePrice)}</span>
+                              </div>
                             </div>
                           </div>
+                          {(() => {
+                            const route = getRouteForDestination(dest.stationName);
+                            return route ? (
+                              <div className="text-green-600 text-xs">✓</div>
+                            ) : (
+                              <div className="text-orange-600 text-xs">⚠</div>
+                            );
+                          })()}
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-6">
-                    <div className="text-muted-foreground text-sm">
-                      Aucune destination autorisée disponible pour ce véhicule
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <div className="text-gray-600 text-sm">
+                      Aucune destination autorisée pour ce véhicule
                     </div>
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            )}
+            
+            {/* Error Display */}
+            {addVehicleError && (
+              <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                  <span className="text-sm">{addVehicleError}</span>
+                </div>
+              </div>
+            )}
+          </div>
           
-          {addVehicleError && (
-            <div className="text-destructive text-sm mt-3 bg-destructive/10 p-3 rounded-lg border border-destructive/30">
-              {addVehicleError}
-            </div>
-          )}
           <DialogFooter className="mt-6">
             <Button
-              onClick={async () => {
-                if (!selectedVehicle || !selectedVehicleDestination) return;
-                setActionLoading(selectedVehicle.licensePlate);
+              variant="outline"
+              onClick={() => {
+                setShowAddVehicleModal(false);
+                setSelectedVehicle(null);
+                setSelectedVehicleDestination(null);
+                setVehicleDestinations([]);
                 setAddVehicleError(null);
-                
-                // Find the selected destination info
-                const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
-                
-                console.log('🚗 Adding vehicle to queue:', {
-                  licensePlate: selectedVehicle.licensePlate,
-                  destinationId: selectedVehicleDestination,
-                  destinationName: destinationInfo?.stationName,
-                  routePrice: getBasePriceForDestination(destinationInfo?.stationName || ''),
-                  destinationInfo
-                });
-                
-                // Call handleEnterQueue with destination info
-                const result = await handleEnterQueueWithDestination(
-                  selectedVehicle.licensePlate, 
-                  selectedVehicleDestination,
-                  destinationInfo?.stationName
-                );
-                
-                setActionLoading(null);
-                if (result?.success) {
-                  setShowAddVehicleModal(false);
-                  setSelectedVehicle(null);
-                  setSelectedVehicleDestination(null);
-                  setVehicleDestinations([]);
-                } else if (result?.message) {
-                  setAddVehicleError(result.message);
-                }
+                setSearch("");
+                setIsInputFocused(false);
               }}
-              disabled={!selectedVehicle || !selectedVehicleDestination || !!actionLoading}
-              className="bg-primary hover:bg-primary/80"
+              data-shortcut="close-modal"
             >
-              {actionLoading ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
-              Ajouter à la file
-            </Button>
-            <Button variant="ghost" onClick={() => setShowAddVehicleModal(false)}>
               Annuler
+            </Button>
+            <Button
+              onClick={handleAddVehicleToQueue}
+              disabled={!selectedVehicle || !selectedVehicleDestination || !!actionLoading}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {actionLoading ? (
+                <>
+                  <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                  Ajout en cours...
+                </>
+              ) : (
+                <>
+                  <Car className="h-4 w-4 mr-2" />
+                  Ajouter à la file
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Change Queue Modal */}
+      {/* Improved Change Queue Modal */}
       <Dialog open={showChangeQueueModal} onOpenChange={setShowChangeQueueModal}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">
-              Changer la destination - {selectedVehicleForQueueChange?.licensePlate}
-            </DialogTitle>
+            <DialogTitle className="text-xl font-semibold text-gray-900">Changer la destination</DialogTitle>
+            <p className="text-sm text-gray-600">Sélectionnez une nouvelle destination pour ce véhicule</p>
           </DialogHeader>
           
           {selectedVehicleForQueueChange && (
-            <div className="space-y-4">
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+            <div className="space-y-6">
+              {/* Vehicle Info */}
+              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                 <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <Car className="h-5 w-5 text-blue-600" />
+                  <div className="p-2 bg-gray-100 rounded-lg">
+                    <Car className="h-5 w-5 text-gray-600" />
                   </div>
                   <div>
-                    <div className="font-semibold text-blue-900">{selectedVehicleForQueueChange.licensePlate}</div>
-                    <div className="text-sm text-blue-700">
+                    <div className="font-semibold text-gray-900">{selectedVehicleForQueueChange.licensePlate}</div>
+                    <div className="text-sm text-gray-600">
                       {selectedVehicleForQueueChange.firstName} {selectedVehicleForQueueChange.lastName}
                     </div>
-                    <div className="text-xs text-blue-600">
-                      Actuellement en file pour: <span className="font-medium">{selectedVehicleForQueueChange.currentDestination}</span>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Actuellement: <span className="font-medium text-blue-600">{selectedVehicleForQueueChange.currentDestination}</span>
                     </div>
                   </div>
                 </div>
               </div>
               
-              <div className="space-y-3">
-                <h3 className="text-sm font-medium text-foreground">
-                  Choisir une nouvelle destination
-                </h3>
+              {/* Destination Selection */}
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-3">Nouvelle destination</h3>
                 
                 {changeQueueLoading ? (
-                  <div className="flex items-center justify-center py-6">
+                  <div className="flex items-center justify-center py-8">
                     <Loader2 className="animate-spin mr-2 h-4 w-4" />
-                    <span className="text-sm text-muted-foreground">Chargement des destinations...</span>
+                    <span className="text-gray-600">Chargement des destinations...</span>
                   </div>
                 ) : changeQueueDestinations.length > 0 ? (
                   <div className="space-y-2">
                     {changeQueueDestinations.map((dest: any) => (
                       <div
                         key={dest.stationId}
-                        className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${
+                        className={`p-4 rounded-lg border cursor-pointer transition-all ${
                           selectedNewDestination === dest.stationId 
-                            ? 'border-primary bg-primary/10' 
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-muted'
+                            ? 'border-blue-500 bg-blue-50 shadow-sm' 
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
                         }`}
                         onClick={() => setSelectedNewDestination(dest.stationId)}
                       >
-                        <div className="flex items-center space-x-3">
-                          <div className={`w-3 h-3 rounded-full border-2 ${
-                            selectedNewDestination === dest.stationId 
-                              ? 'border-primary bg-primary' 
-                              : 'border-gray-300'
-                          }`} />
-                          <div>
-                            <div className="flex items-center space-x-2">
-                              <span className="font-medium text-foreground">{dest.stationName}</span>
-                              {dest.isDefault && (
-                                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                                  Par défaut
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              Priorité: {dest.priority} • Prix: {formatCurrency(dest.basePrice)}
-                              {/* Show route info if available */}
-                              {(() => {
-                                const route = getRouteForDestination(dest.stationName);
-                                return route ? (
-                                  <span className="text-green-600 ml-1">✓ Route disponible</span>
-                                ) : (
-                                  <span className="text-orange-600 ml-1">⚠ Pas de route</span>
-                                );
-                              })()}
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start space-x-3">
+                            <div className={`w-4 h-4 rounded-full border-2 mt-1 ${
+                              selectedNewDestination === dest.stationId 
+                                ? 'border-blue-500 bg-blue-500' 
+                                : 'border-gray-300'
+                            }`} />
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2">
+                                <span className="font-medium text-gray-900">{dest.stationName}</span>
+                                {dest.isDefault && (
+                                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                    Défaut
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-sm text-gray-600 mt-1">
+                                Prix: <span className="font-semibold text-green-600">{formatCurrency(dest.basePrice)}</span>
+                              </div>
                             </div>
                           </div>
+                          {(() => {
+                            const route = getRouteForDestination(dest.stationName);
+                            return route ? (
+                              <div className="text-green-600 text-xs">✓</div>
+                            ) : (
+                              <div className="text-orange-600 text-xs">⚠</div>
+                            );
+                          })()}
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-6">
-                    <div className="text-muted-foreground text-sm">
-                      Aucune autre destination autorisée disponible pour ce véhicule
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <div className="text-gray-600 text-sm">
+                      Aucune autre destination disponible
                     </div>
                   </div>
                 )}
               </div>
               
+              {/* Error Display */}
               {changeQueueError && (
-                <div className="text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/30">
-                  {changeQueueError}
+                <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                    <span className="text-sm">{changeQueueError}</span>
+                  </div>
                 </div>
               )}
             </div>
           )}
           
           <DialogFooter className="mt-6">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowChangeQueueModal(false);
+                setSelectedVehicleForQueueChange(null);
+                setSelectedNewDestination(null);
+                setChangeQueueDestinations([]);
+                setChangeQueueError(null);
+              }}
+            >
+              Annuler
+            </Button>
             <Button
               onClick={async () => {
                 if (!selectedVehicleForQueueChange || !selectedNewDestination) return;
@@ -1426,17 +1712,8 @@ export default function QueueManagement() {
                 setChangeQueueLoading(true);
                 setChangeQueueError(null);
                 
-                // Find the selected destination info
                 const destinationInfo = changeQueueDestinations.find(d => d.stationId === selectedNewDestination);
                 
-                console.log('🔄 Changing vehicle queue:', {
-                  licensePlate: selectedVehicleForQueueChange.licensePlate,
-                  from: selectedVehicleForQueueChange.currentDestination,
-                  to: destinationInfo?.stationName,
-                  destinationId: selectedNewDestination
-                });
-                
-                // Call the API to change queue
                 const result = await handleEnterQueueWithDestination(
                   selectedVehicleForQueueChange.licensePlate, 
                   selectedNewDestination,
@@ -1450,204 +1727,264 @@ export default function QueueManagement() {
                   setSelectedVehicleForQueueChange(null);
                   setSelectedNewDestination(null);
                   setChangeQueueDestinations([]);
-                  
-                  // Refresh queues to show updated data
                   refreshQueues();
                 } else if (result?.message) {
                   setChangeQueueError(result.message);
                 }
               }}
               disabled={!selectedVehicleForQueueChange || !selectedNewDestination || changeQueueLoading}
-              className="bg-primary hover:bg-primary/80"
+              className="bg-blue-600 hover:bg-blue-700 text-white"
             >
-              {changeQueueLoading ? <Loader2 className="animate-spin h-4 w-4 mr-2" /> : null}
-              Changer la destination
-            </Button>
-            <Button variant="ghost" onClick={() => setShowChangeQueueModal(false)}>
-              Annuler
+              {changeQueueLoading ? (
+                <>
+                  <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                  Changement en cours...
+                </>
+              ) : (
+                <>
+                  <Edit className="h-4 w-4 mr-2" />
+                  Changer la destination
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Enhanced Queue Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Day Pass Purchase Modal */}
+      <Dialog open={showDayPassModal} onOpenChange={setShowDayPassModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold text-gray-900">Pass Journalier Requis</DialogTitle>
+            <p className="text-sm text-gray-600">Ce véhicule n'a pas de pass journalier valide</p>
+            <div className="mt-2 text-xs text-gray-500 space-y-1">
+              <div><strong>Raccourcis clavier:</strong></div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Espace</kbd> : Acheter et ajouter à la file</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Échap</kbd> : Annuler</div>
+            </div>
+          </DialogHeader>
+          
+          <div className="space-y-6">
+            {/* Vehicle Info */}
+            {selectedVehicle && (
+              <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-gray-100 rounded-lg">
+                    <Car className="h-5 w-5 text-gray-600" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-gray-900">{selectedVehicle.licensePlate}</div>
+                    <div className="text-sm text-gray-600">
+                      {selectedVehicle.driver?.firstName} {selectedVehicle.driver?.lastName}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Day Pass Info */}
+            <div className="text-center">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                  <span className="text-sm font-medium text-yellow-800">Pass journalier requis</span>
+                </div>
+                <p className="text-sm text-yellow-700">
+                  Pour ajouter ce véhicule à la file, un pass journalier valide est nécessaire.
+                </p>
+              </div>
+              
+              {dayPassPrice > 0 && (
+                <div className="text-center">
+                  <p className="text-sm text-gray-600">Prix du pass journalier</p>
+                  <p className="text-2xl font-bold text-green-600">{formatCurrency(dayPassPrice)}</p>
+                </div>
+              )}
+            </div>
+            
+            {/* Error Display */}
+            {dayPassError && (
+              <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                  <span className="text-sm">{dayPassError}</span>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <DialogFooter className="mt-6">
+            <div className="flex justify-between w-full">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDayPassModal(false);
+                  setDayPassError(null);
+                }}
+              >
+                Annuler
+              </Button>
+              
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await thermalPrinter.reprintLastDayPass();
+                      addNotification({
+                        type: 'success',
+                        title: 'Réimpression réussie',
+                        message: 'Le dernier pass journalier a été réimprimé',
+                        duration: 3000
+                      });
+                    } catch (error) {
+                      addNotification({
+                        type: 'error',
+                        title: 'Erreur de réimpression',
+                        message: 'Impossible de réimprimer le dernier pass journalier',
+                        duration: 3000
+                      });
+                    }
+                  }}
+                  className="text-blue-600 hover:text-blue-700"
+                >
+                  Réimprimer
+                </Button>
+                
+                <Button
+                  onClick={handleDayPassPurchase}
+                  disabled={!selectedVehicle || dayPassLoading}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {dayPassLoading ? (
+                    <>
+                      <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                      Achat en cours...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Acheter et ajouter à la file
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Simple Destination Cards */}
+      <div className="p-6">
         {queueSummaries.length === 0 && !isLoading ? (
-          <div className="col-span-full bg-accent text-primary px-6 py-8 rounded-xl border border-accent text-center">
-            <Car className="h-12 w-12 mx-auto mb-4 text-blue-400" />
-            <h3 className="text-lg font-semibold mb-2">Aucune file d'attente active</h3>
-            <p className="text-primary">Aucune file d'attente active pour le moment.</p>
+          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+            <Car className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Aucune file d'attente active</h3>
+            <p className="text-gray-600">Aucune file d'attente active pour le moment.</p>
           </div>
         ) : (
-          queueSummaries.map((summary) => (
-            <Card 
-              key={summary.destinationId} 
-              className={`cursor-pointer hover:shadow-lg transition-all duration-200 border-2 ${
-                selectedDestination === summary.destinationName 
-                  ? 'border-blue-500 shadow-lg bg-blue-50' 
-                  : 'border-gray-200 hover:border-gray-300 bg-white'
-              }`}
-              onClick={() => setSelectedDestination(prev => prev === summary.destinationName ? null : summary.destinationName)}
-            >
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg font-semibold text-gray-900 dark:text-white">{summary.destinationName}</CardTitle>
-                    {/* Location information */}
-                    {(summary.governorate || summary.delegation) && (
-                      <div className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        {summary.governorate && summary.delegation ? (
-                          <span className="flex items-center gap-1">
-                            <span className="font-medium">{summary.governorate}</span>
-                            <span>•</span>
-                            <span>{summary.delegation}</span>
-                          </span>
-                        ) : summary.governorate ? (
-                          <span className="font-medium">{summary.governorate}</span>
-                        ) : summary.delegation ? (
-                          <span>{summary.delegation}</span>
-                        ) : null}
-                        {summary.governorateAr && summary.delegationAr && (
-                          <div className="text-xs text-gray-500 dark:text-gray-500 font-arabic">
-                            {summary.governorateAr} - {summary.delegationAr}
-                          </div>
-                        )}
-                      </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {queueSummaries.map((summary) => {
+              const destinationQueues = queues[summary.destinationName] || [];
+              const waitingCount = destinationQueues.filter((q: any) => q.status === 'WAITING').length;
+              const loadingCount = destinationQueues.filter((q: any) => q.status === 'LOADING').length;
+              const readyCount = destinationQueues.filter((q: any) => q.status === 'READY').length;
+              const route = getRouteForDestination(summary.destinationName);
+              
+              return (
+                <div
+                  key={summary.destinationId}
+                  className={`bg-white rounded-lg border-2 p-4 cursor-pointer transition-all ${
+                    selectedDestination === summary.destinationName 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  onClick={() => setSelectedDestination(prev => prev === summary.destinationName ? null : summary.destinationName)}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold text-gray-900">{summary.destinationName}</h3>
+                    {route && (
+                      <span className="text-sm font-medium text-green-600">{formatCurrency(route.basePrice)}</span>
                     )}
                   </div>
-                  {(() => {
-                    const route = getRouteForDestination(summary.destinationName);
-                    return route ? (
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-green-600 dark:text-green-400">{formatCurrency(route.basePrice)}</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Prix route</p>
-                      </div>
-                    ) : null;
-                  })()}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                      <div className="p-2 bg-blue-50 rounded-lg">
-                        <Car className="h-5 w-5 text-blue-600" />
-                      </div>
-                      <span className="text-2xl font-bold text-gray-900">{summary.totalVehicles}</span>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-500">Total des véhicules</p>
-                    </div>
+                  
+                  <div className="flex items-center justify-between text-sm text-gray-600 mb-3">
+                    <span>Véhicules: <span className="font-semibold text-gray-900">{summary.totalVehicles}</span></span>
+                    {(summary.governorate || summary.delegation) && (
+                      <span className="text-xs">
+                        {summary.governorate && summary.delegation 
+                          ? `${summary.governorate} • ${summary.delegation}`
+                          : summary.governorate || summary.delegation
+                        }
+                      </span>
+                    )}
                   </div>
                   
-                  {(() => {
-                    // Calculate actual status counts from detailed queue data
-                    const destinationQueues = queues[summary.destinationName] || [];
-                    const waitingCount = destinationQueues.filter((q: any) => q.status === 'WAITING').length;
-                    const loadingCount = destinationQueues.filter((q: any) => q.status === 'LOADING').length;
-                    const readyCount = destinationQueues.filter((q: any) => q.status === 'READY').length;
-                    
-                    return (
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="text-center p-3 bg-yellow-50 rounded-lg">
-                          <p className="text-lg font-semibold text-yellow-700">{waitingCount}</p>
-                          <p className="text-xs text-yellow-600">En attente</p>
-                        </div>
-                        <div className="text-center p-3 bg-blue-50 rounded-lg">
-                          <p className="text-lg font-semibold text-blue-700">{loadingCount}</p>
-                          <p className="text-xs text-blue-600">En charge</p>
-                        </div>
-                        <div className="text-center p-3 bg-green-50 rounded-lg">
-                          <p className="text-lg font-semibold text-green-700">{readyCount}</p>
-                          <p className="text-xs text-green-600">Prêt</p>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  
-                  {/* Booking Summary */}
-                  {(() => {
-                    const destinationQueues = queues[summary.destinationName] || [];
-                    const totalSeats = destinationQueues.reduce((sum, q: any) => sum + (q.totalSeats || 0), 0);
-                    const availableSeats = destinationQueues.reduce((sum, q: any) => sum + (q.availableSeats || 0), 0);
-                    const bookedSeats = totalSeats - availableSeats;
-                    const bookingPercentage = totalSeats > 0 ? (bookedSeats / totalSeats) * 100 : 0;
-                    const fullyBookedVehicles = destinationQueues.filter((q: any) => (q.availableSeats === 0 || q.status === 'READY')).length;
-                    
-                    return totalSeats > 0 ? (
-                      <div className="border-t pt-3 space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-600 flex items-center gap-1">
-                            <Users className="h-4 w-4" />
-                            Réservations
-                          </span>
-                          <span className="font-semibold text-gray-900">
-                            {bookedSeats}/{totalSeats}
-                          </span>
-                        </div>
-                        
-                        {/* Booking Progress */}
-                        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div 
-                            className={`h-full transition-all duration-300 ${
-                              bookingPercentage === 100 ? 'bg-red-500' : 
-                              bookingPercentage > 75 ? 'bg-orange-500' : 
-                              bookingPercentage > 50 ? 'bg-yellow-500' : 'bg-green-500'
-                            }`}
-                            style={{ width: `${bookingPercentage}%` }}
-                          />
-                        </div>
-                        
-                        <div className="flex items-center justify-between text-xs text-gray-500">
-                          <span>{Math.round(bookingPercentage)}% réservé</span>
-                          {fullyBookedVehicles > 0 && (
-                            <span className="text-red-600 font-medium">
-                              {fullyBookedVehicles} complet{fullyBookedVehicles > 1 ? 's' : ''}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ) : null;
-                  })()}
+                  <div className="flex items-center gap-4 text-xs">
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-yellow-400"></div>
+                      <span className="text-gray-600">Attente: <span className="font-medium text-gray-900">{waitingCount}</span></span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-blue-400"></div>
+                      <span className="text-gray-600">Charge: <span className="font-medium text-gray-900">{loadingCount}</span></span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-green-400"></div>
+                      <span className="text-gray-600">Prêt: <span className="font-medium text-gray-900">{readyCount}</span></span>
+                    </div>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          ))
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {/* Enhanced Loading indicator */}
+      {/* Loading indicator */}
       {isLoading && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="bg-card rounded-2xl p-6 border border-gray-200 animate-pulse">
-              <div className="h-6 w-1/3 bg-gray-200 rounded mb-4"></div>
-              <div className="h-3 w-2/3 bg-gray-200 rounded mb-2"></div>
-              <div className="h-3 w-1/2 bg-gray-200 rounded mb-6"></div>
-              <div className="h-12 w-full bg-gray-100 rounded"></div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Enhanced Error display */}
-      {error && (
-        <div className="bg-red-50 text-red-700 px-6 py-4 rounded-xl border border-red-200">
-          <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-            <span className="font-medium">Erreur:</span>
-            <span>{error}</span>
+        <div className="p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-lg p-4 border border-gray-200 animate-pulse">
+                <div className="h-4 w-1/3 bg-gray-200 rounded mb-3"></div>
+                <div className="h-3 w-2/3 bg-gray-200 rounded mb-2"></div>
+                <div className="h-3 w-1/2 bg-gray-200 rounded mb-4"></div>
+                <div className="h-8 w-full bg-gray-100 rounded"></div>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Enhanced Destination Queue Lists */}
-      <div className="space-y-8">
+      {/* Error display */}
+      {error && (
+        <div className="p-6">
+          <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+              <span className="font-medium">Erreur:</span>
+              <span>{error}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle Lists */}
+      <div className="p-6">
         {queueSummaries.length === 0 && !isLoading ? (
-          <div className="bg-blue-50 text-blue-700 px-6 py-8 rounded-xl border border-blue-200 text-center">
-            <Car className="h-12 w-12 mx-auto mb-4 text-blue-400" />
-            <h3 className="text-lg font-semibold mb-2">Aucune file d'attente active</h3>
-            <p className="text-blue-600">Aucune file d'attente active pour le moment.</p>
+          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+            <Car className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Aucune file d'attente active</h3>
+            <p className="text-gray-600 mb-6">Aucune file d'attente active pour le moment.</p>
+            <Button 
+              onClick={() => setShowAddVehicleModal(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-6 py-3 text-base font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
+              data-shortcut="add-item"
+            >
+              <Car className="h-5 w-5" />
+              + Ajouter le premier véhicule
+            </Button>
           </div>
         ) : (
           <>
@@ -1656,78 +1993,38 @@ export default function QueueManagement() {
               const destinationQueues = queues[destination] || [];
               
               return (
-                <div key={destination} className="bg-card rounded-2xl p-6 shadow-sm border border-gray-200">
-                  <div className="sticky top-16 z-10 bg-card/90 backdrop-blur rounded-xl -mx-6 px-6 py-3 border-b border-gray-200 flex justify-between items-center mb-6">
-                    <div className="flex items-center space-x-3">
-                      <h2 className="text-2xl dark:text-white font-bold text-gray-900">{destination}</h2>
-                    {isConnected && (
-                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 flex items-center gap-1">
-                        <Activity className="h-3 w-3 animate-pulse" />
-                        <span>Live</span>
-                      </Badge>
-                      )}
-                    </div>
-                    {summary && (
-                      <div className="text-right">
-                        <p className="text-sm dark:text-white text-gray-500">Total des véhicules</p>
-                        <p className="text-2xl font-bold dark:text-white text-gray-900">{summary.totalVehicles}</p>
+                <div key={destination} className="bg-white rounded-lg border border-gray-200 mb-6">
+                  {/* Destination Header */}
+                  <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-xl font-semibold text-gray-900">{destination}</h2>
+                      <div className="flex items-center gap-4 text-sm text-gray-600">
+                        <span>Véhicules: <span className="font-semibold text-gray-900">{summary?.totalVehicles || 0}</span></span>
+                        {isConnected && (
+                          <div className="flex items-center gap-1 text-green-600">
+                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <span>Live</span>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                   
-                  {/* Real-time Status Summary */}
-                  {destinationQueues.length > 0 && (
-                    <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                      <div className="flex items-center justify-between mb-3">
-                        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Statut des véhicules</h3>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          Mis à jour en temps réel
-                        </div>
-                      </div>
-                      {(() => {
-                        const waitingCount = destinationQueues.filter((q: any) => q.status === 'WAITING').length;
-                        const loadingCount = destinationQueues.filter((q: any) => q.status === 'LOADING').length;
-                        const readyCount = destinationQueues.filter((q: any) => q.status === 'READY').length;
-                        const totalCount = destinationQueues.length;
-                        
-                        return (
-                          <div className="grid grid-cols-4 gap-3">
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalCount}</div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400">Total</div>
-                            </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{waitingCount}</div>
-                              <div className="text-xs text-yellow-600 dark:text-yellow-400">En attente</div>
-                            </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{loadingCount}</div>
-                              <div className="text-xs text-blue-600 dark:text-blue-400">En charge</div>
-                            </div>
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-green-600 dark:text-green-400">{readyCount}</div>
-                              <div className="text-xs text-green-600 dark:text-green-400">Prêt</div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-                  
-                  {summary && summary.totalVehicles > 0 ? (
-                    destinationQueues.length > 0 ? (
-                      <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCenter}
-                        onDragEnd={(event) => handleDragEnd(event, destination)}
-                      >
-                        <SortableContext
-                          items={destinationQueues.map(q => q.id) || []}
-                          strategy={verticalListSortingStrategy}
+                  {/* Vehicle List */}
+                  <div className="p-6">
+                    {summary && summary.totalVehicles > 0 ? (
+                      destinationQueues.length > 0 ? (
+                        <DndContext
+                          sensors={sensors}
+                          collisionDetection={closestCenter}
+                          onDragEnd={(event) => handleDragEnd(event, destination)}
                         >
-                          <div className="space-y-3 transition-all">
-                            {destinationQueues.map((queue) => (
-                                                              <div className="animate-[fadeIn_0.3s_ease]" key={`anim-${queue.id}`}>
+                          <SortableContext
+                            items={destinationQueues.map(q => q.id) || []}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            <div className="space-y-3">
+                              {destinationQueues.map((queue) => (
                                 <SortableQueueItem
                                   key={queue.id}
                                   queue={queue}
@@ -1738,29 +2035,50 @@ export default function QueueManagement() {
                                   onExitQueue={handleExitQueue}
                                   actionLoading={actionLoading}
                                 />
-                              </div>
-                            ))}
-                          </div>
-                        </SortableContext>
-                      </DndContext>
+                              ))}
+                            </div>
+                          </SortableContext>
+                        </DndContext>
+                      ) : (
+                        <div className="text-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3 text-gray-400" />
+                          <p className="text-gray-600">Chargement des véhicules...</p>
+                        </div>
+                      )
                     ) : (
-                      <div className="bg-yellow-50 text-yellow-700 px-6 py-8 rounded-xl border border-yellow-200 flex items-center justify-center">
-                        <Loader2 className="h-6 w-6 animate-spin mr-3" />
-                        <span>Chargement des détails du véhicule pour {destination}...</span>
+                      <div className="text-center py-8">
+                        <Car className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">Aucun véhicule</h3>
+                        <p className="text-gray-600 mb-6">Aucun véhicule dans cette file d'attente.</p>
+                        <Button 
+                          onClick={() => setShowAddVehicleModal(true)}
+                          className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 px-4 py-2 text-sm font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
+                          data-shortcut="add-item"
+                        >
+                          <Car className="h-4 w-4" />
+                          + Ajouter un véhicule
+                        </Button>
                       </div>
-                    )
-                  ) : (
-                    <div className="bg-blue-50 text-blue-700 px-6 py-8 rounded-xl border border-blue-200 text-center">
-                      <Car className="h-12 w-12 mx-auto mb-4 text-blue-400" />
-                      <h3 className="text-lg font-semibold mb-2">Aucun véhicule dans la file</h3>
-                      <p className="text-blue-600">Aucun véhicule actuellement dans la file pour {destination}.</p>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               );
             })}
           </>
         )}
+      </div>
+
+      {/* Floating Action Button */}
+      <div className="fixed bottom-20 right-6 z-50">
+        <Button
+          onClick={() => setShowAddVehicleModal(true)}
+          className="bg-blue-600 hover:bg-blue-700 text-white rounded-full w-14 h-14 shadow-2xl hover:shadow-3xl transition-all duration-300 hover:scale-110"
+          size="icon"
+          title="Ajouter un véhicule (Ctrl+N)"
+          data-shortcut="add-item"
+        >
+          <Car className="h-6 w-6" />
+        </Button>
       </div>
     </div>
   );

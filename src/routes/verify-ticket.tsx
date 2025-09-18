@@ -12,7 +12,7 @@ import {
 import api from '../lib/api';
 import { TicketPrintout } from '../components/TicketPrintout';
 import { renderToString } from 'react-dom/server';
-import { printerService, type TicketData } from '../services/printerService';
+import { thermalPrinter } from '../services/thermalPrinterService';
 
 type VerificationStatus = 'success' | 'not_found' | 'already_verified' | 'error';
 
@@ -37,36 +37,32 @@ export default function VerifyTicket() {
   const handlePrintTicket = async (bookingData: any) => {
     setIsPrinting(true);
     try {
-      // Check if printer is available
-      const isPrinterAvailable = await printerService.isPrinterAvailable();
-      if (!isPrinterAvailable) {
-        console.warn('No printer available, falling back to browser print');
-        await printTicketFallback(bookingData);
-        return;
-      }
-
-      // Prepare ticket data
-      const ticketData: TicketData = {
-        ticketId: bookingData.ticketId || bookingData.verificationCode || bookingData.id || 'UNKNOWN',
-        customerName: bookingData.customerName,
-        startStationName: bookingData.startStationName || 'CURRENT STATION',
-        destinationName: bookingData.destinationName,
-        vehicleLicensePlate: bookingData.vehicleLicensePlate,
-        seatsBooked: bookingData.seatsBooked || bookingData.seats || 1,
-        seatNumber: bookingData.seatNumber,
-        totalAmount: bookingData.totalAmount || (bookingData.basePrice * (bookingData.seatsBooked || 1)) || 0,
-        verificationCode: bookingData.verificationCode,
-        bookingTime: bookingData.bookingTime || bookingData.createdAt || new Date().toISOString(),
-        qrCodeData: bookingData.verificationCode || bookingData.id
-      };
-
-      // Print using tauri printer
-      await printerService.printTicket(ticketData);
-      console.log('Ticket printed successfully with printer service');
-
+      // Format booking data for thermal printing
+      const ticketData = thermalPrinter.formatBookingTicketData(bookingData);
+      
+      // Print with thermal printer
+      await thermalPrinter.printBookingTicket(ticketData);
+      
+      console.log('✅ Verified ticket printed successfully with thermal printer');
+      
     } catch (error) {
-      console.error('Printer service failed, falling back to browser print:', error);
+      console.error('Thermal printer error:', error);
+      
+      // Fallback to browser print if thermal printer fails
+      console.log('Falling back to browser print...');
       await printTicketFallback(bookingData);
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
+  const reprintLastBooking = async () => {
+    setIsPrinting(true);
+    try {
+      await thermalPrinter.reprintLastBooking();
+      console.log('✅ Reprinted last booking ticket');
+    } catch (error) {
+      console.error('Thermal printer reprint error:', error);
     } finally {
       setIsPrinting(false);
     }
@@ -308,6 +304,11 @@ export default function VerifyTicket() {
                 <p className={`text-sm mt-1 ${getStatusTextColor(verificationResult.status)}`}>
                   {verificationResult.message}
                 </p>
+                <div className="mt-3">
+                  <Button onClick={reprintLastBooking} disabled={isPrinting} variant="outline" className="h-10">
+                    <Printer className="h-4 w-4 mr-2" /> Réimprimer le dernier billet
+                  </Button>
+                </div>
                 {verificationResult.status === 'success' && isPrinting && (
                   <div className="mt-3 flex items-center space-x-2">
                     <Printer className="h-4 w-4 text-green-600" />

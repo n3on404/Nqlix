@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { useAuth } from '../context/AuthProvider';
 import { toast } from 'sonner';
 import api from '../lib/api';
-import { Users, UserCheck, UserX } from 'lucide-react';
+import { Users, UserCheck, UserX, FileText, Printer } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 interface StaffMember {
   id: string;
@@ -36,6 +37,7 @@ interface CreateStaffForm {
 
 const StaffManagement: React.FC = () => {
   const { currentStaff } = useAuth();
+  const navigate = useNavigate();
   
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +47,10 @@ const StaffManagement: React.FC = () => {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [staffToDelete, setStaffToDelete] = useState<StaffMember | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportData, setReportData] = useState<any | null>(null);
   const [createForm, setCreateForm] = useState({
     firstName: '',
     lastName: '',
@@ -196,6 +202,40 @@ const StaffManagement: React.FC = () => {
     }
   }, [currentStaff]);
 
+  const formatTND = (value: number) => `${value.toFixed(3)} TND`;
+  const todayStr = () => new Date().toISOString().slice(0, 10);
+
+  const openReport = async (staff: StaffMember) => {
+    setSelectedStaff(staff);
+    setIsReportOpen(true);
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const res = await api.getStaffTransactions(staff.id, todayStr());
+      if (res.success) {
+        setReportData(res.data);
+      } else {
+        setReportError(res.message || 'Failed to load report');
+      }
+    } catch (e) {
+      setReportError('Failed to load report');
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const printReport = () => {
+    if (!selectedStaff) return;
+    const date = reportData?.date || todayStr();
+    try {
+      if (reportData) {
+        const key = `staffReport:${selectedStaff.id}:${date}`;
+        sessionStorage.setItem(key, JSON.stringify(reportData));
+      }
+    } catch {}
+    navigate(`/print-staff-report?staffId=${encodeURIComponent(selectedStaff.id)}&date=${encodeURIComponent(date)}`);
+  };
+
   if (!currentStaff) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -224,27 +264,41 @@ const StaffManagement: React.FC = () => {
   return (
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Staff Management</h1>
-        <p className="text-gray-600">Manage staff members at your station</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Gestion du Personnel</h1>
+          <p className="text-gray-600">Gérez les membres du personnel de votre station</p>
+        </div>
+        <Button variant="outline" onClick={async () => {
+          const date = todayStr();
+          const res = await api.getAllStaffDailyReport(date);
+          if (res.success && res.data) {
+            try { sessionStorage.setItem(`allStaffReport:${date}`, JSON.stringify(res.data)); } catch {}
+            navigate(`/print-all-staff-report?date=${encodeURIComponent(date)}`);
+          } else {
+            toast.error(res.message || 'Échec du chargement du rapport');
+          }
+        }}>
+          <Printer className="h-4 w-4 mr-2" /> Imprimer tout le personnel (A4)
+        </Button>
       </div>
 
       <div className="flex justify-between items-center">
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button className="bg-blue-600 hover:bg-blue-700">
-              Add New Staff
+              Ajouter un Membre
             </Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Add New Staff Member</DialogTitle>
+              <DialogTitle>Ajouter un Membre du Personnel</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    First Name
+                    Prénom
                   </label>
                   <Input
                     value={createForm.firstName}
@@ -254,7 +308,7 @@ const StaffManagement: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Last Name
+                    Nom
                   </label>
                   <Input
                     value={createForm.lastName}
@@ -266,7 +320,7 @@ const StaffManagement: React.FC = () => {
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Phone Number
+                  Numéro de Téléphone
                 </label>
                 <Input
                   value={createForm.phoneNumber}
@@ -289,10 +343,10 @@ const StaffManagement: React.FC = () => {
               
               <div className="flex justify-end space-x-2">
                 <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                  Cancel
+                  Annuler
                 </Button>
                 <Button onClick={createStaffMember}>
-                  Create Staff Member
+                  Créer
                 </Button>
               </div>
             </div>
@@ -308,7 +362,7 @@ const StaffManagement: React.FC = () => {
               <Users className="h-6 w-6 text-blue-600" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Staff</p>
+              <p className="text-sm font-medium text-gray-600">Total Personnel</p>
               <p className="text-2xl font-bold text-gray-900">{staffMembers.length}</p>
             </div>
           </div>
@@ -320,7 +374,7 @@ const StaffManagement: React.FC = () => {
               <UserCheck className="h-6 w-6 text-green-600" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Active Staff</p>
+              <p className="text-sm font-medium text-gray-600">Actifs</p>
               <p className="text-2xl font-bold text-gray-900">
                 {staffMembers.filter(staff => staff.isActive).length}
               </p>
@@ -334,7 +388,7 @@ const StaffManagement: React.FC = () => {
               <UserX className="h-6 w-6 text-orange-600" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Inactive Staff</p>
+              <p className="text-sm font-medium text-gray-600">Inactifs</p>
               <p className="text-2xl font-bold text-gray-900">
                 {staffMembers.filter(staff => !staff.isActive).length}
               </p>
@@ -346,7 +400,7 @@ const StaffManagement: React.FC = () => {
       {/* Staff List */}
       <Card>
         <CardHeader>
-          <CardTitle>Staff Members</CardTitle>
+          <CardTitle>Membres du Personnel</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -356,7 +410,7 @@ const StaffManagement: React.FC = () => {
           ) : error ? (
             <div className="text-center text-red-600 py-8">{error}</div>
           ) : staffMembers.length === 0 ? (
-            <div className="text-center text-gray-500 py-8">No staff members found</div>
+            <div className="text-center text-gray-500 py-8">Aucun membre trouvé</div>
           ) : (
             <div className="space-y-4">
               {staffMembers.map((staff) => (
@@ -386,11 +440,19 @@ const StaffManagement: React.FC = () => {
 
                     <div className="flex items-center space-x-2">
               <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => openReport(staff)}
+                title="View today's transactions report"
+              >
+                <FileText className="h-4 w-4 mr-1" /> Report
+              </Button>
+              <Button
                         size="sm"
                 variant="outline"
                         onClick={() => openEditDialog(staff)}
                       >
-                        Edit
+                        Modifier
               </Button>
                       <div className="relative group">
               <Button
@@ -399,11 +461,11 @@ const StaffManagement: React.FC = () => {
                           onClick={() => toggleStaffStatus(staff.id)}
                           disabled={staff.id === currentStaff.id}
               >
-                          {staff.isActive ? 'Deactivate' : 'Activate'}
+                          {staff.isActive ? 'Désactiver' : 'Activer'}
               </Button>
                         {staff.id === currentStaff.id && (
                           <span className="absolute left-0 mt-1 w-max text-xs text-gray-500 bg-card border border-gray-200 rounded px-2 py-1 shadow group-hover:block hidden">
-                            You cannot deactivate your own account
+                            Vous ne pouvez pas désactiver votre propre compte
                           </span>
                         )}
             </div>
@@ -418,11 +480,11 @@ const StaffManagement: React.FC = () => {
                             }}
                             disabled={staff.id === currentStaff.id}
                           >
-                            Delete
+                            Supprimer
               </Button>
                           {staff.id === currentStaff.id && (
                             <span className="absolute left-0 mt-1 w-max text-xs text-gray-500 bg-card border border-gray-200 rounded px-2 py-1 shadow group-hover:block hidden">
-                              You cannot delete your own account
+                              Vous ne pouvez pas supprimer votre propre compte
                             </span>
                           )}
                         </div>
@@ -436,6 +498,87 @@ const StaffManagement: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Report Dialog */}
+      <Dialog open={isReportOpen} onOpenChange={setIsReportOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Rapport Journalier du Personnel</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {reportLoading ? (
+              <div className="flex items-center justify-center h-32">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            ) : reportError ? (
+              <div className="text-center text-red-600 py-8">{reportError}</div>
+            ) : reportData ? (
+              <>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="text-sm text-gray-600">Date</div>
+                    <div className="font-semibold">{reportData.date}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm text-gray-600">Personnel</div>
+                    <div className="font-semibold">{reportData.staff.firstName} {reportData.staff.lastName} ({reportData.staff.role})</div>
+                    <div className="text-xs text-gray-600">CIN: {reportData.staff.cin}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <div className="bg-card p-3 rounded border">
+                    <div className="text-xs text-gray-600">Réservations (Espèces)</div>
+                    <div className="text-lg font-semibold">{formatTND(reportData.totals.totalCashBookingsAmount || 0)}</div>
+                  </div>
+                  <div className="bg-card p-3 rounded border">
+                    <div className="text-xs text-gray-600">Pass Journaliers</div>
+                    <div className="text-lg font-semibold">{formatTND(reportData.totals.totalDayPasses || 0)}</div>
+                  </div>
+                  <div className="bg-card p-3 rounded border">
+                    <div className="text-xs text-gray-600">Total Général</div>
+                    <div className="text-lg font-semibold">{formatTND(reportData.totals.grandTotal || 0)}</div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <div className="font-semibold mb-2">Réservations</div>
+                    <div className="max-h-64 overflow-auto space-y-1 text-sm">
+                      {reportData.items.bookings.length === 0 ? (
+                        <div className="text-gray-500">Aucune réservation</div>
+                      ) : reportData.items.bookings.map((b: any) => (
+                        <div key={b.id} className="flex justify-between border-b py-1">
+                          <div>{b.seatsBooked} place(s) • {b.queue?.destinationName || '—'}</div>
+                          <div>{formatTND(b.totalAmount || 0)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-semibold mb-2">Pass Journaliers</div>
+                    <div className="max-h-64 overflow-auto space-y-1 text-sm">
+                      {reportData.items.dayPasses.length === 0 ? (
+                        <div className="text-gray-500">Aucun pass journalier</div>
+                      ) : reportData.items.dayPasses.map((p: any) => (
+                        <div key={p.id} className="flex justify-between border-b py-1">
+                          <div>{p.licensePlate}</div>
+                          <div>{formatTND(p.price || 0)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button onClick={printReport}>
+                    <Printer className="h-4 w-4 mr-2" /> Imprimer (A4)
+                  </Button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Edit Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="sm:max-w-md">

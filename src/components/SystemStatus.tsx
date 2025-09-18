@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { useEnhancedMqtt } from '../context/EnhancedMqttProvider';
 import { MqttConnectionState } from '../services/enhancedMqttClient';
 import { useAuth } from '../context/AuthProvider';
-import { printerService } from '../services/printerService';
-import { Printer } from 'lucide-react';
+// Printer service removed
 
 
 
@@ -31,32 +30,7 @@ export function SystemStatus({ compact = false, showDetails = false, className =
     await connect();
   };
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const [printerAvailable, setPrinterAvailable] = useState(false);
-  const [checkingPrinter, setCheckingPrinter] = useState(false);
-
-  const checkPrinterStatus = async () => {
-    setCheckingPrinter(true);
-    try {
-      const available = await printerService.isPrinterAvailable();
-      setPrinterAvailable(available);
-    } catch (error) {
-      console.error('Failed to check printer status:', error);
-      setPrinterAvailable(false);
-    } finally {
-      setCheckingPrinter(false);
-    }
-  };
-
-  useEffect(() => {
-    checkPrinterStatus(); // Check printer status on mount
-    
-    // Set up periodic printer status check
-    const printerCheckInterval = setInterval(checkPrinterStatus, 30000); // Check every 30 seconds
-    
-    return () => {
-      clearInterval(printerCheckInterval);
-    };
-  }, []);
+  // Printer status checks removed
 
   const handleForceReconnect = async () => {
     setIsReconnecting(true);
@@ -80,9 +54,8 @@ export function SystemStatus({ compact = false, showDetails = false, className =
            connectionState === MqttConnectionState.RECONNECTING ? '🔄 Reconnecting...' :
            connectionState === MqttConnectionState.FAILED ? '❌ Failed' : '🔴 Disconnected'}
         </Badge>
-        <Badge variant={printerAvailable ? 'default' : 'destructive'}>
-          <Printer className="h-3 w-3 mr-1" />
-          {checkingPrinter ? '⏳' : printerAvailable ? '🖨️' : '❌'}
+        <Badge variant="outline">
+          🖨️ Impression désactivée
         </Badge>
         {(!isConnected || connectionState === MqttConnectionState.FAILED) && (
           <Button
@@ -129,9 +102,8 @@ export function SystemStatus({ compact = false, showDetails = false, className =
         {/* Printer Status */}
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">Printer:</span>
-          <Badge variant={printerAvailable ? 'default' : 'destructive'}>
-            <Printer className="h-3 w-3 mr-1" />
-            {checkingPrinter ? 'Checking...' : printerAvailable ? '✅ Available' : '❌ Not Available'}
+          <Badge variant="outline">
+            🖨️ Temporairement désactivé
           </Badge>
         </div>
         {/* Actions */}
@@ -145,16 +117,7 @@ export function SystemStatus({ compact = false, showDetails = false, className =
           >
             {isReconnecting ? 'Connecting...' : 'Force Reconnect'}
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={checkPrinterStatus}
-            disabled={checkingPrinter}
-            className="flex-1"
-          >
-            <Printer className="h-3 w-3 mr-1" />
-            {checkingPrinter ? 'Checking...' : 'Check Printer'}
-          </Button>
+          {/* Printer check button removed */}
         </div>
       </CardContent>
     </Card>

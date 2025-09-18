@@ -7,7 +7,8 @@ import { Badge } from '../components/ui/badge';
 import { useAuth } from '../context/AuthProvider';
 import { useNotifications } from '../context/NotificationProvider';
 import api from '../lib/api';
-import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus, MapPin, Globe, AlertCircle, CheckCircle2, Users, Phone, Hash, Building } from 'lucide-react';
+import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus, MapPin, Globe, AlertCircle, CheckCircle2, Users, Phone, Hash, Building, Printer } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Select } from '../components/ui/select';
 import MunicipalityService from '../services/municipalityService';
 
@@ -47,6 +48,8 @@ interface DriverRequest {
 const SupervisorVehicleManagement: React.FC = () => {
   const { currentStaff } = useAuth();
   const { addNotification } = useNotifications();
+  const navigate = useNavigate();
+  const todayStr = () => new Date().toISOString().slice(0,10);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [pendingRequests, setPendingRequests] = useState<DriverRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -451,9 +454,23 @@ const SupervisorVehicleManagement: React.FC = () => {
           <h2 className="text-lg font-semibold flex items-center gap-2">
             <Car className="h-5 w-5" /> Véhicules
           </h2>
-          <Button variant="outline" size="sm" onClick={fetchVehicles} disabled={isLoading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} /> Rafraîchir
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={async () => {
+              const date = new Date().toISOString().slice(0,10);
+              const res = await api.get(`/api/vehicles/trips/daily?date=${encodeURIComponent(date)}`);
+              if (res.success && res.data) {
+                try { sessionStorage.setItem(`allVehicleTrips:${date}`, JSON.stringify(res.data)); } catch {}
+                navigate(`/print-all-vehicle-trips?date=${encodeURIComponent(date)}`);
+              } else {
+                addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement du rapport' });
+              }
+            }}>
+              <Printer className="h-4 w-4 mr-2" /> Imprimer tous les trajets (A4)
+            </Button>
+            <Button variant="outline" size="sm" onClick={fetchVehicles} disabled={isLoading}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} /> Rafraîchir
+            </Button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <div style={{ maxHeight: 320, overflowY: 'auto' }}>
@@ -889,7 +906,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                 </div>
                 <div className="flex flex-col gap-2">
                   <div className="font-semibold text-zinc-700 dark:text-zinc-200">Stations autorisées</div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 items-center">
                     {vehicleDetails.authorizedStations && vehicleDetails.authorizedStations.length > 0 ? (
                       vehicleDetails.authorizedStations.map((s: any) => (
                         <Badge key={s.id} variant="outline" className="bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200">
@@ -899,6 +916,19 @@ const SupervisorVehicleManagement: React.FC = () => {
                     ) : (
                       <span className="text-muted-foreground">-</span>
                     )}
+                    <Button size="sm" variant="secondary" className="ml-auto" onClick={async () => {
+                      if (!vehicleDetails) return;
+                      const date = todayStr();
+                      const res = await api.getVehicleTrips(vehicleDetails.id, date);
+                      if (res.success && res.data) {
+                        try { sessionStorage.setItem(`vehicleTrips:${vehicleDetails.id}:${date}`, JSON.stringify(res.data)); } catch {}
+                        navigate(`/print-vehicle-trips?vehicleId=${encodeURIComponent(vehicleDetails.id)}&date=${encodeURIComponent(date)}`);
+                      } else {
+                        addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement des trajets' });
+                      }
+                    }}>
+                      <Printer className="h-4 w-4 mr-2" /> Imprimer trajets (A4)
+                    </Button>
                   </div>
                 </div>
                 <div className="pt-2">

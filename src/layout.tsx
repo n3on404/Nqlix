@@ -1,6 +1,6 @@
-import { Outlet, Link, useLocation } from "react-router-dom";
+import { Outlet, Link, useLocation, useNavigate } from "react-router-dom";
 import clsx from "clsx";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   LayoutDashboard,
   Car,
@@ -25,12 +25,20 @@ import { useAuth } from "./context/AuthProvider";
 import { Button } from "./components/ui/button";
 import { useSupervisorMode } from "./context/SupervisorModeProvider";
 import { WaslaLogo } from "./components/WaslaLogo";
+import { keyboardShortcuts } from "./services/keyboardShortcuts";
+import KeyboardShortcutsHelp from "./components/KeyboardShortcutsHelp";
 
 export default function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { currentStaff, logout } = useAuth();
   const { isSupervisorMode, toggleSupervisorMode } = useSupervisorMode();
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
+
+  // Initialize keyboard shortcuts
+  useEffect(() => {
+    keyboardShortcuts.setNavigate(navigate);
+  }, [navigate]);
 
   const selectedClass = "text-primary bg-primary/10";
   const defaultClass = "w-5 h-5";
@@ -45,17 +53,14 @@ export default function Layout() {
 
   // Different nav items based on mode
   const regularNavItems = [
-    { path: "/dashboard", icon: LayoutDashboard, label: "Tableau de Bord" },
-    { path: "/routes", icon: MapPin, label: "Routes" },
-    { path: "/queue", icon: Car, label: "File d'Attente" },
-    { path: "/booking", icon: UserPlus, label: "Réservation" },
+    { path: "/", icon: UserPlus, label: "Réservation Principale" },
     { path: "/verify", icon: CheckSquare, label: "Vérifier" },
-    { path: "/driver-tickets", icon: Ticket, label: "Tickets Chauffeurs" },
-    { path: "/preview-ticket", icon: Eye, label: "Aperçu Ticket" },
+    { path: "/day-pass", icon: Ticket, label: "Pass Journalier" },
+    { path: "/queue-management", icon: Users, label: "Gestion de File" },
   ];
 
   const supervisorNavItems = [
-    { path: "/dashboard", icon: BarChart3, label: "Vue d'Ensemble" },
+    { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/routes", icon: MapPin, label: "Routes" },
     { path: "/supervisor-vehicle-management", icon: Car, label: "Gestion des Véhicules" },
     { path: "/overnight-queue", icon: Moon, label: "File de Nuit" },
@@ -268,6 +273,9 @@ export default function Layout() {
       }`}>
         <Outlet />
       </div>
+      
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsHelp />
     </div>
   );
 }

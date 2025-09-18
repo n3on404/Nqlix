@@ -6,7 +6,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 use tokio::time::timeout;
 use reqwest::Client;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
 use tauri::{
     CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem,
@@ -14,8 +14,14 @@ use tauri::{
 };
 use auto_launch::AutoLaunchBuilder;
 
+mod printer;
+use printer::{PrinterService, PrinterConfig, PrintJob, PrinterStatus};
+
 // WebSocket relay state
 static WS_SENDER: Lazy<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> = Lazy::new(|| Mutex::new(None));
+
+// Printer service state
+static PRINTER_SERVICE: Lazy<Arc<Mutex<PrinterService>>> = Lazy::new(|| Arc::new(Mutex::new(PrinterService::new())));
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DiscoveredServer {
@@ -365,6 +371,180 @@ fn check_auto_startup() -> Result<bool, String> {
     auto.is_enabled().map_err(|e| e.to_string())
 }
 
+// Printer commands
+#[tauri::command]
+async fn get_printer_config() -> Result<PrinterConfig, String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer.get_config()
+}
+
+#[tauri::command]
+async fn update_printer_config(config: PrinterConfig) -> Result<(), String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer.update_config(config)
+}
+
+#[tauri::command]
+async fn test_printer_connection() -> Result<PrinterStatus, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.test_connection().await
+}
+
+#[tauri::command]
+async fn print_ticket(content: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_ticket(content).await
+}
+
+#[tauri::command]
+async fn print_receipt(content: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_receipt(content).await
+}
+
+#[tauri::command]
+async fn print_barcode(data: String, barcode_type: u8) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_barcode(data, barcode_type).await
+}
+
+#[tauri::command]
+async fn print_qr_code(data: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_qr_code(data).await
+}
+
+#[tauri::command]
+async fn execute_print_job(job: PrintJob) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.execute_print_job(job).await
+}
+
+#[tauri::command]
+async fn print_with_logo(content: String, logo_path: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_with_logo(content, logo_path).await
+}
+
+#[tauri::command]
+async fn print_standard_ticket(content: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_standard_ticket(content).await
+}
+
+#[tauri::command]
+async fn print_booking_ticket(ticket_data: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_booking_ticket(ticket_data).await
+}
+
+#[tauri::command]
+async fn print_entry_ticket(ticket_data: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_entry_ticket(ticket_data).await
+}
+
+#[tauri::command]
+async fn print_exit_ticket(ticket_data: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_exit_ticket(ticket_data).await
+}
+
+// Reprint last tickets
+#[tauri::command]
+async fn reprint_booking_ticket() -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.reprint_booking_ticket().await
+}
+
+#[tauri::command]
+async fn reprint_entry_ticket() -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.reprint_entry_ticket().await
+}
+
+#[tauri::command]
+async fn reprint_exit_ticket() -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.reprint_exit_ticket().await
+}
+
+#[tauri::command]
+async fn print_day_pass_ticket(ticket_data: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_day_pass_ticket(ticket_data).await
+}
+
+#[tauri::command]
+async fn reprint_day_pass_ticket() -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.reprint_day_pass_ticket().await
+}
+
 async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<DiscoveredServer>, Box<dyn std::error::Error + Send + Sync>> {
     let url = format!("http://{}:{}/health", ip, port);
     
@@ -499,7 +679,6 @@ fn main() {
     let system_tray = create_system_tray();
     
     tauri::Builder::default()
-        .plugin(tauri_plugin_printer::init())
         .system_tray(system_tray)
         .on_system_tray_event(handle_system_tray_event)
         .invoke_handler(tauri::generate_handler![
@@ -516,7 +695,25 @@ fn main() {
             show_window,
             setup_auto_startup,
             disable_auto_startup,
-            check_auto_startup
+            check_auto_startup,
+            get_printer_config,
+            update_printer_config,
+            test_printer_connection,
+            print_ticket,
+            print_receipt,
+            print_barcode,
+            print_qr_code,
+            execute_print_job,
+            print_with_logo,
+            print_standard_ticket,
+            print_booking_ticket,
+            print_entry_ticket,
+            print_exit_ticket,
+            print_day_pass_ticket,
+            reprint_booking_ticket,
+            reprint_entry_ticket,
+            reprint_exit_ticket,
+            reprint_day_pass_ticket
         ])
         .setup(|app| {
             let app_handle = app.handle();

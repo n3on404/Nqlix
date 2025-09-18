@@ -8,7 +8,6 @@ import ErrorPage from "./error-page";
 import Home from "./routes/home";
 import Settings from "./routes/settings";
 import Login from "./routes/login";
-import Dashboard from "./routes/dashboard";
 import MainBooking from "./routes/main-booking";
 import QueueManagement from "./routes/queue-management";
 import CreateBooking from "./routes/create-booking";
@@ -19,8 +18,14 @@ import OvernightQueueManagement from "./routes/overnight-queue";
 import RoutesPage from "./routes/routes";
 import SupervisorVehicleManagement from './routes/supervisor-vehicle-management';
 import DriverTicketsPage from './routes/driver-tickets';
+import DayPassPage from './routes/day-pass';
 import PreviewTicket from './routes/preview-ticket';
 import LogoShowcasePage from './routes/logo-showcase';
+import Dashboard from './routes/dashboard';
+import PrintStaffReport from './routes/print-staff-report';
+import PrintVehicleTrips from './routes/print-vehicle-trips';
+import PrintAllVehicleTrips from './routes/print-all-vehicle-trips';
+import PrintAllStaffReport from './routes/print-all-staff-report';
 import { TauriProvider } from "./context/TauriProvider";
 import { AuthProvider } from "./context/AuthProvider";
 import "./styles.css";
@@ -115,16 +120,8 @@ const router = createBrowserRouter([
         element: <MainBooking />,
       },
       {
-        path: "/dashboard", 
-        element: <Dashboard />,
-      },
-      {
         path: "/booking",
         element: <MainBooking />,
-      },
-      {
-        path: "/queue",
-        element: <QueueManagement />,
       },
       {
         path: "/create-booking",
@@ -167,6 +164,10 @@ const router = createBrowserRouter([
         element: <DriverTicketsPage />,
       },
       {
+        path: "/day-pass",
+        element: <DayPassPage />,
+      },
+      {
         path: "/preview-ticket",
         element: <PreviewTicket />,
       },
@@ -177,6 +178,30 @@ const router = createBrowserRouter([
       {
         path: "/logo-showcase",
         element: <LogoShowcasePage />,
+      },
+      {
+        path: "/queue-management",
+        element: <QueueManagement />,
+      },
+      {
+        path: "/dashboard",
+        element: <Dashboard />,
+      },
+      {
+        path: "/print-staff-report",
+        element: <PrintStaffReport />,
+      },
+      {
+        path: "/print-vehicle-trips",
+        element: <PrintVehicleTrips />,
+      },
+      {
+        path: "/print-all-vehicle-trips",
+        element: <PrintAllVehicleTrips />,
+      },
+      {
+        path: "/print-all-staff-report",
+        element: <PrintAllStaffReport />,
       },
     ],
   },

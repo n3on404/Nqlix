@@ -157,7 +157,7 @@ export default function LoginScreen() {
         
         // Wait for success animation then navigate
         setTimeout(() => {
-          navigate('/dashboard');
+          navigate('/');
         }, 1500);
       } else {
         setError(response.message || 'Code de vérification incorrect. Veuillez réessayer.');

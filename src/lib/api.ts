@@ -685,6 +685,11 @@ class ApiService {
     return this.delete(`/api/staff/${id}`);
   }
 
+  public async getStaffTransactions(id: string, date?: string): Promise<ApiResponse<any>> {
+    const query = date ? `?date=${encodeURIComponent(date)}` : '';
+    return this.get(`/api/staff/${id}/transactions${query}`);
+  }
+
   // Tunisia location data API methods
   public async getGovernorates(): Promise<ApiResponse<string[]>> {
     return this.requestViaProxy<string[]>('/api/station/governorates', 'GET', undefined, false);
@@ -764,6 +769,18 @@ class ApiService {
    */
   public async banVehicle(id: string): Promise<ApiResponse<any>> {
     return this.post(`/api/vehicles/${id}/ban`);
+  }
+
+  // Vehicle trips report
+  public async getVehicleTrips(id: string, date?: string): Promise<ApiResponse<any>> {
+    const q = date ? `?date=${encodeURIComponent(date)}` : '';
+    return this.get(`/api/vehicles/${id}/trips${q}`);
+  }
+
+  // Staff daily report (all staff)
+  public async getAllStaffDailyReport(date?: string): Promise<ApiResponse<any>> {
+    const q = date ? `?date=${encodeURIComponent(date)}` : '';
+    return this.get(`/api/staff/report/daily${q}`);
   }
 }
 
