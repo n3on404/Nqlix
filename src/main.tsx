@@ -11,7 +11,6 @@ import Login from "./routes/login";
 import MainBooking from "./routes/main-booking";
 import QueueManagement from "./routes/queue-management";
 import CreateBooking from "./routes/create-booking";
-import VerifyTicket from "./routes/verify-ticket";
 import StaffManagement from "./routes/staff-management";
 import StationConfiguration from "./routes/station-config";
 import OvernightQueueManagement from "./routes/overnight-queue";
@@ -126,10 +125,6 @@ const router = createBrowserRouter([
       {
         path: "/create-booking",
         element: <CreateBooking />,
-      },
-      {
-        path: "/verify",
-        element: <VerifyTicket />,
       },
       {
         path: "/staff-management",

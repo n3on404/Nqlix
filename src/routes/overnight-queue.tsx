@@ -20,12 +20,8 @@ interface OvernightQueueEntry {
   totalSeats: number;
   basePrice: number;
   vehicle?: {
-    model?: string;
-    color?: string;
     driver?: {
-      firstName: string;
-      lastName: string;
-      phoneNumber: string;
+      cin: string;
     };
   };
 }
@@ -336,15 +332,11 @@ export default function OvernightQueuePage() {
                     <div>
                       <div className="font-medium">{vehicle.licensePlate}</div>
                       <div className="text-sm text-muted-foreground">
-                        {vehicle.driver?.firstName} {vehicle.driver?.lastName}
-        </div>
-                      <div className="text-xs text-muted-foreground">
                         CIN: {vehicle.driver?.cin}
-      </div>
+        </div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-medium">{vehicle.capacity} places</div>
-                      <div className="text-xs text-muted-foreground">{vehicle.model}</div>
                     </div>
                   </div>
                 </div>
@@ -430,7 +422,7 @@ export default function OvernightQueuePage() {
                       <div className="flex items-center gap-4">
                         <div className="text-right">
                           <div className="text-sm font-medium">
-                            {vehicle.vehicle?.driver?.firstName} {vehicle.vehicle?.driver?.lastName}
+                            CIN: {vehicle.vehicle?.driver?.cin}
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {vehicle.availableSeats}/{vehicle.totalSeats} places

@@ -15,10 +15,8 @@ interface Staff {
 interface AuthContextInterface {
   isAuthenticated: boolean;
   currentStaff: Staff | null;
-  login: (staff: Staff, token?: string) => void;
+  login: (cin: string, password: string) => Promise<any>;
   logout: () => Promise<void>;
-  initiateLogin: (cin: string) => Promise<any>;
-  verifyLogin: (cin: string, verificationCode: string) => Promise<any>;
   isLoading: boolean;
   restoreSession: () => Promise<boolean>;
 }
@@ -26,10 +24,8 @@ interface AuthContextInterface {
 const AuthContext = createContext<AuthContextInterface>({
   isAuthenticated: false,
   currentStaff: null,
-  login: () => {},
+  login: async () => ({}),
   logout: async () => {},
-  initiateLogin: async () => ({}),
-  verifyLogin: async () => ({}),
   isLoading: true,
   restoreSession: async () => false,
 });
@@ -91,17 +87,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     initializeAuth();
   }, []);
 
-  const login = (staff: Staff, token?: string) => {
-    setIsAuthenticated(true);
-    setCurrentStaff(staff);
-    
-    // Save session if token is provided
-    if (token) {
-      sessionManager.saveSession({
-        token,
-        staff,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
-      });
+  const login = async (cin: string, password: string) => {
+    try {
+      const response = await api.login(cin, password);
+      
+      if (response.success && response.staff) {
+        console.log('✅ Login successful, saving session...');
+        setIsAuthenticated(true);
+        setCurrentStaff(response.staff);
+        
+        // Save session
+        if (response.token) {
+          sessionManager.saveSession({
+            token: response.token,
+            staff: response.staff,
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+          });
+        }
+      }
+      
+      return response;
+    } catch (error) {
+      console.error('❌ Login error:', error);
+      return {
+        success: false,
+        message: 'Failed to connect to authentication server',
+        code: 'CONNECTION_ERROR'
+      };
     }
   };
 
@@ -119,48 +131,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const initiateLogin = async (cin: string) => {
-    try {
-      const response = await api.initiateLogin(cin);
-      return response;
-    } catch (error) {
-      console.error('❌ Login initiation error:', error);
-      return {
-        success: false,
-        message: 'Failed to connect to authentication server',
-        code: 'CONNECTION_ERROR'
-      };
-    }
-  };
-
-  const verifyLogin = async (cin: string, verificationCode: string) => {
-    try {
-      const response = await api.verifyLogin(cin, verificationCode);
-      
-      if (response.success && response.staff) {
-        console.log('✅ Login successful, saving session...');
-        login(response.staff, response.token);
-      }
-      
-      return response;
-    } catch (error) {
-      console.error('❌ Verification error:', error);
-      return {
-        success: false,
-        message: 'Failed to verify code',
-        code: 'VERIFICATION_ERROR'
-      };
-    }
-  };
-
   return (
     <AuthContext.Provider value={{
       isAuthenticated,
       currentStaff,
       login,
       logout,
-      initiateLogin,
-      verifyLogin,
       isLoading,
       restoreSession
     }}>

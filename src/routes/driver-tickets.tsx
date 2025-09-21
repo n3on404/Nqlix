@@ -1854,9 +1854,6 @@ export default function DriverTicketsPage() {
                           </div>
                           <div>
                             <p className="font-medium text-slate-900 dark:text-slate-100">
-                              {vehicle.driver.firstName} {vehicle.driver.lastName}
-                            </p>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">
                               CIN: {vehicle.driver.cin}
                             </p>
                           </div>

@@ -53,8 +53,7 @@ export default function PrintVehicleTrips() {
           <div style={{ fontSize: '12pt', fontWeight: 600 }}>Immatriculation: {data.vehicle.licensePlate}</div>
           {data.vehicle.driver && (
             <>
-              <div style={{ fontSize: '10pt', color: '#555' }}>Conducteur: {data.vehicle.driver.firstName} {data.vehicle.driver.lastName}</div>
-              <div style={{ fontSize: '10pt', color: '#555' }}>CIN: {data.vehicle.driver.cin}</div>
+              <div style={{ fontSize: '10pt', color: '#555' }}>Conducteur: CIN {data.vehicle.driver.cin}</div>
             </>
           )}
         </div>

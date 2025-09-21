@@ -292,12 +292,16 @@ Date: ${paymentData.date}
   /**
    * Print booking ticket with thermal printer
    */
-  async printBookingTicket(ticketData: string): Promise<string> {
+  async printBookingTicket(ticketData: string, staffName?: string): Promise<string> {
     console.log('🖨️ ThermalPrinterService.printBookingTicket called');
     console.log('📄 Ticket data:', ticketData);
+    console.log('👤 Staff name:', staffName);
     try {
       console.log('📡 Calling Tauri command: print_booking_ticket');
-      const result = await invoke<string>('print_booking_ticket', { ticketData });
+      const result = await invoke<string>('print_booking_ticket', { 
+        ticketData, 
+        staffName: staffName || null 
+      });
       console.log('✅ Tauri command result:', result);
       return result;
     } catch (error) {
@@ -310,9 +314,12 @@ Date: ${paymentData.date}
   /**
    * Print entry ticket with thermal printer
    */
-  async printEntryTicket(ticketData: string): Promise<string> {
+  async printEntryTicket(ticketData: string, staffName?: string): Promise<string> {
     try {
-      return await invoke<string>('print_entry_ticket', { ticketData });
+      return await invoke<string>('print_entry_ticket', { 
+        ticketData, 
+        staffName: staffName || null 
+      });
     } catch (error) {
       console.error('Failed to print entry ticket:', error);
       throw error;
@@ -322,9 +329,12 @@ Date: ${paymentData.date}
   /**
    * Print exit ticket with thermal printer
    */
-  async printExitTicket(ticketData: string): Promise<string> {
+  async printExitTicket(ticketData: string, staffName?: string): Promise<string> {
     try {
-      return await invoke<string>('print_exit_ticket', { ticketData });
+      return await invoke<string>('print_exit_ticket', { 
+        ticketData, 
+        staffName: staffName || null 
+      });
     } catch (error) {
       console.error('Failed to print exit ticket:', error);
       throw error;
@@ -334,16 +344,42 @@ Date: ${paymentData.date}
   /**
    * Print day pass ticket with thermal printer
    */
-  async printDayPassTicket(ticketData: string): Promise<string> {
+  async printDayPassTicket(ticketData: string, staffName?: string): Promise<string> {
     console.log('🖨️ ThermalPrinterService.printDayPassTicket called');
     console.log('📄 Day pass ticket data:', ticketData);
+    console.log('👤 Staff name:', staffName);
     try {
       console.log('📡 Calling Tauri command: print_day_pass_ticket');
-      const result = await invoke<string>('print_day_pass_ticket', { ticketData });
+      const result = await invoke<string>('print_day_pass_ticket', { 
+        ticketData, 
+        staffName: staffName || null 
+      });
       console.log('✅ Day pass ticket printed successfully:', result);
       return result;
     } catch (error) {
       console.error('❌ Failed to print day pass ticket:', error);
+      console.error('❌ Error details:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Print exit pass ticket with thermal printer
+   */
+  async printExitPassTicket(ticketData: string, staffName?: string): Promise<string> {
+    console.log('🖨️ ThermalPrinterService.printExitPassTicket called');
+    console.log('📄 Exit pass ticket data:', ticketData);
+    console.log('👤 Staff name:', staffName);
+    try {
+      console.log('📡 Calling Tauri command: print_exit_pass_ticket');
+      const result = await invoke<string>('print_exit_pass_ticket', { 
+        ticketData, 
+        staffName: staffName || null 
+      });
+      console.log('✅ Exit pass ticket printed successfully:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to print exit pass ticket:', error);
       console.error('❌ Error details:', error);
       throw error;
     }
@@ -435,9 +471,17 @@ Date: ${paymentData.date}
       ticketContent += `Position file: #${booking.queuePosition}\n`;
     }
     
-    // Price
+    // Price breakdown
+    if (booking.baseAmount !== undefined) {
+      ticketContent += `Prix de base: ${booking.baseAmount.toFixed(3)} TND\n`;
+    }
+    
+    if (booking.serviceFeeAmount !== undefined) {
+      ticketContent += `Frais de service: ${booking.serviceFeeAmount.toFixed(3)} TND\n`;
+    }
+    
     if (booking.totalAmount) {
-      ticketContent += `Prix: ${booking.totalAmount} TND\n`;
+      ticketContent += `Total: ${booking.totalAmount.toFixed(3)} TND\n`;
     }
     
     // Booking type
@@ -566,6 +610,45 @@ Date: ${paymentData.date}
     // Validity information
     ticketContent += `Valide pour: ${purchaseDate.toLocaleDateString('fr-FR')}\n`;
     ticketContent += `Type: Pass Journalier\n`;
+    
+    return ticketContent;
+  }
+
+  /**
+   * Format exit pass ticket data for thermal printing
+   */
+  formatExitPassTicketData(exitPassData: any): string {
+    console.log('📝 formatExitPassTicketData called with data:', exitPassData);
+    let ticketContent = '';
+    
+    // Generate a unique exit pass number
+    const exitPassNumber = `EXIT${Date.now().toString().slice(-8)}`;
+    ticketContent += `N° Sortie: ${exitPassNumber}\n`;
+    
+    // Previous vehicle info (if any)
+    if (exitPassData.previousLicensePlate && exitPassData.previousExitTime) {
+      ticketContent += `Véhicule précédent: ${exitPassData.previousLicensePlate}\n`;
+      ticketContent += `Sorti à: ${new Date(exitPassData.previousExitTime).toLocaleString('fr-FR')}\n`;
+      ticketContent += `\n`;
+    } else {
+      ticketContent += `Véhicule précédent: N/A\n`;
+      ticketContent += `Sorti à: N/A\n`;
+      ticketContent += `\n`;
+    }
+    
+    // Current vehicle info
+    ticketContent += `Véhicule actuel: ${exitPassData.licensePlate}\n`;
+    ticketContent += `Sorti à: ${new Date(exitPassData.currentExitTime).toLocaleString('fr-FR')}\n`;
+    ticketContent += `\n`;
+    
+    // Destination
+    ticketContent += `Destination: ${exitPassData.destinationName}\n`;
+    ticketContent += `\n`;
+    
+    // Pricing info
+    ticketContent += `Prix par place: ${exitPassData.basePricePerSeat.toFixed(2)} TND\n`;
+    ticketContent += `Total places: ${exitPassData.totalSeats}\n`;
+    ticketContent += `Prix total: ${exitPassData.totalBasePrice.toFixed(2)} TND\n`;
     
     return ticketContent;
   }

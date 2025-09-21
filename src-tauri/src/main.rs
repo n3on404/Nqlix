@@ -465,33 +465,33 @@ async fn print_standard_ticket(content: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn print_booking_ticket(ticket_data: String) -> Result<String, String> {
+async fn print_booking_ticket(ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
     let printer = PRINTER_SERVICE.clone();
     let printer_clone = {
         let printer_guard = printer.lock().map_err(|e| e.to_string())?;
         printer_guard.clone()
     };
-    printer_clone.print_booking_ticket(ticket_data).await
+    printer_clone.print_booking_ticket(ticket_data, staff_name).await
 }
 
 #[tauri::command]
-async fn print_entry_ticket(ticket_data: String) -> Result<String, String> {
+async fn print_entry_ticket(ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
     let printer = PRINTER_SERVICE.clone();
     let printer_clone = {
         let printer_guard = printer.lock().map_err(|e| e.to_string())?;
         printer_guard.clone()
     };
-    printer_clone.print_entry_ticket(ticket_data).await
+    printer_clone.print_entry_ticket(ticket_data, staff_name).await
 }
 
 #[tauri::command]
-async fn print_exit_ticket(ticket_data: String) -> Result<String, String> {
+async fn print_exit_ticket(ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
     let printer = PRINTER_SERVICE.clone();
     let printer_clone = {
         let printer_guard = printer.lock().map_err(|e| e.to_string())?;
         printer_guard.clone()
     };
-    printer_clone.print_exit_ticket(ticket_data).await
+    printer_clone.print_exit_ticket(ticket_data, staff_name).await
 }
 
 // Reprint last tickets
@@ -526,13 +526,13 @@ async fn reprint_exit_ticket() -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn print_day_pass_ticket(ticket_data: String) -> Result<String, String> {
+async fn print_day_pass_ticket(ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
     let printer = PRINTER_SERVICE.clone();
     let printer_clone = {
         let printer_guard = printer.lock().map_err(|e| e.to_string())?;
         printer_guard.clone()
     };
-    printer_clone.print_day_pass_ticket(ticket_data).await
+    printer_clone.print_day_pass_ticket(ticket_data, staff_name).await
 }
 
 #[tauri::command]
@@ -543,6 +543,16 @@ async fn reprint_day_pass_ticket() -> Result<String, String> {
         printer_guard.clone()
     };
     printer_clone.reprint_day_pass_ticket().await
+}
+
+#[tauri::command]
+async fn print_exit_pass_ticket(ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_exit_pass_ticket(ticket_data, staff_name).await
 }
 
 async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<DiscoveredServer>, Box<dyn std::error::Error + Send + Sync>> {
@@ -710,6 +720,7 @@ fn main() {
             print_entry_ticket,
             print_exit_ticket,
             print_day_pass_ticket,
+            print_exit_pass_ticket,
             reprint_booking_ticket,
             reprint_entry_ticket,
             reprint_exit_ticket,

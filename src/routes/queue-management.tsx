@@ -16,7 +16,9 @@ import {
   UserCheck,
   AlertCircle,
   TrendingUp,
-  X
+  X,
+  MapPin,
+  
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQueue } from "../context/QueueProvider";
@@ -49,6 +51,7 @@ import { thermalPrinter } from "../services/thermalPrinterService";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import api from "../lib/api";
+import { useAuth } from "../context/AuthProvider";
 import React from "react";
 
 // Sortable queue item component
@@ -103,8 +106,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             className="flex items-center gap-3 flex-1 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
             onClick={() => onVehicleClick({ 
               licensePlate: queue.licensePlate,
-              firstName: queue.vehicle?.driver?.firstName,
-              lastName: queue.vehicle?.driver?.lastName,
+              cin: queue.vehicle?.driver?.cin,
               currentDestination: queue.destinationName, 
               currentDestinationId: queue.destinationId,
               queueId: queue.id 
@@ -113,7 +115,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             <Car className="h-5 w-5 text-gray-600" />
             <div>
               <div className="font-semibold text-gray-900">{queue.licensePlate}</div>
-              <div className="text-sm text-gray-600">{queue.vehicle?.driver?.firstName} {queue.vehicle?.driver?.lastName}</div>
+              <div className="text-sm text-gray-600">CIN: {queue.vehicle?.driver?.cin}</div>
             </div>
           </div>
         </div>
@@ -176,8 +178,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             disabled={queue.status !== 'WAITING'}
             onClick={() => onVehicleClick({ 
               licensePlate: queue.licensePlate,
-              firstName: queue.vehicle?.driver?.firstName,
-              lastName: queue.vehicle?.driver?.lastName,
+              cin: queue.vehicle?.driver?.cin,
               currentDestination: queue.destinationName, 
               currentDestinationId: queue.destinationId,
               queueId: queue.id 
@@ -215,6 +216,7 @@ export default function QueueManagement() {
     updateVehicleStatus,
   } = useQueue();
   const { addNotification } = useNotifications();
+  const { currentStaff } = useAuth();
   const { 
     notifyPaymentSuccess, 
     notifyPaymentFailed, 
@@ -786,6 +788,7 @@ export default function QueueManagement() {
 
   // Purchase day pass for vehicle
   const purchaseDayPass = async (licensePlate: string) => {
+    console.log('🎫 [DAY PASS DEBUG] Starting day pass purchase for:', licensePlate);
     setDayPassLoading(true);
     setDayPassError(null);
     
@@ -793,7 +796,7 @@ export default function QueueManagement() {
       // Find the selected vehicle to get driverId and vehicleId
       const vehicle = selectedVehicle;
       // Debug: Log vehicle data for day pass purchase
-      console.log('Vehicle data for day pass purchase:', {
+      console.log('🎫 [DAY PASS DEBUG] Vehicle data for day pass purchase:', {
         vehicle,
         hasId: !!vehicle?.id,
         hasDriver: !!vehicle?.driver,
@@ -801,31 +804,38 @@ export default function QueueManagement() {
       });
       
       if (!vehicle) {
+        console.log('❌ [DAY PASS DEBUG] No vehicle selected');
         setDayPassError('Aucun véhicule sélectionné');
         return { success: false, message: 'Aucun véhicule sélectionné' };
       }
       
       if (!vehicle.id) {
+        console.log('❌ [DAY PASS DEBUG] Vehicle ID missing');
         setDayPassError('ID du véhicule manquant');
         return { success: false, message: 'ID du véhicule manquant' };
       }
       
       // Check for driver ID in different possible locations
       const driverId = vehicle.driver?.id || vehicle.driverId || vehicle.driver_id;
+      console.log('🎫 [DAY PASS DEBUG] Driver ID found:', driverId);
       
       if (!driverId) {
+        console.log('❌ [DAY PASS DEBUG] Driver ID missing, available data:', vehicle);
         setDayPassError('ID du conducteur manquant. Données disponibles: ' + JSON.stringify(vehicle));
         return { success: false, message: 'ID du conducteur manquant' };
       }
 
+      console.log('🎫 [DAY PASS DEBUG] Making API call to purchase day pass...');
       const response = await api.post('/api/day-pass/purchase', {
         licensePlate,
         driverId: driverId,
         vehicleId: vehicle.id,
         paymentMethod: 'cash' // Default to cash payment
       });
+      console.log('🎫 [DAY PASS DEBUG] API response:', response);
       
       if (response.success) {
+        console.log('✅ [DAY PASS DEBUG] Day pass purchase successful');
         addNotification({
           type: 'success',
           title: 'Pass journalier acheté',
@@ -835,24 +845,31 @@ export default function QueueManagement() {
         
         // Print day pass ticket
         try {
+          console.log('🎫 [DAY PASS DEBUG] Formatting day pass ticket data...');
           const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
             licensePlate: licensePlate,
-            driverName: vehicle.driver ? `${vehicle.driver.firstName} ${vehicle.driver.lastName}` : 'N/A',
+            driverName: vehicle.driver ? `CIN: ${vehicle.driver.cin}` : 'N/A',
             amount: dayPassPrice
           });
+          console.log('🎫 [DAY PASS DEBUG] Day pass ticket data:', dayPassTicketData);
           
-          console.log('🖨️ Printing day pass ticket for:', licensePlate);
-          await thermalPrinter.printDayPassTicket(dayPassTicketData);
-          console.log('✅ Day pass ticket printed successfully');
+          console.log('🖨️ [DAY PASS DEBUG] Printing day pass ticket for:', licensePlate);
+          const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+          console.log('🎫 [DAY PASS DEBUG] Staff name for printing:', staffName);
+          await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
+          console.log('✅ [DAY PASS DEBUG] Day pass ticket printed successfully');
         } catch (printError) {
-          console.error('❌ Failed to print day pass ticket:', printError);
+          console.error('❌ [DAY PASS DEBUG] Failed to print day pass ticket:', printError);
           // Don't fail the purchase if printing fails
         }
         
+        console.log('✅ [DAY PASS DEBUG] Day pass purchase completed successfully');
         return { success: true };
       } else {
+        console.log('❌ [DAY PASS DEBUG] Day pass purchase failed:', response.message);
         // Check if the error is because driver already has a valid day pass
         if (response.message && response.message.includes('déjà un pass journalier valide')) {
+          console.log('ℹ️ [DAY PASS DEBUG] Driver already has valid day pass');
           addNotification({
             type: 'info',
             title: 'Pass journalier déjà valide',
@@ -866,10 +883,12 @@ export default function QueueManagement() {
         }
       }
     } catch (error: any) {
+      console.error('❌ [DAY PASS DEBUG] Error purchasing day pass:', error);
       const errorMessage = error.message || 'Erreur lors de l\'achat du pass journalier';
       setDayPassError(errorMessage);
       return { success: false, message: errorMessage };
     } finally {
+      console.log('🎫 [DAY PASS DEBUG] Day pass purchase process completed');
       setDayPassLoading(false);
     }
   };
@@ -892,32 +911,102 @@ export default function QueueManagement() {
 
   // Handle adding vehicle to queue (extracted for keyboard shortcuts)
   const handleAddVehicleToQueue = async () => {
-    if (!selectedVehicle || !selectedVehicleDestination) return;
+    console.log('🚗 [QUEUE DEBUG] Starting vehicle entry process...');
+    console.log('🚗 [QUEUE DEBUG] Selected vehicle:', selectedVehicle);
+    console.log('🚗 [QUEUE DEBUG] Selected destination:', selectedVehicleDestination);
     
-    // Check day pass status first
-    const hasDayPass = await checkDayPassStatus(selectedVehicle.licensePlate);
-    
-    if (!hasDayPass) {
-      // Show day pass purchase modal
-      setShowDayPassModal(true);
-      await getDayPassPrice();
+    if (!selectedVehicle || !selectedVehicleDestination) {
+      console.log('❌ [QUEUE DEBUG] Missing vehicle or destination');
       return;
     }
     
+    // Check day pass status first
+    console.log('🚗 [QUEUE DEBUG] Checking day pass status for:', selectedVehicle.licensePlate);
+    const hasDayPass = await checkDayPassStatus(selectedVehicle.licensePlate);
+    console.log('🚗 [QUEUE DEBUG] Day pass status:', hasDayPass);
+    
+    if (!hasDayPass) {
+      // Automatically purchase day pass and print ticket
+      console.log('🚗 [QUEUE DEBUG] Vehicle has no day pass, automatically purchasing...');
+      setActionLoading(selectedVehicle.licensePlate);
+      setAddVehicleError(null);
+      
+      try {
+        // Get day pass price first
+        console.log('🚗 [QUEUE DEBUG] Getting day pass price...');
+        await getDayPassPrice();
+        console.log('🚗 [QUEUE DEBUG] Day pass price retrieved:', dayPassPrice);
+        
+        // Purchase day pass automatically
+        console.log('🚗 [QUEUE DEBUG] Purchasing day pass for:', selectedVehicle.licensePlate);
+        const dayPassResult = await purchaseDayPass(selectedVehicle.licensePlate);
+        console.log('🚗 [QUEUE DEBUG] Day pass purchase result:', dayPassResult);
+        
+        if (!dayPassResult.success) {
+          console.log('❌ [QUEUE DEBUG] Day pass purchase failed:', dayPassResult.message);
+          setActionLoading(null);
+          setAddVehicleError(dayPassResult.message || 'Erreur lors de l\'achat du pass journalier');
+          return;
+        }
+        
+        console.log('✅ [QUEUE DEBUG] Day pass purchased automatically, proceeding with queue entry...');
+      } catch (error) {
+        console.error('❌ [QUEUE DEBUG] Error purchasing day pass:', error);
+        setActionLoading(null);
+        setAddVehicleError('Erreur lors de l\'achat du pass journalier');
+        return;
+      }
+    } else {
+      // Vehicle has day pass, print entry ticket with 0 price
+      console.log('🚗 [QUEUE DEBUG] Vehicle has day pass, printing entry ticket...');
+      setActionLoading(selectedVehicle.licensePlate);
+      setAddVehicleError(null);
+      
+      try {
+        // Print entry ticket for vehicle with day pass
+        console.log('🚗 [QUEUE DEBUG] Formatting entry ticket data...');
+        const entryTicketData = thermalPrinter.formatEntryTicketData(
+          {
+            ticketNumber: `ENTRY-${Date.now()}`,
+            licensePlate: selectedVehicle.licensePlate,
+            stationName: 'Monastir Main Station',
+            ticketPrice: 0, // 0 TND for vehicles with day pass
+            entryTime: new Date().toISOString()
+          },
+          {
+            licensePlate: selectedVehicle.licensePlate,
+            driver: selectedVehicle.driver
+          }
+        );
+        console.log('🚗 [QUEUE DEBUG] Entry ticket data formatted:', entryTicketData);
+        
+        const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+        console.log('🚗 [QUEUE DEBUG] Staff name for entry ticket:', staffName);
+        console.log('🚗 [QUEUE DEBUG] Printing entry ticket...');
+        await thermalPrinter.printEntryTicket(entryTicketData, staffName);
+        console.log('✅ [QUEUE DEBUG] Entry ticket printed for vehicle with day pass');
+      } catch (printError) {
+        console.error('❌ [QUEUE DEBUG] Failed to print entry ticket:', printError);
+        // Continue with queue entry even if printing fails
+      }
+    }
+    
     // Proceed with adding to queue
-    setActionLoading(selectedVehicle.licensePlate);
-    setAddVehicleError(null);
-    
+    console.log('🚗 [QUEUE DEBUG] Proceeding with queue entry...');
     const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
+    console.log('🚗 [QUEUE DEBUG] Destination info:', destinationInfo);
     
+    console.log('🚗 [QUEUE DEBUG] Calling handleEnterQueueWithDestination...');
     const result = await handleEnterQueueWithDestination(
       selectedVehicle.licensePlate, 
       selectedVehicleDestination,
       destinationInfo?.stationName
     );
+    console.log('🚗 [QUEUE DEBUG] Queue entry result:', result);
     
     setActionLoading(null);
     if (result?.success) {
+      console.log('✅ [QUEUE DEBUG] Vehicle successfully added to queue');
       setShowAddVehicleModal(false);
       setSelectedVehicle(null);
       setSelectedVehicleDestination(null);
@@ -925,6 +1014,7 @@ export default function QueueManagement() {
       setSearch("");
       setIsInputFocused(false);
     } else if (result?.message) {
+      console.log('❌ [QUEUE DEBUG] Queue entry failed:', result.message);
       setAddVehicleError(result.message);
     }
   };
@@ -1311,6 +1401,7 @@ export default function QueueManagement() {
         {/* Quick Stats */}
         {(() => {
           const s = aggregateStatusCounts();
+          const totalStations = queueSummaries.length;
           return (
             <div className="mt-4 flex items-center gap-6 text-sm">
               <div className="flex items-center gap-2">
@@ -1328,6 +1419,10 @@ export default function QueueManagement() {
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-gray-400"></div>
                 <span className="text-gray-600">Total: <span className="font-semibold text-gray-900">{s.total}</span></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-purple-600" />
+                <span className="text-gray-600">Stations: <span className="font-semibold text-gray-900">{totalStations}</span></span>
               </div>
             </div>
           );
@@ -1429,8 +1524,7 @@ export default function QueueManagement() {
                     const q = search.toLowerCase();
                     return (
                       v.licensePlate?.toLowerCase().includes(q) ||
-                      v.driver?.firstName?.toLowerCase().includes(q) ||
-                      v.driver?.lastName?.toLowerCase().includes(q)
+                      v.driver?.cin?.toLowerCase().includes(q)
                     );
                   }).map((v, index) => (
                     <div
@@ -1453,7 +1547,7 @@ export default function QueueManagement() {
                               {v.dayPassValid ? 'Pass OK' : 'Pas de pass'}
                             </div>
                           </div>
-                          <div className="text-sm text-gray-600">{v.driver?.firstName} {v.driver?.lastName}</div>
+                          <div className="text-sm text-gray-600">CIN: {v.driver?.cin}</div>
                         </div>
                       </div>
                       {selectedVehicle?.licensePlate === v.licensePlate && (
@@ -1487,49 +1581,90 @@ export default function QueueManagement() {
                     <span className="text-gray-600">Chargement des destinations...</span>
                   </div>
                 ) : vehicleDestinations.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {vehicleDestinations.map((dest: any) => (
-                      <div
-                        key={dest.stationId}
-                        className={`p-4 rounded-lg border cursor-pointer transition-all ${
-                          selectedVehicleDestination === dest.stationId 
-                            ? 'border-blue-500 bg-blue-50 shadow-sm' 
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                        }`}
-                        onClick={() => setSelectedVehicleDestination(dest.stationId)}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start space-x-3">
-                            <div className={`w-4 h-4 rounded-full border-2 mt-1 ${
-                              selectedVehicleDestination === dest.stationId 
-                                ? 'border-blue-500 bg-blue-500' 
-                                : 'border-gray-300'
-                            }`} />
-                            <div className="flex-1">
-                              <div className="flex items-center space-x-2">
-                                <span className="font-medium text-gray-900">{dest.stationName}</span>
+                  <div className="space-y-3">
+                    {/* Header with count */}
+                    <div className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
+                      <div className="flex items-center space-x-2">
+                        <MapPin className="h-4 w-4 text-gray-600" />
+                        <span className="text-sm font-medium text-gray-700">
+                          {vehicleDestinations.length} destination{vehicleDestinations.length > 1 ? 's' : ''} disponible{vehicleDestinations.length > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Cliquez pour sélectionner
+                      </div>
+                    </div>
+                    
+                    {/* Destinations Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto">
+                      {vehicleDestinations.map((dest: any, index: number) => (
+                        <div
+                          key={dest.stationId}
+                          className={`group relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+                            selectedVehicleDestination === dest.stationId 
+                              ? 'border-blue-500 bg-blue-50 shadow-lg ring-2 ring-blue-200' 
+                              : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 hover:shadow-md'
+                          }`}
+                          onClick={() => setSelectedVehicleDestination(dest.stationId)}
+                        >
+                          {/* Selection indicator */}
+                          <div className={`absolute top-3 right-3 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                            selectedVehicleDestination === dest.stationId 
+                              ? 'border-blue-500 bg-blue-500' 
+                              : 'border-gray-300 group-hover:border-blue-400'
+                          }`}>
+                            {selectedVehicleDestination === dest.stationId && (
+                              <CheckCircle className="w-3 h-3 text-white" />
+                            )}
+                          </div>
+                          
+                          {/* Station info */}
+                          <div className="pr-8">
+                            <div className="flex items-center space-x-2 mb-2">
+                              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+                                {index + 1}
+                              </div>
+                              <div className="flex-1">
+                                <h4 className="font-semibold text-gray-900 group-hover:text-blue-700 transition-colors">
+                                  {dest.stationName}
+                                </h4>
                                 {dest.isDefault && (
-                                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mt-1">
+                                    <Star className="w-3 h-3 mr-1" />
                                     Défaut
                                   </span>
                                 )}
                               </div>
-                              <div className="text-sm text-gray-600 mt-1">
-                                Prix: <span className="font-semibold text-green-600">{formatCurrency(dest.basePrice)}</span>
+                            </div>
+                            
+                            {/* Price and status */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-sm text-gray-600">
+                                  Prix: <span className="font-bold text-green-600">{formatCurrency(dest.basePrice)}</span>
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-1">
+                                {(() => {
+                                  const route = getRouteForDestination(dest.stationName);
+                                  return route ? (
+                                    <div className="flex items-center text-green-600 text-xs">
+                                      <CheckCircle className="w-3 h-3 mr-1" />
+                                      Disponible
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center text-orange-600 text-xs">
+                                      <AlertCircle className="w-3 h-3 mr-1" />
+                                      Indisponible
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>
-                          {(() => {
-                            const route = getRouteForDestination(dest.stationName);
-                            return route ? (
-                              <div className="text-green-600 text-xs">✓</div>
-                            ) : (
-                              <div className="text-orange-600 text-xs">⚠</div>
-                            );
-                          })()}
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div className="text-center py-8 bg-gray-50 rounded-lg">
@@ -1608,7 +1743,7 @@ export default function QueueManagement() {
                   <div>
                     <div className="font-semibold text-gray-900">{selectedVehicleForQueueChange.licensePlate}</div>
                     <div className="text-sm text-gray-600">
-                      {selectedVehicleForQueueChange.firstName} {selectedVehicleForQueueChange.lastName}
+                      CIN: {selectedVehicleForQueueChange.cin}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                       Actuellement: <span className="font-medium text-blue-600">{selectedVehicleForQueueChange.currentDestination}</span>
@@ -1627,49 +1762,90 @@ export default function QueueManagement() {
                     <span className="text-gray-600">Chargement des destinations...</span>
                   </div>
                 ) : changeQueueDestinations.length > 0 ? (
-                  <div className="space-y-2">
-                    {changeQueueDestinations.map((dest: any) => (
-                      <div
-                        key={dest.stationId}
-                        className={`p-4 rounded-lg border cursor-pointer transition-all ${
-                          selectedNewDestination === dest.stationId 
-                            ? 'border-blue-500 bg-blue-50 shadow-sm' 
-                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                        }`}
-                        onClick={() => setSelectedNewDestination(dest.stationId)}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start space-x-3">
-                            <div className={`w-4 h-4 rounded-full border-2 mt-1 ${
-                              selectedNewDestination === dest.stationId 
-                                ? 'border-blue-500 bg-blue-500' 
-                                : 'border-gray-300'
-                            }`} />
-                            <div className="flex-1">
-                              <div className="flex items-center space-x-2">
-                                <span className="font-medium text-gray-900">{dest.stationName}</span>
+                  <div className="space-y-3">
+                    {/* Header with count */}
+                    <div className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
+                      <div className="flex items-center space-x-2">
+                        <MapPin className="h-4 w-4 text-gray-600" />
+                        <span className="text-sm font-medium text-gray-700">
+                          {changeQueueDestinations.length} destination{changeQueueDestinations.length > 1 ? 's' : ''} disponible{changeQueueDestinations.length > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Cliquez pour changer
+                      </div>
+                    </div>
+                    
+                    {/* Destinations List */}
+                    <div className="space-y-2 max-h-80 overflow-y-auto">
+                      {changeQueueDestinations.map((dest: any, index: number) => (
+                        <div
+                          key={dest.stationId}
+                          className={`group relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+                            selectedNewDestination === dest.stationId 
+                              ? 'border-blue-500 bg-blue-50 shadow-lg ring-2 ring-blue-200' 
+                              : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 hover:shadow-md'
+                          }`}
+                          onClick={() => setSelectedNewDestination(dest.stationId)}
+                        >
+                          {/* Selection indicator */}
+                          <div className={`absolute top-3 right-3 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                            selectedNewDestination === dest.stationId 
+                              ? 'border-blue-500 bg-blue-500' 
+                              : 'border-gray-300 group-hover:border-blue-400'
+                          }`}>
+                            {selectedNewDestination === dest.stationId && (
+                              <CheckCircle className="w-3 h-3 text-white" />
+                            )}
+                          </div>
+                          
+                          {/* Station info */}
+                          <div className="pr-8">
+                            <div className="flex items-center space-x-3 mb-2">
+                              <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-green-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+                                {index + 1}
+                              </div>
+                              <div className="flex-1">
+                                <h4 className="font-semibold text-gray-900 group-hover:text-blue-700 transition-colors">
+                                  {dest.stationName}
+                                </h4>
                                 {dest.isDefault && (
-                                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mt-1">
+                                    <Star className="w-3 h-3 mr-1" />
                                     Défaut
                                   </span>
                                 )}
                               </div>
-                              <div className="text-sm text-gray-600 mt-1">
-                                Prix: <span className="font-semibold text-green-600">{formatCurrency(dest.basePrice)}</span>
+                            </div>
+                            
+                            {/* Price and status */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-sm text-gray-600">
+                                  Prix: <span className="font-bold text-green-600">{formatCurrency(dest.basePrice)}</span>
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-1">
+                                {(() => {
+                                  const route = getRouteForDestination(dest.stationName);
+                                  return route ? (
+                                    <div className="flex items-center text-green-600 text-xs">
+                                      <CheckCircle className="w-3 h-3 mr-1" />
+                                      Disponible
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center text-orange-600 text-xs">
+                                      <AlertCircle className="w-3 h-3 mr-1" />
+                                      Indisponible
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>
-                          {(() => {
-                            const route = getRouteForDestination(dest.stationName);
-                            return route ? (
-                              <div className="text-green-600 text-xs">✓</div>
-                            ) : (
-                              <div className="text-orange-600 text-xs">⚠</div>
-                            );
-                          })()}
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div className="text-center py-8 bg-gray-50 rounded-lg">
@@ -1775,7 +1951,7 @@ export default function QueueManagement() {
                   <div>
                     <div className="font-semibold text-gray-900">{selectedVehicle.licensePlate}</div>
                     <div className="text-sm text-gray-600">
-                      {selectedVehicle.driver?.firstName} {selectedVehicle.driver?.lastName}
+                      CIN: {selectedVehicle.driver?.cin}
                     </div>
                   </div>
                 </div>

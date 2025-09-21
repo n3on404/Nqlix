@@ -14,9 +14,7 @@ interface QueueItem {
   vehicle: {
     licensePlate: string;
     driver: {
-      firstName: string;
-      lastName: string;
-      phoneNumber: string;
+      cin: string;
     };
   };
 }

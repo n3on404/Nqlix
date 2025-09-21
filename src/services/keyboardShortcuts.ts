@@ -9,7 +9,7 @@ export interface KeyboardShortcut {
 
 export class KeyboardShortcutsService {
   private shortcuts: Map<string, KeyboardShortcut> = new Map();
-  private navigate: any = null;
+  public navigate: any = null;
 
   constructor() {
     this.setupGlobalListener();
@@ -87,18 +87,8 @@ export const COMMON_SHORTCUTS = {
       }
     }
   },
-  F2: {
-    key: 'F2',
-    description: 'Aller à la vérification',
-    category: 'navigation' as const,
-    action: () => {
-      if (keyboardShortcuts.navigate) {
-        keyboardShortcuts.navigate('/verify');
-      }
-    }
-  },
   F3: {
-    key: 'F3',
+    key: 'F2',
     description: 'Aller au pass journalier',
     category: 'navigation' as const,
     action: () => {
@@ -108,7 +98,7 @@ export const COMMON_SHORTCUTS = {
     }
   },
   F4: {
-    key: 'F4',
+    key: 'F3',
     description: 'Aller à la gestion de file',
     category: 'navigation' as const,
     action: () => {

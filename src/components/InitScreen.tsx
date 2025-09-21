@@ -36,8 +36,14 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   useEffect(() => {
     const loadAppVersion = async () => {
       try {
-        const version = await getAppVersion();
-        setAppVersion(version);
+        // Check if Tauri is available before calling functions
+        if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+          const version = await getAppVersion();
+          setAppVersion(version);
+        } else {
+          console.warn('Tauri not available, using fallback version');
+          setAppVersion('Web Version');
+        }
       } catch (err) {
         console.error('Failed to load app version:', err);
         setAppVersion('Unknown');

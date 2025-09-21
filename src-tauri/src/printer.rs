@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use reqwest::Client;
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PrinterConfig {
@@ -25,6 +27,16 @@ pub struct PrintJob {
 pub struct PrinterStatus {
     pub connected: bool,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StaffInfo {
+    pub id: String,
+    pub cin: String,
+    pub firstName: String,
+    pub lastName: String,
+    pub role: String,
+    pub phoneNumber: Option<String>,
 }
 
 #[derive(Clone)]
@@ -64,6 +76,36 @@ impl PrinterService {
     pub fn get_config(&self) -> Result<PrinterConfig, String> {
         let config = self.config.lock().map_err(|e| e.to_string())?;
         Ok(config.clone())
+    }
+
+    /// Fetch current staff information from the local node API
+    pub async fn get_current_staff(&self) -> Result<Option<StaffInfo>, String> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        // Try to get staff from local node API
+        // First, we need to get the current staff from the session
+        // Since we can't access localStorage directly from Rust, we'll try to get it from the API
+        let base_url = "http://127.0.0.1:3001"; // Default local node URL
+        
+        // Try to get current staff from the API
+        let response = client
+            .get(&format!("{}/api/staff/current", base_url))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch staff: {}", e))?;
+
+        if response.status().is_success() {
+            let staff: StaffInfo = response.json().await
+                .map_err(|e| format!("Failed to parse staff response: {}", e))?;
+            Ok(Some(staff))
+        } else {
+            // If API call fails, return None (staff info will be omitted from ticket)
+            println!("⚠️ Could not fetch current staff: HTTP {}", response.status());
+            Ok(None)
+        }
     }
 
     pub async fn test_connection(&self) -> Result<PrinterStatus, String> {
@@ -599,12 +641,34 @@ printStandardTicket();
         }
     }
 
-    pub async fn print_booking_ticket(&self, ticket_data: String) -> Result<String, String> {
+    pub async fn print_booking_ticket(&self, ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
+        // Debug: Print ticket data to console
+        println!("🎫 DEBUG: Booking ticket data received:");
+        println!("{}", "=".repeat(80));
+        println!("{}", ticket_data);
+        println!("{}", "=".repeat(80));
+        
         // cache latest
         if let Ok(mut cache) = self.last_booking_payload.lock() {
             *cache = Some(ticket_data.clone());
         }
         let config = self.get_config()?;
+        
+        // Use provided staff name or fallback
+        let staff_footer = if let Some(name) = staff_name {
+            format!("Émis par: {}", name)
+        } else {
+            "Émis par: Staff".to_string()
+        };
+        
+        println!("👤 DEBUG: Staff information: {}", staff_footer);
+        
+        // Debug: Print printer configuration
+        println!("🖨️ DEBUG: Printer configuration:");
+        println!("  - IP: {}", config.ip);
+        println!("  - Port: {}", config.port);
+        println!("  - Width: {}", config.width);
+        println!("  - Timeout: {}ms", config.timeout);
         
         let script_content = format!(
             r#"
@@ -655,6 +719,13 @@ async function printBookingTicket() {{
         
         // Content
         const bookingContent = `{}`;
+        
+        // Debug: Log what will be printed
+        console.log('🎫 DEBUG: Ticket content that will be printed:');
+        console.log('='.repeat(80));
+        console.log(bookingContent);
+        console.log('='.repeat(80));
+        
         printer.alignLeft();
         printer.println(bookingContent);
         
@@ -663,6 +734,10 @@ async function printBookingTicket() {{
         printer.alignCenter();
         printer.println("Date: " + new Date().toLocaleString('fr-FR'));
         printer.println("Merci de votre confiance!");
+        
+        // Staff information in bottom right corner
+        printer.alignRight();
+        printer.println("{}");
 
         // Barcode at bottom
         const bookingNumMatch = bookingContent.match(/N°\s*Ticket:\s*([\w-]+)/);
@@ -674,8 +749,37 @@ async function printBookingTicket() {{
         }}
         printer.cut();
         
+        // Debug: Show complete ticket structure
+        console.log('🎫 DEBUG: Complete ticket structure:');
+        console.log('='.repeat(80));
+        console.log('HEADER:');
+        console.log('- Logo: STE 260 image');
+        console.log('- Company: STE Dhraiff Services Transport');
+        console.log('- Title: TICKET DE RÉSERVATION');
+        console.log('- Separator line');
+        console.log('');
+        console.log('CONTENT:');
+        console.log(bookingContent);
+        console.log('');
+        console.log('PRICE BREAKDOWN:');
+        console.log('- Base Price: [Shown in ticket content]');
+        console.log('- Service Fee: [Shown in ticket content]');
+        console.log('- Total: [Shown in ticket content]');
+        console.log('');
+        console.log('FOOTER:');
+        console.log('- Separator line');
+        console.log('- Date: ' + new Date().toLocaleString('fr-FR'));
+        console.log('- Message: Merci de votre confiance!');
+        console.log('- Staff: {}');
+        if (bookingTicketNumber) {{
+            console.log('- Barcode: ' + bookingTicketNumber);
+            console.log('- Ticket Number: ' + bookingTicketNumber);
+        }}
+        console.log('- Paper cut');
+        console.log('='.repeat(80));
+        
         await printer.execute();
-        console.log('Booking ticket printed successfully');
+        console.log('✅ Booking ticket printed successfully');
         
     }} catch (error) {{
         console.error('Booking ticket print error:', error.message);
@@ -689,19 +793,38 @@ printBookingTicket();
             config.ip,
             config.port,
             config.timeout,
-            ticket_data.replace('`', r"\`").replace('$', r"\$")
+            ticket_data.replace('`', r"\`").replace('$', r"\$"),
+            staff_footer,
+            staff_footer
         );
 
         let script_path = format!("temp_booking_{}.cjs", uuid::Uuid::new_v4());
+        
+        // Debug: Show the script that will be executed
+        println!("📜 DEBUG: Node.js script that will be executed:");
+        println!("{}", "=".repeat(80));
+        println!("{}", script_content);
+        println!("{}", "=".repeat(80));
+        
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write booking ticket script: {}", e))?;
 
+        println!("🚀 DEBUG: Executing Node.js script: {}", script_path);
         let output = Command::new("node")
             .arg(&script_path)
             .output()
             .map_err(|e| format!("Failed to execute booking ticket script: {}", e))?;
 
         let _ = std::fs::remove_file(&script_path);
+
+        // Debug: Show script output
+        println!("📤 DEBUG: Node.js script output:");
+        println!("  - Status: {}", if output.status.success() { "SUCCESS" } else { "FAILED" });
+        println!("  - Exit code: {:?}", output.status.code());
+        println!("  - Stdout: {}", String::from_utf8_lossy(&output.stdout));
+        if !output.stderr.is_empty() {
+            println!("  - Stderr: {}", String::from_utf8_lossy(&output.stderr));
+        }
 
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -713,12 +836,26 @@ printBookingTicket();
         }
     }
 
-    pub async fn print_entry_ticket(&self, ticket_data: String) -> Result<String, String> {
+    pub async fn print_entry_ticket(&self, ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
+        println!("🖨️ [RUST DEBUG] Starting entry ticket print...");
+        println!("🖨️ [RUST DEBUG] Ticket data received: {}", ticket_data);
+        println!("🖨️ [RUST DEBUG] Staff name: {:?}", staff_name);
+        
         // cache latest
         if let Ok(mut cache) = self.last_entry_payload.lock() {
             *cache = Some(ticket_data.clone());
         }
         let config = self.get_config()?;
+        println!("🖨️ [RUST DEBUG] Printer config: IP={}, Port={}, Width={}, Timeout={}", 
+                 config.ip, config.port, config.width, config.timeout);
+        
+        // Use provided staff name or fallback
+        let staff_footer = if let Some(name) = staff_name {
+            format!("Émis par: {}", name)
+        } else {
+            "Émis par: Staff".to_string()
+        };
+        println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
         
         let script_content = format!(
             r#"
@@ -726,6 +863,8 @@ const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('nod
 
 async function printEntryTicket() {{
     try {{
+        console.log('🖨️ [NODE DEBUG] Starting entry ticket print...');
+        
         const printer = new ThermalPrinter({{
             type: PrinterTypes.EPSON,
             width: {},
@@ -739,20 +878,25 @@ async function printEntryTicket() {{
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Checking printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
             throw new Error('Printer not connected');
         }}
 
         // Print logo centered at the top
+        console.log('🖨️ [NODE DEBUG] Printing logo...');
         printer.alignCenter();
         try {{
             await printer.printImage("./icons/ste_260.png");
+            console.log('🖨️ [NODE DEBUG] Logo printed successfully');
         }} catch (logoError) {{
-            console.log('Logo not found, continuing without logo');
+            console.log('🖨️ [NODE DEBUG] Logo not found, continuing without logo:', logoError.message);
         }}
 
         // Company header
+        console.log('🖨️ [NODE DEBUG] Printing company header...');
         printer.alignCenter();
         printer.bold(true);
         printer.setTextNormal();
@@ -761,6 +905,7 @@ async function printEntryTicket() {{
         printer.drawLine();
         
         // Ticket type header
+        console.log('🖨️ [NODE DEBUG] Printing ticket type header...');
         printer.alignCenter();
         printer.bold(true);
         printer.println("TICKET D'ENTRÉE");
@@ -768,28 +913,42 @@ async function printEntryTicket() {{
         printer.drawLine();
         
         // Content
+        console.log('🖨️ [NODE DEBUG] Printing entry ticket content...');
         const entryContent = `{}`;
         printer.alignLeft();
         printer.println(entryContent);
         
         // Footer (entry ticket: no date or messages)
+        console.log('🖨️ [NODE DEBUG] Printing footer...');
         printer.drawLine();
+        
+        // Staff information in bottom right corner
+        console.log('🖨️ [NODE DEBUG] Printing staff footer...');
+        printer.alignRight();
+        printer.println("{}");
 
         // Barcode at bottom
+        console.log('🖨️ [NODE DEBUG] Extracting entry ticket number for barcode...');
         const entryNumMatch = entryContent.match(/N°\s*Ticket:\s*([\w-]+)/);
         const entryTicketNumber = entryNumMatch ? entryNumMatch[1] : null;
+        console.log('🖨️ [NODE DEBUG] Entry ticket number found:', entryTicketNumber);
         if (entryTicketNumber) {{
+            console.log('🖨️ [NODE DEBUG] Printing barcode...');
             printer.alignCenter();
             printer.code128(entryTicketNumber);
             printer.println(entryTicketNumber);
+        }} else {{
+            console.log('🖨️ [NODE DEBUG] No entry ticket number found, skipping barcode');
         }}
         printer.cut();
         
+        console.log('🖨️ [NODE DEBUG] Executing print job...');
         await printer.execute();
-        console.log('Entry ticket printed successfully');
+        console.log('🖨️ [NODE DEBUG] Entry ticket printed successfully!');
         
     }} catch (error) {{
-        console.error('Entry ticket print error:', error.message);
+        console.error('🖨️ [NODE DEBUG] Entry ticket print error:', error.message);
+        console.error('🖨️ [NODE DEBUG] Error stack:', error.stack);
         process.exit(1);
     }}
 }}
@@ -800,13 +959,20 @@ printEntryTicket();
             config.ip,
             config.port,
             config.timeout,
-            ticket_data.replace('`', r"\`").replace('$', r"\$")
+            ticket_data.replace('`', r"\`").replace('$', r"\$"),
+            staff_footer
         );
 
         let script_path = format!("temp_entry_{}.cjs", uuid::Uuid::new_v4());
+        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        
+        println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
+        println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
+        
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write entry ticket script: {}", e))?;
-
+        println!("🖨️ [RUST DEBUG] Executing Node.js script...");
+        
         let output = Command::new("node")
             .arg(&script_path)
             .output()
@@ -814,9 +980,16 @@ printEntryTicket();
 
         let _ = std::fs::remove_file(&script_path);
 
+        println!("🖨️ [RUST DEBUG] Script execution completed");
+        println!("🖨️ [RUST DEBUG] Exit status: {:?}", output.status);
+        println!("🖨️ [RUST DEBUG] Stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("🖨️ [RUST DEBUG] Stderr: {}", String::from_utf8_lossy(&output.stderr));
+
         if output.status.success() {
+            println!("🖨️ [RUST DEBUG] Entry ticket printed successfully!");
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
+            println!("🖨️ [RUST DEBUG] Entry ticket print failed!");
             Err(format!(
                 "Entry ticket print failed: {}",
                 String::from_utf8_lossy(&output.stderr)
@@ -824,12 +997,26 @@ printEntryTicket();
         }
     }
 
-    pub async fn print_exit_ticket(&self, ticket_data: String) -> Result<String, String> {
+    pub async fn print_exit_ticket(&self, ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
+        println!("🖨️ [RUST DEBUG] Starting exit ticket print...");
+        println!("🖨️ [RUST DEBUG] Ticket data received: {}", ticket_data);
+        println!("🖨️ [RUST DEBUG] Staff name: {:?}", staff_name);
+        
         // cache latest
         if let Ok(mut cache) = self.last_exit_payload.lock() {
             *cache = Some(ticket_data.clone());
         }
         let config = self.get_config()?;
+        println!("🖨️ [RUST DEBUG] Printer config: IP={}, Port={}, Width={}, Timeout={}", 
+                 config.ip, config.port, config.width, config.timeout);
+        
+        // Use provided staff name or fallback
+        let staff_footer = if let Some(name) = staff_name {
+            format!("Émis par: {}", name)
+        } else {
+            "Émis par: Staff".to_string()
+        };
+        println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
         
         let script_content = format!(
             r#"
@@ -837,6 +1024,8 @@ const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('nod
 
 async function printExitTicket() {{
     try {{
+        console.log('🖨️ [NODE DEBUG] Starting exit ticket print...');
+        
         const printer = new ThermalPrinter({{
             type: PrinterTypes.EPSON,
             width: {},
@@ -850,20 +1039,25 @@ async function printExitTicket() {{
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Checking printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
             throw new Error('Printer not connected');
         }}
 
         // Print logo centered at the top
+        console.log('🖨️ [NODE DEBUG] Printing logo...');
         printer.alignCenter();
         try {{
             await printer.printImage("./icons/ste_260.png");
+            console.log('🖨️ [NODE DEBUG] Logo printed successfully');
         }} catch (logoError) {{
-            console.log('Logo not found, continuing without logo');
+            console.log('🖨️ [NODE DEBUG] Logo not found, continuing without logo:', logoError.message);
         }}
 
         // Company header
+        console.log('🖨️ [NODE DEBUG] Printing company header...');
         printer.alignCenter();
         printer.bold(true);
         printer.setTextDoubleHeight();
@@ -872,6 +1066,7 @@ async function printExitTicket() {{
         printer.drawLine();
         
         // Ticket type header
+        console.log('🖨️ [NODE DEBUG] Printing ticket type header...');
         printer.alignCenter();
         printer.bold(true);
         printer.println("TICKET DE SORTIE");
@@ -879,31 +1074,45 @@ async function printExitTicket() {{
         printer.drawLine();
         
         // Content
+        console.log('🖨️ [NODE DEBUG] Printing exit ticket content...');
         const exitContent = `{}`;
         printer.alignLeft();
         printer.println(exitContent);
         
         // Footer
+        console.log('🖨️ [NODE DEBUG] Printing footer...');
         printer.drawLine();
         printer.alignCenter();
         printer.println("Date: " + new Date().toLocaleString('fr-FR'));
         printer.println("Merci!");
+        
+        // Staff information in bottom right corner
+        console.log('🖨️ [NODE DEBUG] Printing staff footer...');
+        printer.alignRight();
+        printer.println("{}");
 
         // Barcode at bottom
+        console.log('🖨️ [NODE DEBUG] Extracting exit ticket number for barcode...');
         const exitNumMatch = exitContent.match(/N°\s*Ticket:\s*([\w-]+)/);
         const exitTicketNumber = exitNumMatch ? exitNumMatch[1] : null;
+        console.log('🖨️ [NODE DEBUG] Exit ticket number found:', exitTicketNumber);
         if (exitTicketNumber) {{
+            console.log('🖨️ [NODE DEBUG] Printing barcode...');
             printer.alignCenter();
             printer.code128(exitTicketNumber);
             printer.println(exitTicketNumber);
+        }} else {{
+            console.log('🖨️ [NODE DEBUG] No exit ticket number found, skipping barcode');
         }}
         printer.cut();
         
+        console.log('🖨️ [NODE DEBUG] Executing print job...');
         await printer.execute();
-        console.log('Exit ticket printed successfully');
+        console.log('🖨️ [NODE DEBUG] Exit ticket printed successfully!');
         
     }} catch (error) {{
-        console.error('Exit ticket print error:', error.message);
+        console.error('🖨️ [NODE DEBUG] Exit ticket print error:', error.message);
+        console.error('🖨️ [NODE DEBUG] Error stack:', error.stack);
         process.exit(1);
     }}
 }}
@@ -914,13 +1123,20 @@ printExitTicket();
             config.ip,
             config.port,
             config.timeout,
-            ticket_data.replace('`', r"\`").replace('$', r"\$")
+            ticket_data.replace('`', r"\`").replace('$', r"\$"),
+            staff_footer
         );
 
         let script_path = format!("temp_exit_{}.cjs", uuid::Uuid::new_v4());
+        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        
+        println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
+        println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
+        
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write exit ticket script: {}", e))?;
-
+        println!("🖨️ [RUST DEBUG] Executing Node.js script...");
+        
         let output = Command::new("node")
             .arg(&script_path)
             .output()
@@ -928,9 +1144,16 @@ printExitTicket();
 
         let _ = std::fs::remove_file(&script_path);
 
+        println!("🖨️ [RUST DEBUG] Script execution completed");
+        println!("🖨️ [RUST DEBUG] Exit status: {:?}", output.status);
+        println!("🖨️ [RUST DEBUG] Stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("🖨️ [RUST DEBUG] Stderr: {}", String::from_utf8_lossy(&output.stderr));
+
         if output.status.success() {
+            println!("🖨️ [RUST DEBUG] Exit ticket printed successfully!");
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
+            println!("🖨️ [RUST DEBUG] Exit ticket print failed!");
             Err(format!(
                 "Exit ticket print failed: {}",
                 String::from_utf8_lossy(&output.stderr)
@@ -946,7 +1169,7 @@ printExitTicket();
             .map_err(|e| e.to_string())?
             .clone();
         match payload_opt {
-            Some(payload) => self.print_booking_ticket(payload).await,
+            Some(payload) => self.print_booking_ticket(payload, None).await,
             None => Err("No previous booking ticket to reprint".to_string()),
         }
     }
@@ -958,7 +1181,7 @@ printExitTicket();
             .map_err(|e| e.to_string())?
             .clone();
         match payload_opt {
-            Some(payload) => self.print_entry_ticket(payload).await,
+            Some(payload) => self.print_entry_ticket(payload, None).await,
             None => Err("No previous entry ticket to reprint".to_string()),
         }
     }
@@ -970,17 +1193,31 @@ printExitTicket();
             .map_err(|e| e.to_string())?
             .clone();
         match payload_opt {
-            Some(payload) => self.print_exit_ticket(payload).await,
+            Some(payload) => self.print_exit_ticket(payload, None).await,
             None => Err("No previous exit ticket to reprint".to_string()),
         }
     }
 
-    pub async fn print_day_pass_ticket(&self, ticket_data: String) -> Result<String, String> {
+    pub async fn print_day_pass_ticket(&self, ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
+        println!("🖨️ [RUST DEBUG] Starting day pass ticket print...");
+        println!("🖨️ [RUST DEBUG] Ticket data received: {}", ticket_data);
+        println!("🖨️ [RUST DEBUG] Staff name: {:?}", staff_name);
+        
         // cache latest
         if let Ok(mut cache) = self.last_day_pass_payload.lock() {
             *cache = Some(ticket_data.clone());
         }
         let config = self.get_config()?;
+        println!("🖨️ [RUST DEBUG] Printer config: IP={}, Port={}, Width={}, Timeout={}", 
+                 config.ip, config.port, config.width, config.timeout);
+        
+        // Use provided staff name or fallback
+        let staff_footer = if let Some(name) = staff_name {
+            format!("Émis par: {}", name)
+        } else {
+            "Émis par: Staff".to_string()
+        };
+        println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
         
         let script_content = format!(
             r#"
@@ -988,6 +1225,8 @@ const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('nod
 
 async function printDayPassTicket() {{
     try {{
+        console.log('🖨️ [NODE DEBUG] Starting day pass ticket print...');
+        
         const printer = new ThermalPrinter({{
             type: PrinterTypes.EPSON,
             width: {},
@@ -1001,20 +1240,25 @@ async function printDayPassTicket() {{
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Checking printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
             throw new Error('Printer not connected');
         }}
 
         // Print logo centered at the top
+        console.log('🖨️ [NODE DEBUG] Printing logo...');
         printer.alignCenter();
         try {{
             await printer.printImage("./icons/ste_260.png");
+            console.log('🖨️ [NODE DEBUG] Logo printed successfully');
         }} catch (logoError) {{
-            console.log('Logo not found, continuing without logo');
+            console.log('🖨️ [NODE DEBUG] Logo not found, continuing without logo:', logoError.message);
         }}
 
         // Company header
+        console.log('🖨️ [NODE DEBUG] Printing company header...');
         printer.alignCenter();
         printer.bold(true);
         printer.setTextNormal();
@@ -1023,6 +1267,7 @@ async function printDayPassTicket() {{
         printer.drawLine();
         
         // Ticket type header
+        console.log('🖨️ [NODE DEBUG] Printing ticket type header...');
         printer.alignCenter();
         printer.bold(true);
         printer.setTextDoubleHeight();
@@ -1032,31 +1277,45 @@ async function printDayPassTicket() {{
         
         // Content
         const dayPassContent = `{}`;
+        console.log('🖨️ [NODE DEBUG] Printing day pass content:', dayPassContent);
         printer.alignLeft();
         printer.println(dayPassContent);
         
         // Footer
+        console.log('🖨️ [NODE DEBUG] Printing footer...');
         printer.drawLine();
         printer.alignCenter();
         printer.println("Date: " + new Date().toLocaleString('fr-FR'));
         printer.println("Valide pour la journée");
         printer.println("Merci de votre confiance!");
+        
+        // Staff information in bottom right corner
+        console.log('🖨️ [NODE DEBUG] Printing staff footer...');
+        printer.alignRight();
+        printer.println("{}");
 
         // Barcode at bottom
+        console.log('🖨️ [NODE DEBUG] Extracting day pass number for barcode...');
         const dayPassNumMatch = dayPassContent.match(/N°\s*Pass:\s*([\w-]+)/);
         const dayPassNumber = dayPassNumMatch ? dayPassNumMatch[1] : null;
+        console.log('🖨️ [NODE DEBUG] Day pass number found:', dayPassNumber);
         if (dayPassNumber) {{
+            console.log('🖨️ [NODE DEBUG] Printing barcode...');
             printer.alignCenter();
             printer.code128(dayPassNumber);
             printer.println(dayPassNumber);
+        }} else {{
+            console.log('🖨️ [NODE DEBUG] No day pass number found, skipping barcode');
         }}
         printer.cut();
         
+        console.log('🖨️ [NODE DEBUG] Executing print job...');
         await printer.execute();
-        console.log('Day pass ticket printed successfully');
+        console.log('🖨️ [NODE DEBUG] Day pass ticket printed successfully!');
         
     }} catch (error) {{
-        console.error('Day pass ticket print error:', error.message);
+        console.error('🖨️ [NODE DEBUG] Day pass ticket print error:', error.message);
+        console.error('🖨️ [NODE DEBUG] Error stack:', error.stack);
         process.exit(1);
     }}
 }}
@@ -1067,13 +1326,20 @@ printDayPassTicket();
             config.ip,
             config.port,
             config.timeout,
-            ticket_data.replace('`', r"\`").replace('$', r"\$")
+            ticket_data.replace('`', r"\`").replace('$', r"\$"),
+            staff_footer
         );
 
         let script_path = format!("temp_daypass_{}.cjs", uuid::Uuid::new_v4());
+        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        
+        println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
+        println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
+        
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write day pass ticket script: {}", e))?;
-
+        println!("🖨️ [RUST DEBUG] Executing Node.js script...");
+        
         let output = Command::new("node")
             .arg(&script_path)
             .output()
@@ -1081,11 +1347,180 @@ printDayPassTicket();
 
         let _ = std::fs::remove_file(&script_path);
 
+        println!("🖨️ [RUST DEBUG] Script execution completed");
+        println!("🖨️ [RUST DEBUG] Exit status: {:?}", output.status);
+        println!("🖨️ [RUST DEBUG] Stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("🖨️ [RUST DEBUG] Stderr: {}", String::from_utf8_lossy(&output.stderr));
+
         if output.status.success() {
+            println!("🖨️ [RUST DEBUG] Day pass ticket printed successfully!");
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
+            println!("🖨️ [RUST DEBUG] Day pass ticket print failed!");
             Err(format!(
                 "Day pass ticket print failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    pub async fn print_exit_pass_ticket(&self, ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
+        println!("🖨️ [RUST DEBUG] Starting exit pass ticket print...");
+        println!("🖨️ [RUST DEBUG] Ticket data received: {}", ticket_data);
+        println!("🖨️ [RUST DEBUG] Staff name: {:?}", staff_name);
+        
+        let config = self.get_config()?;
+        println!("🖨️ [RUST DEBUG] Printer config: IP={}, Port={}, Width={}, Timeout={}", 
+                 config.ip, config.port, config.width, config.timeout);
+        
+        // Use provided staff name or fallback
+        let staff_footer = if let Some(name) = staff_name {
+            format!("Émis par: {}", name)
+        } else {
+            "Émis par: Staff".to_string()
+        };
+        println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
+        
+        let script_content = format!(
+            r#"
+const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+
+async function printExitPassTicket() {{
+    try {{
+        console.log('🖨️ [NODE DEBUG] Starting exit pass ticket print...');
+        
+        const printer = new ThermalPrinter({{
+            type: PrinterTypes.EPSON,
+            width: {},
+            interface: 'tcp://{}:{}',
+            characterSet: CharacterSet.PC852_LATIN2,
+            removeSpecialCharacters: false,
+            lineCharacter: "=",
+            breakLine: BreakLine.WORD,
+            options: {{
+                timeout: {}
+            }}
+        }});
+
+        console.log('🖨️ [NODE DEBUG] Checking printer connection...');
+        const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
+        if (!isConnected) {{
+            throw new Error('Printer not connected');
+        }}
+
+        // Print logo centered at the top
+        console.log('🖨️ [NODE DEBUG] Printing logo...');
+        printer.alignCenter();
+        try {{
+            await printer.printImage("./icons/ste_260.png");
+            console.log('🖨️ [NODE DEBUG] Logo printed successfully');
+        }} catch (logoError) {{
+            console.log('🖨️ [NODE DEBUG] Logo not found, continuing without logo:', logoError.message);
+        }}
+
+        // Company header
+        console.log('🖨️ [NODE DEBUG] Printing company header...');
+        printer.alignCenter();
+        printer.bold(true);
+        printer.setTextNormal();
+        printer.println("STE Dhraiff Services Transport");
+        printer.bold(false);
+        printer.drawLine();
+        
+        // Ticket type header
+        console.log('🖨️ [NODE DEBUG] Printing ticket type header...');
+        printer.alignCenter();
+        printer.bold(true);
+        printer.setTextDoubleHeight();
+        printer.println("PASS DE SORTIE");
+        printer.bold(false);
+        printer.drawLine();
+        
+        // Content
+        const exitPassContent = `{}`;
+        console.log('🖨️ [NODE DEBUG] Printing exit pass content:', exitPassContent);
+        printer.alignLeft();
+        printer.println(exitPassContent);
+        
+        // Footer
+        console.log('🖨️ [NODE DEBUG] Printing footer...');
+        printer.drawLine();
+        printer.alignCenter();
+        printer.println("Date: " + new Date().toLocaleString('fr-FR'));
+        printer.println("Véhicule autorisé à partir");
+        printer.println("Merci de votre confiance!");
+        
+        // Staff information in bottom right corner
+        console.log('🖨️ [NODE DEBUG] Printing staff footer...');
+        printer.alignRight();
+        printer.println("{}");
+
+        // Barcode at bottom
+        console.log('🖨️ [NODE DEBUG] Extracting exit pass number for barcode...');
+        const exitPassNumMatch = exitPassContent.match(/N°\s*Sortie:\s*([\w-]+)/);
+        const exitPassNumber = exitPassNumMatch ? exitPassNumMatch[1] : null;
+        console.log('🖨️ [NODE DEBUG] Exit pass number found:', exitPassNumber);
+        if (exitPassNumber) {{
+            console.log('🖨️ [NODE DEBUG] Printing barcode...');
+            printer.alignCenter();
+            printer.code128(exitPassNumber);
+            printer.println(exitPassNumber);
+        }} else {{
+            console.log('🖨️ [NODE DEBUG] No exit pass number found, skipping barcode');
+        }}
+        printer.cut();
+        
+        console.log('🖨️ [NODE DEBUG] Executing print job...');
+        await printer.execute();
+        console.log('🖨️ [NODE DEBUG] Exit pass ticket printed successfully!');
+        
+    }} catch (error) {{
+        console.error('🖨️ [NODE DEBUG] Exit pass ticket print error:', error.message);
+        console.error('🖨️ [NODE DEBUG] Error stack:', error.stack);
+        process.exit(1);
+    }}
+}}
+
+printExitPassTicket();
+"#,
+            config.width,
+            config.ip,
+            config.port,
+            config.timeout,
+            ticket_data.replace('`', r"\`").replace('$', r"\$"),
+            staff_footer
+        );
+
+        let script_path = format!("temp_exitpass_{}.cjs", uuid::Uuid::new_v4());
+        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        
+        println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
+        println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
+        
+        std::fs::write(&script_path, script_content)
+            .map_err(|e| format!("Failed to write exit pass ticket script: {}", e))?;
+        println!("🖨️ [RUST DEBUG] Executing Node.js script...");
+        
+        let output = Command::new("node")
+            .arg(&script_path)
+            .output()
+            .map_err(|e| format!("Failed to execute exit pass ticket script: {}", e))?;
+
+        let _ = std::fs::remove_file(&script_path);
+
+        println!("🖨️ [RUST DEBUG] Script execution completed");
+        println!("🖨️ [RUST DEBUG] Exit status: {:?}", output.status);
+        println!("🖨️ [RUST DEBUG] Stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("🖨️ [RUST DEBUG] Stderr: {}", String::from_utf8_lossy(&output.stderr));
+
+        if output.status.success() {
+            println!("🖨️ [RUST DEBUG] Exit pass ticket printed successfully!");
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            println!("🖨️ [RUST DEBUG] Exit pass ticket print failed!");
+            Err(format!(
+                "Exit pass ticket print failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             ))
         }
@@ -1098,7 +1533,7 @@ printDayPassTicket();
             .map_err(|e| e.to_string())?
             .clone();
         match payload_opt {
-            Some(payload) => self.print_day_pass_ticket(payload).await,
+            Some(payload) => self.print_day_pass_ticket(payload, None).await,
             None => Err("No previous day pass ticket to reprint".to_string()),
         }
     }

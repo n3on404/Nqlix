@@ -173,7 +173,7 @@ const Dashboard: React.FC = () => {
                             </Badge>
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {queue.vehicle.driver.firstName} {queue.vehicle.driver.lastName} - {formatCurrency(queue.basePrice)}
+                            CIN: {queue.vehicle.driver.cin} - {formatCurrency(queue.basePrice)}
                           </div>
                           <div className="text-xs text-muted-foreground">
                             Position: {queue.queuePosition}

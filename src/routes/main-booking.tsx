@@ -90,8 +90,17 @@ export default function MainBooking() {
   const [bookingData, setBookingData] = useState<{ seats: number }>({ seats: 1 });
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [ticketsPrinted, setTicketsPrinted] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [basePrice, setBasePrice] = useState<number>(0);
+  
+  // Last booking data for cancel functionality
+  const [lastBookingData, setLastBookingData] = useState<{
+    bookings: any[];
+    totalSeats: number;
+    totalAmount: number;
+  } | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   
   // Filter states
   const [governments, setGovernments] = useState<Government[]>([]);
@@ -282,8 +291,29 @@ export default function MainBooking() {
   const fetchAvailableSeats = async (destinationId: string) => {
     const response = await api.getAvailableSeatsForDestination(destinationId);
     if (response.success && response.data) {
-      setAvailableSeats(response.data.totalAvailableSeats || 0);
-      setBookingData({ seats: response.data.totalAvailableSeats > 0 ? 1 : 0 });
+      const newAvailableSeats = response.data.totalAvailableSeats || 0;
+      setAvailableSeats(newAvailableSeats);
+      
+      // Preserve current seat selection if it's still valid, otherwise reset to 1
+      setBookingData(prev => {
+        console.log('🔄 fetchAvailableSeats - checking seat selection:', {
+          previousSeats: prev.seats,
+          newAvailableSeats,
+          willKeepSelection: prev.seats > 0 && prev.seats <= newAvailableSeats
+        });
+        
+        if (prev.seats > 0 && prev.seats <= newAvailableSeats) {
+          // Keep current selection if it's still valid
+          console.log('✅ Keeping previous seat selection:', prev.seats);
+          return prev;
+        } else {
+          // Reset to 1 if no valid selection or no seats available
+          const newSeats = newAvailableSeats > 0 ? 1 : 0;
+          console.log('🔄 Resetting seat selection to:', newSeats);
+          return { seats: newSeats };
+        }
+      });
+      
       if (response.data.vehicles && response.data.vehicles.length > 0) {
         setBasePrice(response.data.vehicles[0].basePrice || 0);
       } else {
@@ -465,14 +495,75 @@ export default function MainBooking() {
 
     // Exit ticket generation handler for fully booked vehicles
     const exitTicketHandler = async (msg: any) => {
+      console.log('🔍 [EXIT TICKET DEBUG] Received WebSocket message:', msg);
       if (msg?.payload?.type === 'exit_ticket_generated') {
-        console.log('🎫 Exit ticket generated for fully booked vehicle:', msg.payload);
+        console.log('🎫 [EXIT TICKET DEBUG] Exit ticket generated for fully booked vehicle:', msg.payload);
         
         try {
           // Format and print the exit ticket
           const exitTicketData = thermalPrinter.formatExitTicketData(msg.payload.ticket, msg.payload.vehicle);
-          await thermalPrinter.printExitTicket(exitTicketData);
+          const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+          await thermalPrinter.printExitTicket(exitTicketData, staffName);
           console.log('✅ Exit ticket printed successfully for fully booked vehicle');
+          
+          // Also print exit pass for the vehicle
+          console.log('🚪 Printing exit pass for fully booked vehicle...');
+          try {
+            // Get base price from route table
+            const destinationName = msg.payload.vehicle.destination;
+            const basePricePerSeat = getBasePriceForDestination(destinationName) || 2.0;
+            const totalSeats = msg.payload.vehicle.totalSeats || 8;
+            
+            // Check if there was a previous vehicle on the same day
+            let previousLicensePlate = null;
+            let previousExitTime = null;
+            
+            if (msg.payload.previousVehicle?.licensePlate && msg.payload.previousVehicle?.exitTime) {
+              const previousExitDate = new Date(msg.payload.previousVehicle.exitTime);
+              const currentDate = new Date();
+              
+              // Check if previous vehicle exited on the same day
+              const isSameDay = previousExitDate.toDateString() === currentDate.toDateString();
+              
+              if (isSameDay) {
+                previousLicensePlate = msg.payload.previousVehicle.licensePlate;
+                previousExitTime = msg.payload.previousVehicle.exitTime;
+                console.log('📅 Previous vehicle found on same day:', {
+                  licensePlate: previousLicensePlate,
+                  exitTime: previousExitTime
+                });
+              } else {
+                console.log('📅 Previous vehicle was from different day, showing N/A');
+              }
+            } else {
+              console.log('📅 No previous vehicle data available, showing N/A');
+            }
+            
+            console.log('💰 Exit pass pricing:', {
+              destinationName,
+              basePricePerSeat,
+              totalSeats,
+              totalBasePrice: basePricePerSeat * totalSeats,
+              previousVehicle: previousLicensePlate || 'N/A'
+            });
+            
+            const exitPassData = {
+              licensePlate: msg.payload.vehicle.licensePlate,
+              destinationName: destinationName,
+              previousLicensePlate: previousLicensePlate,
+              previousExitTime: previousExitTime,
+              currentExitTime: new Date().toISOString(),
+              totalSeats: totalSeats,
+              basePricePerSeat: basePricePerSeat,
+              totalBasePrice: basePricePerSeat * totalSeats
+            };
+            
+            const exitPassTicketData = thermalPrinter.formatExitPassTicketData(exitPassData);
+            await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+            console.log('✅ Exit pass printed successfully for fully booked vehicle');
+          } catch (exitPassError) {
+            console.error('❌ Failed to print exit pass for fully booked vehicle:', exitPassError);
+          }
         } catch (printError) {
           console.error('❌ Failed to print exit ticket for fully booked vehicle:', printError);
         }
@@ -502,6 +593,7 @@ export default function MainBooking() {
     wsClient.on('payment_confirmation', paymentHandler);
     wsClient.on('vehicle_status_changed', vehicleStatusHandler);
     wsClient.on('exit_ticket_generated', exitTicketHandler);
+    console.log('🔌 [EXIT TICKET DEBUG] Registered exit_ticket_generated event listener');
     wsClient.on('vehicle_departed', vehicleDepartureHandler);
     
     // Keep legacy events for backward compatibility but with minimal impact
@@ -583,9 +675,33 @@ export default function MainBooking() {
       // Alt + number for seat selection (1-8)
       if (event.altKey && event.key >= '1' && event.key <= '8') {
         const seatCount = parseInt(event.key);
+        console.log('🎹 Keyboard shortcut detected:', {
+          key: event.key,
+          seatCount,
+          availableSeats,
+          isProcessing,
+          currentBookingData: bookingData
+        });
+        
         if (seatCount <= availableSeats && !isProcessing) {
           event.preventDefault();
+          console.log('✅ Setting seat count to:', seatCount);
           setBookingData({ seats: seatCount });
+          
+          // If this is a booking action (Alt + number + Space), handle it immediately
+          // We'll use a flag to track this
+          if (event.altKey) {
+            // Store the seat count for immediate use
+            (window as any).pendingSeatCount = seatCount;
+            console.log('🎯 Stored pending seat count:', seatCount);
+          }
+        } else {
+          console.log('❌ Seat selection blocked:', {
+            reason: seatCount > availableSeats ? 'Not enough seats available' : 'Processing in progress',
+            seatCount,
+            availableSeats,
+            isProcessing
+          });
         }
       }
 
@@ -610,6 +726,7 @@ export default function MainBooking() {
     console.log("destination", destination);
     setSelectedDestination(destination);
     setShowSuccess(false);
+    setLastBookingData(null); // Clear any previous booking data
     
     // Fetch queue data for the selected destination
     if (destination) {
@@ -671,7 +788,8 @@ export default function MainBooking() {
       
       // Print with thermal printer
       console.log('🖨️ Calling thermal printer...');
-      await thermalPrinter.printBookingTicket(ticketData);
+      const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+      await thermalPrinter.printBookingTicket(ticketData, staffName);
       
       console.log('✅ Booking ticket printed successfully with thermal printer');
       
@@ -694,18 +812,159 @@ export default function MainBooking() {
     }
   }
 
+  // Cancel last booking
+  const handleCancelLastBooking = async (seatsToCancel?: number) => {
+    if (!lastBookingData || !lastBookingData.bookings.length) {
+      alert('❌ Aucune réservation à annuler');
+      return;
+    }
+
+    const totalSeatsToCancel = seatsToCancel || lastBookingData.totalSeats;
+    const isPartialCancel = seatsToCancel && seatsToCancel < lastBookingData.totalSeats;
+    
+    // More user-friendly confirmation messages
+    let confirmMessage: string;
+    if (isPartialCancel) {
+      if (seatsToCancel === 1) {
+        confirmMessage = `Annuler 1 place de votre réservation ?\n\n✅ Garder : ${lastBookingData.totalSeats - 1} place${lastBookingData.totalSeats - 1 > 1 ? 's' : ''}\n❌ Annuler : 1 place\n\n💰 Remboursement d'environ ${(lastBookingData.totalAmount / lastBookingData.totalSeats).toFixed(3)} TND`;
+      } else {
+        confirmMessage = `Annuler ${seatsToCancel} places de votre réservation ?\n\n✅ Garder : ${lastBookingData.totalSeats - seatsToCancel} place${lastBookingData.totalSeats - seatsToCancel > 1 ? 's' : ''}\n❌ Annuler : ${seatsToCancel} place${seatsToCancel > 1 ? 's' : ''}\n\n💰 Remboursement d'environ ${((lastBookingData.totalAmount / lastBookingData.totalSeats) * seatsToCancel).toFixed(3)} TND`;
+      }
+    } else {
+      confirmMessage = `Annuler toute la réservation ?\n\n❌ Annuler : ${lastBookingData.totalSeats} place${lastBookingData.totalSeats > 1 ? 's' : ''}\n💰 Remboursement total : ${lastBookingData.totalAmount.toFixed(3)} TND\n\n🪑 Toutes les places seront remises en file d'attente.`;
+    }
+
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    setIsCancelling(true);
+
+    try {
+      // Cancel bookings one by one (since each booking might be on different vehicles)
+      let totalCancelledSeats = 0;
+      let totalRefundAmount = 0;
+      const cancelResults = [];
+
+      for (const booking of lastBookingData.bookings) {
+        const bookingSeats = booking.seatsBooked;
+        let seatsToRemoveFromThisBooking = 0;
+
+        if (totalCancelledSeats < totalSeatsToCancel) {
+          seatsToRemoveFromThisBooking = Math.min(
+            bookingSeats,
+            totalSeatsToCancel - totalCancelledSeats
+          );
+
+          console.log(`🚫 Cancelling ${seatsToRemoveFromThisBooking} seats from booking ${booking.id}`);
+
+          const response = await api.cancelQueueBooking(booking.id, seatsToRemoveFromThisBooking);
+
+          if (response.success) {
+            cancelResults.push({
+              success: true,
+              booking: booking,
+              seatsCancelled: seatsToRemoveFromThisBooking,
+              data: response.data
+            });
+            totalCancelledSeats += seatsToRemoveFromThisBooking;
+            totalRefundAmount += (booking.totalAmount / booking.seatsBooked) * seatsToRemoveFromThisBooking;
+          } else {
+            cancelResults.push({
+              success: false,
+              booking: booking,
+              error: response.message || 'Failed to cancel booking'
+            });
+            console.error(`❌ Failed to cancel booking ${booking.id}:`, response.message);
+          }
+        }
+      }
+
+      // Check if all cancellations were successful
+      const successfulCancellations = cancelResults.filter(r => r.success);
+      const failedCancellations = cancelResults.filter(r => !r.success);
+
+      if (successfulCancellations.length > 0) {
+        let message: string;
+        if (isPartialCancel && totalCancelledSeats < lastBookingData.totalSeats) {
+          if (totalCancelledSeats === 1) {
+            message = `✅ 1 place annulée avec succès !\n\n🪑 Places restantes : ${lastBookingData.totalSeats - totalCancelledSeats}\n💰 Remboursement : ${totalRefundAmount.toFixed(3)} TND\n\n📋 Votre réservation est maintenant de ${lastBookingData.totalSeats - totalCancelledSeats} place${lastBookingData.totalSeats - totalCancelledSeats > 1 ? 's' : ''}.`;
+          } else {
+            message = `✅ ${totalCancelledSeats} places annulées avec succès !\n\n🪑 Places restantes : ${lastBookingData.totalSeats - totalCancelledSeats}\n💰 Remboursement : ${totalRefundAmount.toFixed(3)} TND`;
+          }
+        } else {
+          message = `✅ Réservation annulée complètement !\n\n🪑 ${totalCancelledSeats} place${totalCancelledSeats > 1 ? 's' : ''} remise${totalCancelledSeats > 1 ? 's' : ''} en file d'attente\n💰 Remboursement total : ${totalRefundAmount.toFixed(3)} TND`;
+        }
+
+        alert(message);
+
+        // Update lastBookingData if partial cancel
+        if (isPartialCancel && totalCancelledSeats < lastBookingData.totalSeats) {
+          // Update the booking data to reflect remaining seats
+          const updatedBookings = lastBookingData.bookings.map(booking => {
+            const result = successfulCancellations.find(r => r.booking.id === booking.id);
+            if (result && result.data?.updatedBooking) {
+              return result.data.updatedBooking;
+            }
+            return booking;
+          }).filter(booking => booking.seatsBooked > 0); // Remove fully cancelled bookings
+
+          setLastBookingData({
+            bookings: updatedBookings,
+            totalSeats: lastBookingData.totalSeats - totalCancelledSeats,
+            totalAmount: lastBookingData.totalAmount - totalRefundAmount
+          });
+        } else {
+          // Complete cancellation - clear success state
+          setShowSuccess(false);
+          setLastBookingData(null);
+          setSelectedDestination(null);
+        }
+      }
+
+      if (failedCancellations.length > 0) {
+        const errorMessage = `⚠️ Some cancellations failed:\n\n${failedCancellations.map(f => `• ${f.error}`).join('\n')}`;
+        alert(errorMessage);
+      }
+
+    } catch (error: any) {
+      console.error('❌ Cancel booking error:', error);
+      alert(`❌ Network Error!\n\nFailed to cancel booking: ${error.message}\n\nPlease check your connection and try again.`);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
 
 
 
   const handleBookingSubmit = async () => {
     if (!selectedDestination || !currentStaff) return;
 
+    // Check if there's a pending seat count from keyboard shortcut
+    const pendingSeatCount = (window as any).pendingSeatCount;
+    const seatsToBook = pendingSeatCount || bookingData.seats;
+    
+    // Clear the pending seat count
+    if (pendingSeatCount) {
+      (window as any).pendingSeatCount = null;
+      console.log('🎯 Using pending seat count:', pendingSeatCount);
+    }
+
+    console.log('🎫 Submitting booking with data:', {
+      destinationId: selectedDestination.destinationId,
+      seatsRequested: seatsToBook,
+      staffId: currentStaff.id,
+      bookingData,
+      pendingSeatCount
+    });
+
     setIsProcessing(true);
 
     try {
       const response = await api.createQueueBooking({
         destinationId: selectedDestination.destinationId,
-        seatsRequested: bookingData.seats,
+        seatsRequested: seatsToBook,
         staffId: currentStaff.id
       });
 
@@ -713,26 +972,54 @@ export default function MainBooking() {
         console.log('✅ Booking created successfully:', response.data);
         setShowSuccess(true);
         
-        // Automatically print ticket after successful booking
+        // Store booking data for cancel functionality
+        setLastBookingData({
+          bookings: response.data.bookings || [],
+          totalSeats: seatsToBook,
+          totalAmount: response.data.totalAmount || 0
+        });
+        
+        // Automatically print ticket for each seat after successful booking
         if (response.data.bookings && response.data.bookings.length > 0) {
-          const booking = response.data.bookings[0]; // Get the first booking
-          console.log('🎫 Booking successful, attempting to print ticket...');
-          console.log('📋 Booking data for printing:', booking);
-          try {
-            await printTicket(booking);
-          } catch (printError) {
-            console.error('❌ Failed to print ticket automatically:', printError);
-            // Don't fail the booking process if printing fails
+          console.log('🎫 Booking successful, printing tickets for each seat...');
+          console.log('📋 Number of bookings to print:', response.data.bookings.length);
+          
+          let successfulPrints = 0;
+          
+          // Print a separate ticket for each seat
+          for (let i = 0; i < response.data.bookings.length; i++) {
+            const booking = response.data.bookings[i];
+            console.log(`🎫 Printing ticket ${i + 1}/${response.data.bookings.length} for seat ${i + 1}:`, booking);
+            
+            try {
+              await printTicket(booking);
+              console.log(`✅ Ticket ${i + 1} printed successfully`);
+              successfulPrints++;
+              
+              // Add a small delay between prints to avoid printer overload
+              if (i < response.data.bookings.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+            } catch (printError) {
+              console.error(`❌ Failed to print ticket ${i + 1}:`, printError);
+              // Continue printing other tickets even if one fails
+            }
           }
+          
+          // Set the number of tickets printed for the success message
+          setTicketsPrinted(successfulPrints);
+          console.log(`✅ ${successfulPrints}/${response.data.bookings.length} tickets printed successfully`);
         } else {
           console.log('⚠️ No booking data found in response for printing');
           console.log('📋 Available data keys:', Object.keys(response.data));
+          setTicketsPrinted(0);
         }
         
         // Clear selection after successful booking
         setTimeout(() => {
           setSelectedDestination(null);
           setShowSuccess(false);
+          setTicketsPrinted(0);
           setBookingData({ seats: 1 });
         }, 3000);
       } else {
@@ -1112,12 +1399,79 @@ export default function MainBooking() {
               <div className="text-center py-6">
                 <CheckCircle className="w-12 h-12 text-green-600 mx-auto mb-4" />
                 <h3 className="text-lg font-bold text-green-600 mb-2">Réservation réussie !</h3>
-                <p className="text-gray-600">Les billets ont été générés et sont prêts à l'impression</p>
-                <div className="mt-4 flex justify-center gap-3">
-                  <Button onClick={reprintLastBookingTicket} variant="outline" className="flex items-center">
-                    <Printer className="w-4 h-4 mr-2" /> Réimprimer le dernier billet
-                  </Button>
+                <p className="text-gray-600 mb-2">
+                  {ticketsPrinted > 0 
+                    ? `${ticketsPrinted} billet${ticketsPrinted > 1 ? 's' : ''} imprimé${ticketsPrinted > 1 ? 's' : ''} avec succès`
+                    : 'Les billets ont été générés'
+                  }
+                </p>
+                {lastBookingData && (
+                  <div className="text-sm text-gray-500 mb-4">
+                    <p>{lastBookingData.totalSeats} place{lastBookingData.totalSeats > 1 ? 's' : ''} • {lastBookingData.totalAmount.toFixed(3)} TND</p>
                   </div>
+                )}
+                <div className="mt-4 flex justify-center gap-3 flex-wrap">
+                  {/* Reprint button */}
+                  <Button onClick={reprintLastBookingTicket} variant="outline" className="flex items-center">
+                    <Printer className="w-4 h-4 mr-2" /> Réimprimer
+                  </Button>
+                  
+                  {/* Cancel buttons section */}
+                  <div className="flex gap-2">
+                    {lastBookingData && lastBookingData.totalSeats > 1 && (
+                      <>
+                        {/* Quick cancel 1 seat button - most common use case */}
+                        <Button
+                          onClick={() => handleCancelLastBooking(1)}
+                          disabled={isCancelling}
+                          variant="outline"
+                          className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300 font-semibold"
+                          title="Annuler 1 place seulement (erreur courante: réservé 2 au lieu de 1)"
+                        >
+                          {isCancelling ? 'Annulation...' : 'Annuler 1 place'}
+                        </Button>
+                        
+                        {/* Additional partial cancel buttons for larger bookings */}
+                        {lastBookingData.totalSeats > 2 && (
+                          <Button
+                            onClick={() => handleCancelLastBooking(2)}
+                            disabled={isCancelling}
+                            variant="outline"
+                            size="sm"
+                            className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300"
+                          >
+                            {isCancelling ? '...' : 'Annuler 2'}
+                          </Button>
+                        )}
+                        
+                        {lastBookingData.totalSeats > 3 && (
+                          <Button
+                            onClick={() => handleCancelLastBooking(3)}
+                            disabled={isCancelling}
+                            variant="outline"
+                            size="sm"
+                            className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300"
+                          >
+                            {isCancelling ? '...' : 'Annuler 3'}
+                          </Button>
+                        )}
+                      </>
+                    )}
+                    
+                    {/* Cancel all button */}
+                    <Button
+                      onClick={() => handleCancelLastBooking()}
+                      disabled={isCancelling}
+                      variant="outline"
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-300"
+                      title="Annuler toute la réservation"
+                    >
+                      {isCancelling ? 'Annulation...' : 
+                        lastBookingData && lastBookingData.totalSeats > 1 ? 'Annuler tout' : 'Annuler'
+                      }
+                    </Button>
+                  </div>
+                </div>
                         </div>
                       ) : (
               <div className="flex items-center justify-between gap-8">
@@ -1168,6 +1522,9 @@ export default function MainBooking() {
                             
                     <div className="w-16 text-center">
                       <span className="text-2xl font-bold">{bookingData.seats}</span>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Debug: {bookingData.seats} seats
+                      </div>
                             </div>
                             
                             <Button

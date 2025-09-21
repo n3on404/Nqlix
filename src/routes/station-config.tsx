@@ -12,7 +12,8 @@ import {
   Loader2,
   Globe,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  DollarSign
 } from "lucide-react";
 import { toast } from "sonner"
 import api from "../lib/api";
@@ -28,6 +29,7 @@ interface StationConfig {
     openingTime: string;
     closingTime: string;
   };
+  serviceFee: number;
   isOperational: boolean;
   isOnline?: boolean;
   lastSync?: string;
@@ -62,6 +64,7 @@ export default function StationConfiguration() {
       openingTime: "06:00",
       closingTime: "22:00"
     },
+    serviceFee: 0.200,
     isOperational: true
   });
   const [isEditing, setIsEditing] = useState(false);
@@ -148,6 +151,7 @@ export default function StationConfiguration() {
             openingTime: stationData.operatingHours?.openingTime || "06:00",
             closingTime: stationData.operatingHours?.closingTime || "22:00"
           },
+          serviceFee: stationData.serviceFee !== undefined ? Number(stationData.serviceFee) : 0.200,
           isOperational: stationData.isOperational !== undefined ? stationData.isOperational : true,
           isOnline: stationData.isOnline,
           lastSync: stationData.lastSync,
@@ -201,6 +205,7 @@ export default function StationConfiguration() {
         delegation: config.delegation,
         address: config.address,
         operatingHours: config.operatingHours,
+        serviceFee: config.serviceFee,
         isOperational: config.isOperational
       });
       
@@ -244,6 +249,7 @@ export default function StationConfiguration() {
       config.address !== originalConfig.address ||
       config.operatingHours.openingTime !== originalConfig.operatingHours.openingTime ||
       config.operatingHours.closingTime !== originalConfig.operatingHours.closingTime ||
+      config.serviceFee !== originalConfig.serviceFee ||
       config.isOperational !== originalConfig.isOperational
     );
   };
@@ -558,6 +564,49 @@ export default function StationConfiguration() {
         </Card>
       </div>
 
+      {/* Service Fee Configuration */}
+      <div className="space-y-4">
+        <Card className="p-6">
+          <div className="flex items-center space-x-3 mb-6">
+            <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
+              <DollarSign className="h-5 w-5 text-white" />
+            </div>
+            <h2 className="text-xl font-semibold">Frais de service</h2>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Frais de service (TND)</label>
+              {isEditing ? (
+                <Input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  max="10"
+                  value={config.serviceFee}
+                  onChange={(e) => setConfig(prev => ({ 
+                    ...prev, 
+                    serviceFee: parseFloat(e.target.value) || 0.200
+                  }))}
+                  placeholder="0.200"
+                />
+              ) : (
+                <div className="p-3 bg-muted rounded-lg">
+                  <span className="font-medium text-blue-600">{Number(config.serviceFee).toFixed(3)} TND</span>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    ({Math.round(Number(config.serviceFee) * 1000)} millimes)
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="text-sm text-muted-foreground">
+              Les frais de service sont appliqués à chaque transaction de réservation.
+            </div>
+          </div>
+        </Card>
+      </div>
+
       {/* Action Buttons */}
       {isEditing && (
         <Card className="p-6">
@@ -598,7 +647,7 @@ export default function StationConfiguration() {
       {/* Current Status Summary */}
       <Card className="p-6 bg-gradient-to-r from-blue-50 to-green-50 border-blue-200">
         <h3 className="text-lg font-semibold mb-4">Statut actuel</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div className="text-center">
             <div className="text-2xl font-bold text-blue-600">{config.name}</div>
             <div className="text-sm text-muted-foreground">Nom de la station</div>
@@ -608,6 +657,12 @@ export default function StationConfiguration() {
               {formatTime(config.operatingHours.openingTime)} - {formatTime(config.operatingHours.closingTime)}
             </div>
             <div className="text-sm text-muted-foreground">Heures d'ouverture</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-orange-600">
+              {Number(config.serviceFee).toFixed(3)} TND
+            </div>
+            <div className="text-sm text-muted-foreground">Frais de service</div>
           </div>
           <div className="text-center">
             <div className={`text-2xl font-bold ${config.isOperational ? 'text-green-600' : 'text-red-600'}`}>

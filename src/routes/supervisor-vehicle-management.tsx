@@ -7,7 +7,7 @@ import { Badge } from '../components/ui/badge';
 import { useAuth } from '../context/AuthProvider';
 import { useNotifications } from '../context/NotificationProvider';
 import api from '../lib/api';
-import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus, MapPin, Globe, AlertCircle, CheckCircle2, Users, Phone, Hash, Building, Printer } from 'lucide-react';
+import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus, MapPin, Globe, AlertCircle, CheckCircle2, Users, Phone, Hash, Building, Printer, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Select } from '../components/ui/select';
 import MunicipalityService from '../services/municipalityService';
@@ -15,17 +15,12 @@ import MunicipalityService from '../services/municipalityService';
 interface Vehicle {
   id: string;
   licensePlate: string;
-  model?: string;
-  year?: number;
-  color?: string;
+  capacity: number;
   isActive: boolean;
   isAvailable: boolean;
   driver?: {
     id: string;
     cin: string;
-    firstName: string;
-    lastName: string;
-    phoneNumber: string;
     accountStatus: string;
   };
   authorizedStations?: { id: string; name: string }[];
@@ -38,9 +33,6 @@ interface DriverRequest {
   driver: {
     id: string;
     cin: string;
-    firstName: string;
-    lastName: string;
-    phoneNumber: string;
   };
   status: string;
 }
@@ -57,16 +49,8 @@ const SupervisorVehicleManagement: React.FC = () => {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [form, setForm] = useState({
     cin: '',
-    phoneNumber: '',
-    firstName: '',
-    lastName: '',
-    originGovernorateId: '',
-    originDelegationId: '',
     licensePlate: '',
-    capacity: '',
-    model: '',
-    year: '',
-    color: '',
+    capacity: '8', // Default to 8 seats
     authorizedStationIds: [] as string[],
     defaultDestinationId: '',
   });
@@ -84,6 +68,8 @@ const SupervisorVehicleManagement: React.FC = () => {
   const tunisianPlateRegex = /^\d{2,3} ?TUN ?\d{4}$/i;
   const [licensePlateError, setLicensePlateError] = useState<string | null>(null);
   const [showCreateStation, setShowCreateStation] = useState(false);
+  const [stationSearchTerm, setStationSearchTerm] = useState('');
+  const [destinationSearchTerm, setDestinationSearchTerm] = useState('');
   const [newStation, setNewStation] = useState({
     name: '',
     governorateId: '',
@@ -93,6 +79,95 @@ const SupervisorVehicleManagement: React.FC = () => {
   const [isCreatingStation, setIsCreatingStation] = useState(false);
   const [createStationError, setCreateStationError] = useState<string | null>(null);
 
+  // Function to select all Monastir delegations
+  const selectAllMonastirDelegations = () => {
+    const monastirStations = stations.filter(station => 
+      station.name.includes('MONASTIR') || 
+      station.name.includes('SAHLINE') || 
+      station.name.includes('KSIBET EL MEDIOUNI') || 
+      station.name.includes('JEMMAL') || 
+      station.name.includes('BENI HASSEN') || 
+      station.name.includes('SAYADA LAMTA BOU HAJAR') || 
+      station.name.includes('TEBOULBA') || 
+      station.name.includes('KSAR HELAL') || 
+      station.name.includes('BEMBLA') || 
+      station.name.includes('MOKNINE') || 
+      station.name.includes('ZERAMDINE') || 
+      station.name.includes('OUERDANINE') || 
+      station.name.includes('BEKALTA')
+    );
+    
+    const stationIds = monastirStations.map(station => station.id);
+    setForm(prev => ({
+      ...prev,
+      authorizedStationIds: stationIds
+    }));
+    
+    addNotification({
+      type: 'success',
+      title: 'Succès',
+      message: `${stationIds.length} stations de Monastir sélectionnées`
+    });
+  };
+
+  // Function to toggle station selection
+  const toggleStationSelection = (stationId: string) => {
+    setForm(prev => {
+      const isSelected = prev.authorizedStationIds.includes(stationId);
+      if (isSelected) {
+        return {
+          ...prev,
+          authorizedStationIds: prev.authorizedStationIds.filter(id => id !== stationId),
+          defaultDestinationId: prev.defaultDestinationId === stationId ? '' : prev.defaultDestinationId
+        };
+      } else {
+        return {
+          ...prev,
+          authorizedStationIds: [...prev.authorizedStationIds, stationId]
+        };
+      }
+    });
+  };
+
+  // Function to clear all selected stations
+  const clearAllStations = () => {
+    setForm(prev => ({
+      ...prev,
+      authorizedStationIds: [],
+      defaultDestinationId: ''
+    }));
+  };
+
+  // Filter stations based on search term
+  const filteredStations = stations.filter(station =>
+    station.name.toLowerCase().includes(stationSearchTerm.toLowerCase())
+  );
+
+  // Function to select default destination
+  const selectDefaultDestination = (stationId: string) => {
+    setForm(prev => ({
+      ...prev,
+      defaultDestinationId: prev.defaultDestinationId === stationId ? '' : stationId
+    }));
+  };
+
+  // Function to clear default destination
+  const clearDefaultDestination = () => {
+    setForm(prev => ({
+      ...prev,
+      defaultDestinationId: ''
+    }));
+  };
+
+  // Filter authorized stations for destination selection
+  const authorizedStations = stations.filter(station => 
+    form.authorizedStationIds.includes(station.id)
+  );
+
+  // Filter authorized stations based on destination search term
+  const filteredDestinations = authorizedStations.filter(station =>
+    station.name.toLowerCase().includes(destinationSearchTerm.toLowerCase())
+  );
 
   // Only supervisors can access
   if (currentStaff?.role !== 'SUPERVISOR') {
@@ -180,71 +255,16 @@ const SupervisorVehicleManagement: React.FC = () => {
     fetchStationConfig();
   }, []);
 
-  // When governorate changes, fetch delegations for that governorate
+  // Auto-select current station in authorized stations when form opens
   useEffect(() => {
-    if (form.originGovernorateId) {
-      const fetchDelegationsForGovernorate = async () => {
-        setIsLoadingMunicipalities(true);
-        
-        try {
-          // Find governorate name by ID
-          const selectedGovernorate = governorates.find(gov => gov.id === form.originGovernorateId);
-          if (!selectedGovernorate) {
-            setDelegations([]);
-            return;
-          }
-
-          // Fetch delegations using municipality service
-          const municipalityDelegations = await MunicipalityService.getDelegationsByGovernorate(selectedGovernorate.name);
-          setDelegations(municipalityDelegations);
-          
-          // Auto-select current station's delegation if it matches
-          if (stationConfig && municipalityDelegations.length > 0) {
-            const matchingDelegation = municipalityDelegations.find(
-              del => del.name.toLowerCase().includes(stationConfig.delegation.toLowerCase()) ||
-                     stationConfig.delegation.toLowerCase().includes(del.name.toLowerCase())
-            );
-            if (matchingDelegation) {
-              setForm(f => ({ ...f, originDelegationId: matchingDelegation.id }));
-            }
-          }
-          
-          console.log(`🗺️ Fetched ${municipalityDelegations.length} delegations for ${selectedGovernorate.name}`);
-        } catch (error) {
-          console.error('Failed to fetch delegations:', error);
-          setDelegations([]);
-        } finally {
-          setIsLoadingMunicipalities(false);
-        }
-      };
-      
-      fetchDelegationsForGovernorate();
-    } else {
-      setDelegations([]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.originGovernorateId, governorates, stationConfig]);
-
-  // Auto-select current station's governorate when form opens and data is available
-  useEffect(() => {
-    if (showRequestForm && stationConfig && governorates.length > 0 && !form.originGovernorateId) {
-      const matchingGovernorate = governorates.find(
-        gov => gov.name.toLowerCase() === stationConfig.governorate.toLowerCase()
-      );
-      
-      if (matchingGovernorate) {
+    if (showRequestForm && stations.length > 0 && stationConfig?.id) {
         setForm(f => ({ 
           ...f, 
-          originGovernorateId: matchingGovernorate.id,
-          // Also auto-select current station in authorized stations if available
-          authorizedStationIds: stations.length > 0 && stationConfig.id 
-            ? [stationConfig.id] 
-            : f.authorizedStationIds
-        }));
-        console.log(`🎯 Auto-selected governorate: ${matchingGovernorate.name} for station: ${stationConfig.stationName}`);
-      }
+        authorizedStationIds: [stationConfig.id]
+      }));
+      console.log(`🎯 Auto-selected current station: ${stationConfig.stationName}`);
     }
-  }, [showRequestForm, stationConfig, governorates, stations, form.originGovernorateId]);
+  }, [showRequestForm, stations, stationConfig]);
 
   // Handle governorate change for new station creation
   useEffect(() => {
@@ -339,15 +359,9 @@ const SupervisorVehicleManagement: React.FC = () => {
     // Build request payload
     const payload = {
       cin: form.cin,
-      phoneNumber: form.phoneNumber,
-      firstName: form.firstName,
-      lastName: form.lastName,
-      originGovernorateId: form.originGovernorateId,
-      originDelegationId: form.originDelegationId,
       licensePlate: form.licensePlate,
-      capacity: form.capacity ? Number(form.capacity) : undefined,
+      capacity: form.capacity ? Number(form.capacity) : 8,
       authorizedStationIds: form.authorizedStationIds,
-      defaultDestinationId: form.defaultDestinationId,
     };
     const res = await api.post<{ id: string } | undefined>('/api/vehicles/request', payload);
     if (res.success && res.data && res.data.id) {
@@ -361,8 +375,11 @@ const SupervisorVehicleManagement: React.FC = () => {
       await handleApprove(res.data.id);
       setShowRequestForm(false);
       setForm({
-        cin: '', phoneNumber: '', firstName: '', lastName: '', originGovernorateId: '', originDelegationId: '', 
-        licensePlate: '', capacity: '', model: '', year: '', color: '', authorizedStationIds: [], defaultDestinationId: ''
+        cin: '', 
+        licensePlate: '', 
+        capacity: '8', 
+        authorizedStationIds: [], 
+        defaultDestinationId: ''
       });
       addNotification({ type: 'success', title: 'Créé & Approuvé', message: 'Demande de conducteur créée et approuvée.' });
       // Refresh vehicles and pending requests immediately
@@ -478,8 +495,8 @@ const SupervisorVehicleManagement: React.FC = () => {
               <thead>
                 <tr>
                   <th className="text-left py-2 px-3">Plaque d'immatriculation</th>
+                  <th className="text-left py-2 px-3">Capacité</th>
                   <th className="text-left py-2 px-3">CIN du conducteur</th>
-                  <th className="text-left py-2 px-3">Conducteur</th>
                   <th className="text-left py-2 px-3">Statut</th>
                 </tr>
               </thead>
@@ -487,8 +504,8 @@ const SupervisorVehicleManagement: React.FC = () => {
                 {vehicles.map(v => (
                   <tr key={v.id} className="border-b hover:bg-muted cursor-pointer" onClick={async () => { setSelectedVehicle(v); setIsVehicleModalOpen(true); fetchVehicleDetails(v.id); }}>
                     <td className="py-2 px-3 font-medium">{v.licensePlate}</td>
+                    <td className="py-2 px-3">{v.capacity} places</td>
                     <td className="py-2 px-3">{v.driver ? v.driver.cin : '-'}</td>
-                    <td className="py-2 px-3">{v.driver ? `${v.driver.firstName} ${v.driver.lastName}` : '-'}</td>
                     <td className="py-2 px-3">
                       <Badge variant={v.isActive ? 'default' : 'secondary'}>
                         {v.isActive ? 'Actif' : 'Inactif'}
@@ -521,7 +538,7 @@ const SupervisorVehicleManagement: React.FC = () => {
               <thead>
                 <tr>
                   <th className="text-left py-2 px-3">Plaque d'immatriculation</th>
-                  <th className="text-left py-2 px-3">Conducteur</th>
+                  <th className="text-left py-2 px-3">CIN du conducteur</th>
                   <th className="text-left py-2 px-3">Statut</th>
                   <th className="text-left py-2 px-3">Actions</th>
                 </tr>
@@ -530,7 +547,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                 {pendingRequests.map(r => (
                   <tr key={r.id} className="border-b hover:bg-muted">
                     <td className="py-2 px-3 font-medium">{r.licensePlate}</td>
-                    <td className="py-2 px-3">{r.driver ? `${r.driver.firstName} ${r.driver.lastName}` : '-'}</td>
+                    <td className="py-2 px-3">{r.driver ? r.driver.cin : '-'}</td>
                     <td className="py-2 px-3">
                       <Badge variant={r.status === 'PENDING' ? 'secondary' : 'default'}>{r.status}</Badge>
                     </td>
@@ -590,7 +607,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                 <div>
                   <label className="block text-sm font-medium mb-1 flex items-center gap-1">
                     <Hash className="h-3 w-3" />
-                    CIN
+                    CIN *
                   </label>
                   <Input 
                     name="cin" 
@@ -601,98 +618,11 @@ const SupervisorVehicleManagement: React.FC = () => {
                     maxLength={8}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
-                    <Phone className="h-3 w-3" />
-                    Numéro de téléphone
-                  </label>
-                  <Input 
-                    name="phoneNumber" 
-                    value={form.phoneNumber} 
-                    onChange={handleFormChange} 
-                    required 
-                    placeholder="Ex: +216 12 345 678"
-                  />
+                <div className="flex items-end">
+                  <div className="text-sm text-muted-foreground">
+                    <CheckCircle2 className="h-4 w-4 inline mr-1" />
+                    Origine: Monastir (automatique)
                 </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Prénom</label>
-                  <Input 
-                    name="firstName" 
-                    value={form.firstName} 
-                    onChange={handleFormChange} 
-                    required 
-                    placeholder="Prénom du conducteur"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Nom de famille</label>
-                  <Input 
-                    name="lastName" 
-                    value={form.lastName} 
-                    onChange={handleFormChange} 
-                    required 
-                    placeholder="Nom de famille"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Location Information Section */}
-            <div className="bg-green-50 dark:bg-green-950 rounded-lg p-4">
-              <h3 className="flex items-center gap-2 font-medium mb-4 text-green-800 dark:text-green-200">
-                <MapPin className="h-4 w-4" />
-                Localisation du conducteur
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
-                    <Globe className="h-3 w-3" />
-                    Gouvernorat d'origine
-                  </label>
-                  <Select 
-                    name="originGovernorateId" 
-                    value={form.originGovernorateId} 
-                    onChange={handleFormChange} 
-                    options={governorates.map(g => ({ 
-                      value: g.id, 
-                      label: `${g.name}${g.nameAr ? ` (${g.nameAr})` : ''}` 
-                    }))} 
-                    placeholder={isLoadingMunicipalities ? "Chargement..." : "Sélectionner le gouvernorat"} 
-                    required 
-                    disabled={governorates.length === 0 || isLoadingMunicipalities} 
-                  />
-                  {stationConfig && (
-                    <div className="text-xs text-green-600 mt-1">
-                      Station actuelle: {stationConfig.governorate}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
-                    <MapPin className="h-3 w-3" />
-                    Délégation d'origine
-                  </label>
-                  <Select 
-                    name="originDelegationId" 
-                    value={form.originDelegationId} 
-                    onChange={handleFormChange} 
-                    options={delegations.map(d => ({ 
-                      value: d.id, 
-                      label: `${d.name}${d.nameAr ? ` (${d.nameAr})` : ''}` 
-                    }))} 
-                    placeholder={
-                      !form.originGovernorateId ? "Sélectionner d'abord le gouvernorat" :
-                      isLoadingMunicipalities ? "Chargement..." : 
-                      "Sélectionner la délégation"
-                    } 
-                    required 
-                    disabled={!form.originGovernorateId || delegations.length === 0 || isLoadingMunicipalities} 
-                  />
-                  {stationConfig && (
-                    <div className="text-xs text-green-600 mt-1">
-                      Station actuelle: {stationConfig.delegation}
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -703,8 +633,8 @@ const SupervisorVehicleManagement: React.FC = () => {
                 <Car className="h-4 w-4" />
                 Informations du véhicule
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="md:col-span-2 lg:col-span-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
                   <label className="block text-sm font-medium mb-1">Plaque d'immatriculation *</label>
                   <Input 
                     name="licensePlate" 
@@ -735,38 +665,11 @@ const SupervisorVehicleManagement: React.FC = () => {
                     min="1" 
                     max="50"
                     required 
-                    placeholder="Ex: 9"
+                    placeholder="8 (par défaut)"
                   />
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Nombre de places disponibles (défaut: 8)
                 </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Modèle</label>
-                  <Input 
-                    name="model" 
-                    value={form.model} 
-                    onChange={handleFormChange} 
-                    placeholder="Ex: Peugeot 807"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Année</label>
-                  <Input 
-                    name="year" 
-                    value={form.year} 
-                    onChange={handleFormChange} 
-                    type="number" 
-                    min="1980" 
-                    max={new Date().getFullYear() + 1}
-                    placeholder="Ex: 2018"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Couleur</label>
-                  <Input 
-                    name="color" 
-                    value={form.color} 
-                    onChange={handleFormChange} 
-                    placeholder="Ex: Blanc"
-                  />
                 </div>
               </div>
             </div>
@@ -779,25 +682,29 @@ const SupervisorVehicleManagement: React.FC = () => {
               </h3>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Stations autorisées *</label>
-                  <div className="flex gap-2 items-start">
-                    <select 
-                      name="authorizedStationIds" 
-                      multiple 
-                      value={form.authorizedStationIds} 
-                      onChange={handleFormChange} 
-                      className="w-full border rounded-lg p-3 min-h-[120px] bg-white dark:bg-gray-800" 
-                      required 
-                      disabled={stations.length === 0}
-                    >
-                      {stations.length === 0 ? (
-                        <option value="">Aucune station disponible</option>
-                      ) : stations.map(s => (
-                        <option key={s.id} value={s.id} className="py-1">
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="flex items-center justify-between mb-4">
+                    <label className="block text-sm font-medium">Stations autorisées *</label>
+                    <div className="flex gap-2">
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={selectAllMonastirDelegations}
+                        className="whitespace-nowrap bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+                      >
+                        <Globe className="h-4 w-4 mr-1" />
+                        Tout Monastir
+                      </Button>
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={clearAllStations}
+                        className="whitespace-nowrap bg-red-50 hover:bg-red-100 text-red-700 border-red-200"
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Tout désélectionner
+                      </Button>
                     <Button 
                       type="button" 
                       variant="outline" 
@@ -809,37 +716,212 @@ const SupervisorVehicleManagement: React.FC = () => {
                       Nouvelle station
                     </Button>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
-                    Maintenez Ctrl (Windows) ou Cmd (Mac) pour sélectionner plusieurs stations.
                   </div>
-                  {stationConfig && form.authorizedStationIds.includes(stationConfig.id) && (
+
+                  {/* Search Input */}
+                  <div className="relative mb-4">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      type="text"
+                      placeholder="Rechercher une station..."
+                      value={stationSearchTerm}
+                      onChange={(e) => setStationSearchTerm(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+
+                  {/* Station Selection Boxes */}
+                  <div className="border rounded-lg p-4 min-h-[200px] max-h-[300px] overflow-y-auto bg-gray-50 dark:bg-gray-800">
+                    {stations.length === 0 ? (
+                      <div className="text-center text-gray-500 py-8">
+                        <Building className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        Aucune station disponible
+                      </div>
+                    ) : filteredStations.length === 0 ? (
+                      <div className="text-center text-gray-500 py-8">
+                        <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                        Aucune station trouvée pour "{stationSearchTerm}"
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {filteredStations.map(station => {
+                          const isSelected = form.authorizedStationIds.includes(station.id);
+                          const isCurrentStation = stationConfig && station.id === stationConfig.id;
+                          
+                          return (
+                            <div
+                              key={station.id}
+                              onClick={() => toggleStationSelection(station.id)}
+                              className={`
+                                relative p-4 rounded-lg border-2 cursor-pointer transition-all duration-200
+                                ${isSelected 
+                                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-950' 
+                                  : 'border-gray-200 bg-white dark:bg-gray-700 hover:border-gray-300'
+                                }
+                                ${isCurrentStation ? 'ring-2 ring-green-200' : ''}
+                              `}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <div className="font-medium text-sm">
+                                    {station.name}
+                                  </div>
+                                  {isCurrentStation && (
                     <div className="text-xs text-green-600 mt-1 flex items-center gap-1">
                       <CheckCircle2 className="h-3 w-3" />
-                      Station actuelle sélectionnée: {stationConfig.stationName}
+                                      Station actuelle
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="ml-2">
+                                  {isSelected ? (
+                                    <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                                      <Check className="h-4 w-4 text-white" />
+                                    </div>
+                                  ) : (
+                                    <div className="w-6 h-6 border-2 border-gray-300 rounded-full" />
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Selection Summary */}
+                  {form.authorizedStationIds.length > 0 && (
+                    <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
+                      <div className="text-sm text-blue-800 dark:text-blue-200 flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span className="font-medium">{form.authorizedStationIds.length} station(s) sélectionnée(s)</span>
+                      </div>
+                      <div className="text-xs text-blue-600 dark:text-blue-300 mt-1">
+                        {form.authorizedStationIds.map(id => {
+                          const station = stations.find(s => s.id === id);
+                          return station?.name;
+                        }).join(', ')}
+                      </div>
                     </div>
                   )}
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium mb-2">Destination par défaut</label>
-                  <select 
-                    name="defaultDestinationId" 
-                    value={form.defaultDestinationId} 
-                    onChange={handleFormChange} 
-                    className="w-full border rounded-lg p-3 bg-white dark:bg-gray-800"
-                    disabled={form.authorizedStationIds.length === 0}
-                  >
-                    <option value="">Sélectionner la destination par défaut (optionnel)</option>
-                    {stations
-                      .filter(s => form.authorizedStationIds.includes(s.id))
-                      .map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                  </select>
-                  <div className="text-xs text-muted-foreground mt-1">
+                  <div className="flex items-center justify-between mb-4">
+                    <label className="block text-sm font-medium">Destination par défaut (optionnel)</label>
+                    {form.defaultDestinationId && (
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={clearDefaultDestination}
+                        className="whitespace-nowrap bg-red-50 hover:bg-red-100 text-red-700 border-red-200"
+                      >
+                        <X className="h-4 w-4 mr-1" />
+                        Effacer
+                      </Button>
+                    )}
+                  </div>
+
+                  {form.authorizedStationIds.length === 0 ? (
+                    <div className="border rounded-lg p-6 text-center bg-gray-50 dark:bg-gray-800">
+                      <AlertCircle className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                      <p className="text-gray-500 text-sm">
+                        Sélectionnez d'abord des stations autorisées pour choisir une destination par défaut
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Destination Search Input */}
+                      <div className="relative mb-4">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <Input
+                          type="text"
+                          placeholder="Rechercher une destination..."
+                          value={destinationSearchTerm}
+                          onChange={(e) => setDestinationSearchTerm(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+
+                      {/* Destination Selection Boxes */}
+                      <div className="border rounded-lg p-4 min-h-[150px] max-h-[250px] overflow-y-auto bg-gray-50 dark:bg-gray-800">
+                        {filteredDestinations.length === 0 ? (
+                          <div className="text-center text-gray-500 py-6">
+                            <Search className="h-6 w-6 mx-auto mb-2 opacity-50" />
+                            {destinationSearchTerm ? 
+                              `Aucune destination trouvée pour "${destinationSearchTerm}"` :
+                              'Aucune station autorisée disponible'
+                            }
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {filteredDestinations.map(station => {
+                              const isSelected = form.defaultDestinationId === station.id;
+                              const isCurrentStation = stationConfig && station.id === stationConfig.id;
+                              
+                              return (
+                                <div
+                                  key={station.id}
+                                  onClick={() => selectDefaultDestination(station.id)}
+                                  className={`
+                                    relative p-4 rounded-lg border-2 cursor-pointer transition-all duration-200
+                                    ${isSelected 
+                                      ? 'border-green-500 bg-green-50 dark:bg-green-950' 
+                                      : 'border-gray-200 bg-white dark:bg-gray-700 hover:border-gray-300'
+                                    }
+                                    ${isCurrentStation ? 'ring-2 ring-blue-200' : ''}
+                                  `}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex-1">
+                                      <div className="font-medium text-sm">
+                                        {station.name}
+                                      </div>
+                                      {isCurrentStation && (
+                                        <div className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                                          <CheckCircle2 className="h-3 w-3" />
+                                          Station actuelle
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="ml-2">
+                                      {isSelected ? (
+                                        <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                                          <Check className="h-4 w-4 text-white" />
+                                        </div>
+                                      ) : (
+                                        <div className="w-6 h-6 border-2 border-gray-300 rounded-full" />
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Destination Selection Summary */}
+                      {form.defaultDestinationId && (
+                        <div className="mt-3 p-3 bg-green-50 dark:bg-green-950 rounded-lg">
+                          <div className="text-sm text-green-800 dark:text-green-200 flex items-center gap-2">
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span className="font-medium">Destination par défaut sélectionnée</span>
+                          </div>
+                          <div className="text-xs text-green-600 dark:text-green-300 mt-1">
+                            {stations.find(s => s.id === form.defaultDestinationId)?.name}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
                     La destination par défaut sera utilisée automatiquement lors de l'ajout à la file d'attente.
                   </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -896,7 +978,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                       {!vehicleDetails.isBanned && !vehicleDetails.isActive && <Badge variant="secondary">Inactif</Badge>}
                       {vehicleDetails.isActive && !vehicleDetails.isBanned && <Badge variant="default">Actif</Badge>}
                     </div>
-                    <div className="text-sm text-muted-foreground">Modèle: {vehicleDetails.model || '-'}</div>
+                    <div className="text-sm text-muted-foreground">Capacité: {vehicleDetails.capacity} places</div>
                   </div>
                   <div>
                     <Badge variant={vehicleDetails.isAvailable ? 'default' : 'secondary'}>
@@ -936,8 +1018,6 @@ const SupervisorVehicleManagement: React.FC = () => {
                   {vehicleDetails.driver ? (
                     <div className="grid grid-cols-2 gap-2">
                       <div><span className="text-xs text-muted-foreground">CIN</span><br /><span className="font-mono">{vehicleDetails.driver.cin}</span></div>
-                      <div><span className="text-xs text-muted-foreground">Nom</span><br />{vehicleDetails.driver.firstName} {vehicleDetails.driver.lastName}</div>
-                      <div><span className="text-xs text-muted-foreground">Téléphone</span><br />{vehicleDetails.driver.phoneNumber}</div>
                       <div><span className="text-xs text-muted-foreground">Statut du compte</span><br />{vehicleDetails.driver.accountStatus}</div>
                     </div>
                   ) : (

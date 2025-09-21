@@ -378,12 +378,31 @@ export function TicketPrintout({ booking }: { booking: any }) {
 
       <hr style={printStyles.divider} />
 
-      {/* Price Section */}
+      {/* Price Breakdown Section */}
       <div style={printStyles.priceSection}>
+        {/* Base Price */}
+        <div style={printStyles.bilingualRow}>
+          <span style={printStyles.englishLabel}>BASE PRICE</span>
+          <span style={printStyles.centerValue}>
+            {(booking.baseAmount || (booking.pricePerSeat * (booking.seatsBooked || 1)) || 0).toFixed(2)} TND
+          </span>
+          <span style={printStyles.arabicLabel}>السعر الأساسي</span>
+        </div>
+        
+        {/* Service Fee */}
+        <div style={printStyles.bilingualRow}>
+          <span style={printStyles.englishLabel}>SERVICE FEE</span>
+          <span style={printStyles.centerValue}>
+            {(booking.serviceFeeAmount || 0).toFixed(2)} TND
+          </span>
+          <span style={printStyles.arabicLabel}>رسوم الخدمة</span>
+        </div>
+        
+        {/* Total */}
         <div style={printStyles.bilingualRow}>
           <span style={printStyles.englishLabel}>TOTAL</span>
           <span style={{ ...printStyles.centerValue, fontWeight: 'bold', fontSize: '12px' }}>
-            {(booking.totalAmount || (booking.basePrice * (booking.seatsBooked || 1)) || 0).toFixed(2)} TND
+            {(booking.totalAmount || (booking.baseAmount + booking.serviceFeeAmount) || 0).toFixed(2)} TND
           </span>
           <span style={printStyles.arabicLabel}>المجموع</span>
         </div>

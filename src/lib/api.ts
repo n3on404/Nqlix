@@ -274,40 +274,16 @@ class ApiService {
   }
 
   /**
-   * Initialize login with CIN
+   * Login with CIN and password
    */
-  public async initiateLogin(cin: string): Promise<AuthResponse> {
+  public async login(cin: string, password: string): Promise<AuthResponse> {
     try {
-      console.log('🔍 Initiating login via proxy for CIN:', cin);
-      
-      const response = await this.requestViaProxy<any>('/api/auth/login', 'POST', { cin }, false);
-      
-      return {
-        success: response.success,
-        message: response.message || 'Unknown error',
-        requiresVerification: response.requiresVerification,
-        data: response.data,
-      };
-    } catch (error) {
-      console.error('🔍 Login initiation failed:', error);
-      return {
-        success: false,
-        message: 'Login initiation failed',
-      };
-    }
-  }
-
-  /**
-   * Verify SMS code and complete authentication
-   */
-  public async verifyLogin(cin: string, verificationCode: string): Promise<AuthResponse> {
-    try {
-      console.log('🔍 Verifying login via proxy for CIN:', cin);
+      console.log('🔍 Logging in via proxy for CIN:', cin);
       
       const response = await this.requestViaProxy<any>(
-        '/api/auth/verify',
+        '/api/auth/login',
         'POST',
-        { cin, verificationCode },
+        { cin, password },
         false
       );
       
@@ -323,10 +299,10 @@ class ApiService {
         staff: response.staff,
       };
     } catch (error) {
-      console.error('🔍 Login verification failed:', error);
+      console.error('🔍 Login failed:', error);
       return {
         success: false,
-        message: 'Login verification failed',
+        message: 'Login failed',
       };
     }
   }
@@ -522,6 +498,14 @@ class ApiService {
    */
   public async createQueueBooking(bookingData: any): Promise<ApiResponse<any>> {
     return this.requestViaProxy<any>('/api/queue-booking/book', 'POST', bookingData);
+  }
+
+  /**
+   * Cancel queue booking completely or remove specific number of seats
+   */
+  public async cancelQueueBooking(bookingId: string, seatsToCancel?: number): Promise<ApiResponse<any>> {
+    const data = seatsToCancel ? { seatsToCancel } : undefined;
+    return this.requestViaProxy<any>(`/api/queue-booking/cancel/${bookingId}`, 'DELETE', data);
   }
 
   /**

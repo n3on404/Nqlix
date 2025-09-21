@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   Car,
   UserPlus,
-  CheckSquare,
   LogOut,
   Settings,
   User,
@@ -54,7 +53,6 @@ export default function Layout() {
   // Different nav items based on mode
   const regularNavItems = [
     { path: "/", icon: UserPlus, label: "Réservation Principale" },
-    { path: "/verify", icon: CheckSquare, label: "Vérifier" },
     { path: "/day-pass", icon: Ticket, label: "Pass Journalier" },
     { path: "/queue-management", icon: Users, label: "Gestion de File" },
   ];

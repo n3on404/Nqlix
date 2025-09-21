@@ -41,9 +41,7 @@ interface VehicleData {
   enteredAt: string;
   estimatedDeparture?: string;
   driver?: {
-    firstName: string;
-    lastName: string;
-    phoneNumber: string;
+    cin: string;
   };
 }
 
@@ -611,7 +609,7 @@ function StaffDashboard() {
                       <div className="font-medium">{vehicle.licensePlate}</div>
                       {vehicle.driver && (
                         <div className="text-sm text-muted-foreground">
-                          {vehicle.driver.firstName} {vehicle.driver.lastName}
+                          CIN: {vehicle.driver.cin}
                         </div>
                       )}
                     </td>

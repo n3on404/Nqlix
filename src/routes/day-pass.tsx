@@ -25,9 +25,6 @@ import { thermalPrinter } from '../services/thermalPrinterService';
 interface Driver {
   id: string;
   cin: string;
-  firstName: string;
-  lastName: string;
-  phoneNumber: string;
   hasValidDayPass: boolean;
   dayPassExpiresAt?: string;
   vehicle?: {
@@ -49,8 +46,6 @@ interface DayPass {
   isActive: boolean;
   isExpired: boolean;
   driver: {
-    firstName: string;
-    lastName: string;
     cin: string;
   };
   vehicle: {
@@ -151,7 +146,7 @@ export default function DayPassPage() {
       });
 
       if (response.success) {
-        setSuccess(`Pass journalier acheté avec succès pour ${driver.firstName} ${driver.lastName}`);
+        setSuccess(`Pass journalier acheté avec succès pour ${driver.vehicle.licensePlate}`);
         setShowPurchaseModal(false);
         setSelectedDriver(null);
         
@@ -159,12 +154,13 @@ export default function DayPassPage() {
         try {
           const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
             licensePlate: driver.vehicle.licensePlate,
-            driverName: `${driver.firstName} ${driver.lastName}`,
+            driverName: `CIN: ${driver.cin}`,
             amount: 2 // Fixed price for day pass
           });
           
           console.log('🖨️ Printing day pass ticket for:', driver.vehicle.licensePlate);
-          await thermalPrinter.printDayPassTicket(dayPassTicketData);
+          const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+          await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
           console.log('✅ Day pass ticket printed successfully');
         } catch (printError) {
           console.error('❌ Failed to print day pass ticket:', printError);
@@ -203,8 +199,6 @@ export default function DayPassPage() {
 
   // Filter drivers based on search term
   const filteredDrivers = drivers.filter(driver =>
-    driver.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    driver.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     driver.cin.toLowerCase().includes(searchTerm.toLowerCase()) ||
     driver.vehicle?.licensePlate.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -343,9 +337,9 @@ export default function DayPassPage() {
                             <User className="h-5 w-5 text-orange-600" />
                           </div>
                           <div>
-                            <p className="font-semibold">{driver.firstName} {driver.lastName}</p>
+                            <p className="font-semibold">CIN: {driver.cin}</p>
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                              CIN: {driver.cin} • {driver.phoneNumber}
+                              CIN: {driver.cin}
                             </p>
                             {driver.vehicle && (
                               <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -405,7 +399,7 @@ export default function DayPassPage() {
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
                           <p className="font-semibold">
-                            {dayPass.driver.firstName} {dayPass.driver.lastName}
+                            CIN: {dayPass.driver.cin}
                           </p>
                           <p className="text-sm text-gray-600 dark:text-gray-400">
                             <Car className="h-3 w-3 inline mr-1" />
@@ -453,12 +447,13 @@ export default function DayPassPage() {
                                 // Format the day pass data for reprinting
                                 const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
                                   licensePlate: dayPass.licensePlate,
-                                  driverName: `${dayPass.driver.firstName} ${dayPass.driver.lastName}`,
+                                  driverName: `CIN: ${dayPass.driver.cin}`,
                                   amount: dayPass.price
                                 });
                                 
-                                await thermalPrinter.printDayPassTicket(dayPassTicketData);
-                                setSuccess(`Pass journalier réimprimé pour ${dayPass.driver.firstName} ${dayPass.driver.lastName}`);
+                                const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+                                await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
+                                setSuccess(`Pass journalier réimprimé pour ${dayPass.licensePlate}`);
                               } catch (error) {
                                 setError('Impossible de réimprimer ce pass journalier');
                               }
@@ -487,7 +482,6 @@ export default function DayPassPage() {
               <CardContent className="space-y-4">
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
                   <h3 className="font-semibold mb-2">Chauffeur:</h3>
-                  <p>{selectedDriver.firstName} {selectedDriver.lastName}</p>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
                     CIN: {selectedDriver.cin}
                   </p>

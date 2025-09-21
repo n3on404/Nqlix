@@ -38,8 +38,8 @@ export default function PrintAllVehicleTrips() {
   if (!data) return null;
 
   const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
-  const grandTotalSeats = vehicles.reduce((s, v) => s + toNumber(v.totals?.totalSeats), 0);
-  const grandTotalRevenue = vehicles.reduce((s, v) => s + toNumber(v.totals?.totalRevenue), 0);
+  const grandTotalSeats = vehicles.reduce((s: number, v: any) => s + toNumber(v.totals?.totalSeats), 0);
+  const grandTotalRevenue = vehicles.reduce((s: number, v: any) => s + toNumber(v.totals?.totalRevenue), 0);
 
   return (
     <div style={A4}>
@@ -77,7 +77,7 @@ export default function PrintAllVehicleTrips() {
               <tr key={idx}>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{v.vehicle.licensePlate}</td>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>
-                  {v.vehicle.driver ? `${v.vehicle.driver.firstName} ${v.vehicle.driver.lastName} (${v.vehicle.driver.cin})` : '—'}
+                  {v.vehicle.driver ? `CIN: ${v.vehicle.driver.cin}` : '—'}
                 </td>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{destSummary || '—'}</td>
                 <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(v.totals?.totalRevenue)}</td>

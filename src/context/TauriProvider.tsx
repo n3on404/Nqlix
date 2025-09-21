@@ -51,6 +51,10 @@ export const TauriProvider: React.FC<TauriProviderProps> = ({ children }) => {
   const [showUpdateManager, setShowUpdateManager] = React.useState(false);
   const discoverLocalServers = async (): Promise<NetworkDiscoveryResult> => {
     try {
+      // Check if Tauri is available
+      if (typeof window === 'undefined' || !(window as any).__TAURI__) {
+        return { servers: [], total_scanned: 0, scan_duration_ms: 0 };
+      }
       const result = await invoke<NetworkDiscoveryResult>('discover_local_servers');
       console.log('Network discovery result:', result);
       return result;
@@ -62,6 +66,10 @@ export const TauriProvider: React.FC<TauriProviderProps> = ({ children }) => {
 
   const getAppVersion = async (): Promise<string> => {
     try {
+      // Check if Tauri is available
+      if (typeof window === 'undefined' || !(window as any).__TAURI__) {
+        return 'Web Version';
+      }
       return await invoke<string>('get_app_version');
     } catch (error) {
       console.error('Failed to get app version:', error);
@@ -71,6 +79,10 @@ export const TauriProvider: React.FC<TauriProviderProps> = ({ children }) => {
 
   const getAppName = async (): Promise<string> => {
     try {
+      // Check if Tauri is available
+      if (typeof window === 'undefined' || !(window as any).__TAURI__) {
+        return 'Wasla Web';
+      }
       return await invoke<string>('get_app_name');
     } catch (error) {
       console.error('Failed to get app name:', error);
