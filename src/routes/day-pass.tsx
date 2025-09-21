@@ -297,7 +297,7 @@ export default function DayPassPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Drivers Without Day Pass */}
           <Card>
             <CardHeader>
@@ -467,6 +467,51 @@ export default function DayPassPage() {
                     </div>
                   ))
                 )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Exit Passes Section */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Car className="h-5 w-5 text-red-600" />
+                Tickets de Sortie
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle className="h-4 w-4 text-red-600" />
+                    <span className="font-semibold text-red-800 dark:text-red-200">Véhicules Complets</span>
+                  </div>
+                  <p className="text-sm text-red-600 dark:text-red-300">
+                    Les véhicules avec toutes les places réservées peuvent imprimer leur ticket de sortie.
+                  </p>
+                </div>
+
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  <div className="text-center py-8 text-gray-500">
+                    <Car className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                    <p>Les tickets de sortie sont gérés dans la section Réservation Principale</p>
+                    <p className="text-sm mt-2">
+                      Allez à "Réservation Principale" pour voir les véhicules complets et imprimer les tickets de sortie.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
+                  <h4 className="font-semibold text-blue-800 dark:text-blue-200 mb-2">
+                    Comment ça marche ?
+                  </h4>
+                  <ul className="text-sm text-blue-600 dark:text-blue-300 space-y-1">
+                    <li>• Un véhicule devient complet quand toutes ses places sont réservées</li>
+                    <li>• Le ticket de sortie s'imprime automatiquement</li>
+                    <li>• Une confirmation est requise avant de retirer le véhicule de la file</li>
+                    <li>• Le ticket inclut les informations du véhicule précédent</li>
+                  </ul>
+                </div>
               </div>
             </CardContent>
           </Card>

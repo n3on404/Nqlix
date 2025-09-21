@@ -38,6 +38,7 @@ import { TicketPrintout } from '../components/TicketPrintout';
 import { renderToString } from 'react-dom/server';
 import { thermalPrinter } from '../services/thermalPrinterService';
 import { Settings } from 'lucide-react';
+import ExitPassConfirmationModal from '../components/ExitPassConfirmationModal';
 
 interface Destination {
   destinationId: string;
@@ -119,6 +120,24 @@ export default function MainBooking() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [routes, setRoutes] = useState<any[]>([]);
   
+  // Exit pass confirmation modal state
+  const [showExitPassModal, setShowExitPassModal] = useState(false);
+  const [exitPassVehicleData, setExitPassVehicleData] = useState<{
+    licensePlate: string;
+    destinationName: string;
+    totalSeats: number;
+    bookedSeats: number;
+    previousVehicle?: {
+      licensePlate: string;
+      exitTime: string;
+    } | null;
+  } | null>(null);
+  const [isReprinting, setIsReprinting] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  
+  // Track vehicles that need exit pass confirmation
+  const [vehiclesPendingExitConfirmation, setVehiclesPendingExitConfirmation] = useState<Set<string>>(new Set());
+  
   // Helper functions for queue management
   const normalizeDestinationName = (name: string) => {
     return name.replace(/^STATION /i, "").toUpperCase().trim();
@@ -164,6 +183,176 @@ export default function MainBooking() {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Exit pass handling functions
+  const checkForFullyBookedVehicle = (destinationId: string, seatsBooked: number) => {
+    console.log('🔍 Checking for fully booked vehicle after booking:', { destinationId, seatsBooked });
+    
+    // Find the destination in current state
+    const destination = destinations.find(dest => dest.destinationId === destinationId);
+    if (!destination) {
+      console.log('⚠️ Destination not found in current state');
+      return;
+    }
+
+    // Check if this destination now has 0 available seats (fully booked)
+    if (destination.totalAvailableSeats === 0) {
+      console.log('🎯 Destination is now fully booked, checking for vehicles to change status');
+      
+      // Find vehicles in queue for this destination
+      const normalizedDestination = normalizeDestinationName(destination.destinationName);
+      const destinationQueues = queues[normalizedDestination] || [];
+      
+      // Find the first vehicle that's fully booked but not already READY
+      const fullyBookedVehicle = destinationQueues.find((queue: any) => 
+        queue.availableSeats === 0 && 
+        queue.status !== 'READY' &&
+        !vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)
+      );
+      
+      if (fullyBookedVehicle) {
+        console.log('🚗 Found fully booked vehicle:', fullyBookedVehicle.vehicle.licensePlate);
+        triggerExitPassWorkflow(fullyBookedVehicle, destination.destinationName);
+      }
+    }
+  };
+
+  const triggerExitPassWorkflow = async (vehicle: any, destinationName: string) => {
+    console.log('🎫 Triggering exit pass workflow for vehicle:', vehicle.vehicle.licensePlate);
+    
+    try {
+      // Mark vehicle as pending exit confirmation
+      setVehiclesPendingExitConfirmation(prev => new Set(prev).add(vehicle.vehicle.licensePlate));
+      
+      // Change vehicle status to READY (fully booked)
+      console.log('🔄 Changing vehicle status to READY (fully booked)');
+      await updateVehicleStatus(vehicle.vehicle.licensePlate, 'READY');
+      
+      // Get previous vehicle data
+      const normalizedDestination = normalizeDestinationName(destinationName);
+      const destinationQueues = queues[normalizedDestination] || [];
+      const currentIndex = destinationQueues.findIndex((q: any) => q.vehicle.licensePlate === vehicle.vehicle.licensePlate);
+      
+      let previousVehicle = null;
+      if (currentIndex > 0) {
+        const prevVehicle = destinationQueues[currentIndex - 1];
+        // Check if previous vehicle exited today (assuming exitTime is stored in the queue data)
+        if ((prevVehicle as any).exitTime) {
+          const prevExitDate = new Date((prevVehicle as any).exitTime);
+          const currentDate = new Date();
+          const isSameDay = prevExitDate.toDateString() === currentDate.toDateString();
+          
+          if (isSameDay) {
+            previousVehicle = {
+              licensePlate: prevVehicle.vehicle.licensePlate,
+              exitTime: (prevVehicle as any).exitTime
+            };
+          }
+        }
+      }
+      
+      // Prepare exit pass data
+      const exitPassData = {
+        licensePlate: vehicle.vehicle.licensePlate,
+        destinationName: destinationName,
+        totalSeats: vehicle.totalSeats || 8, // Default to 8 if not specified
+        bookedSeats: (vehicle.totalSeats || 8) - vehicle.availableSeats,
+        previousVehicle: previousVehicle
+      };
+      
+      // Show confirmation modal immediately (don't auto-print)
+      console.log('📋 Showing exit pass confirmation modal');
+      setExitPassVehicleData(exitPassData);
+      setShowExitPassModal(true);
+      
+    } catch (error) {
+      console.error('❌ Failed to update vehicle status:', error);
+      alert(`❌ Erreur de mise à jour!\n\nImpossible de changer le statut du véhicule: ${error instanceof Error ? error.message : 'Erreur inconnue'}\n\nVeuillez réessayer.`);
+      
+      // Remove from pending confirmation
+      setVehiclesPendingExitConfirmation(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(vehicle.vehicle.licensePlate);
+        return newSet;
+      });
+    }
+  };
+
+  const handleExitPassConfirm = async () => {
+    if (!exitPassVehicleData) return;
+    
+    setIsConfirming(true);
+    
+    try {
+      console.log('✅ Confirming exit pass for vehicle:', exitPassVehicleData.licensePlate);
+      
+      // Remove vehicle from queue
+      await exitQueue(exitPassVehicleData.licensePlate);
+      
+      // Remove from pending confirmation
+      setVehiclesPendingExitConfirmation(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(exitPassVehicleData.licensePlate);
+        return newSet;
+      });
+      
+      // Close modal
+      setShowExitPassModal(false);
+      setExitPassVehicleData(null);
+      
+      // Refresh destinations to update availability
+      fetchDestinations();
+      
+      console.log('✅ Vehicle successfully removed from queue');
+      
+    } catch (error) {
+      console.error('❌ Failed to confirm exit pass:', error);
+      alert(`❌ Erreur de confirmation!\n\nImpossible de retirer le véhicule de la file: ${error instanceof Error ? error.message : 'Erreur inconnue'}\n\nVeuillez réessayer.`);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const handleExitPassReprint = async () => {
+    if (!exitPassVehicleData) return;
+    
+    setIsReprinting(true);
+    
+    try {
+      console.log('🖨️ Printing exit pass for vehicle:', exitPassVehicleData.licensePlate);
+      
+      const basePricePerSeat = getBasePriceForDestination(exitPassVehicleData.destinationName) || 2.0;
+      const totalBasePrice = basePricePerSeat * exitPassVehicleData.totalSeats;
+      
+      const thermalExitPassData = {
+        licensePlate: exitPassVehicleData.licensePlate,
+        destinationName: exitPassVehicleData.destinationName,
+        previousLicensePlate: exitPassVehicleData.previousVehicle?.licensePlate || null,
+        previousExitTime: exitPassVehicleData.previousVehicle?.exitTime || null,
+        currentExitTime: new Date().toISOString(),
+        totalSeats: exitPassVehicleData.totalSeats,
+        basePricePerSeat: basePricePerSeat,
+        totalBasePrice: totalBasePrice
+      };
+      
+      const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+      const exitPassTicketData = thermalPrinter.formatExitPassTicketData(thermalExitPassData);
+      await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+      
+      console.log('✅ Exit pass printed successfully');
+      
+    } catch (error) {
+      console.error('❌ Failed to print exit pass:', error);
+      alert(`❌ Erreur d'impression!\n\nImpossible d'imprimer le ticket de sortie: ${error instanceof Error ? error.message : 'Erreur inconnue'}\n\nVeuillez réessayer.`);
+    } finally {
+      setIsReprinting(false);
+    }
+  };
+
+  const handleExitPassClose = () => {
+    setShowExitPassModal(false);
+    setExitPassVehicleData(null);
   };
 
   // Fetch available destinations from API (only destinations with available seats)
@@ -1015,6 +1204,9 @@ export default function MainBooking() {
           setTicketsPrinted(0);
         }
         
+        // Check if vehicle is now fully booked and trigger exit pass workflow
+        checkForFullyBookedVehicle(selectedDestination.destinationId, seatsToBook);
+        
         // Clear selection after successful booking
         setTimeout(() => {
           setSelectedDestination(null);
@@ -1254,7 +1446,7 @@ export default function MainBooking() {
                                  case 'LOADING':
                                    return 'bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border-l-4 border-blue-400';
                                  case 'READY':
-                                   return 'bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-l-4 border-green-400';
+                                   return 'bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 border-l-4 border-orange-400';
                                  default:
                                    return 'bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-800 dark:to-slate-800 border-l-4 border-gray-400';
                                }
@@ -1267,7 +1459,7 @@ export default function MainBooking() {
                                  case 'LOADING':
                                    return 'text-blue-800 dark:text-blue-200';
                                  case 'READY':
-                                   return 'text-green-800 dark:text-green-200';
+                                   return 'text-orange-800 dark:text-orange-200';
                                  default:
                                    return 'text-gray-800 dark:text-gray-200';
                                }
@@ -1280,7 +1472,7 @@ export default function MainBooking() {
                                  case 'LOADING':
                                    return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
                                  case 'READY':
-                                   return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
+                                   return 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300';
                                  default:
                                    return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300';
                                }
@@ -1315,14 +1507,34 @@ export default function MainBooking() {
                                      size="sm"
                                      className="text-red-600 hover:text-red-700 hover:bg-red-100 dark:hover:bg-red-900/20 p-2 flex-shrink-0"
                                      onClick={() => {
-                                       setActionLoading(queue.licensePlate);
-                                       exitQueue(queue.licensePlate).finally(() => setActionLoading(null));
+                                       // Check vehicle status and handle accordingly
+                                       if (queue.status === 'READY') {
+                                         // Vehicle is ready (fully booked) - show exit pass modal
+                                         triggerExitPassWorkflow(queue, selectedDestination.destinationName);
+                                       } else if (queue.availableSeats === 0) {
+                                         // Vehicle is fully booked but not READY status - change to READY
+                                         triggerExitPassWorkflow(queue, selectedDestination.destinationName);
+                                       } else {
+                                         // Normal removal for non-fully-booked vehicles
+                                         setActionLoading(queue.vehicle.licensePlate);
+                                         exitQueue(queue.vehicle.licensePlate).finally(() => setActionLoading(null));
+                                       }
                                      }}
-                                     disabled={actionLoading === queue.licensePlate || queue.status !== 'WAITING'}
-                                     title="Retirer de la file d'attente"
+                                     disabled={actionLoading === queue.vehicle.licensePlate || (queue.status !== 'WAITING' && queue.status !== 'READY') || vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)}
+                                     title={
+                                       queue.status === 'READY'
+                                         ? "Véhicule prêt - Cliquez pour imprimer le ticket de sortie"
+                                         : queue.availableSeats === 0 
+                                         ? "Véhicule complet - Cliquez pour changer le statut et imprimer le ticket"
+                                         : vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)
+                                         ? "En attente de confirmation de sortie"
+                                         : "Retirer de la file d'attente"
+                                     }
                                    >
-                                     {actionLoading === queue.licensePlate ? (
+                                     {actionLoading === queue.vehicle.licensePlate ? (
                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                     ) : queue.status === 'READY' ? (
+                                       <Printer className="h-4 w-4" />
                                      ) : (
                                        <X className="h-4 w-4" />
                                      )}
@@ -1334,7 +1546,7 @@ export default function MainBooking() {
                                    <Badge className={`text-sm font-semibold px-3 py-1 ${getStatusBadgeColor(queue.status)}`}>
                                      {queue.status === 'WAITING' ? 'En attente' :
                                       queue.status === 'LOADING' ? 'Chargement' :
-                                      queue.status === 'READY' ? 'Prêt' : queue.status}
+                                      queue.status === 'READY' ? 'Complet - Prêt à sortir' : queue.status}
                                    </Badge>
                                  </div>
                                </div>
@@ -1653,6 +1865,17 @@ export default function MainBooking() {
           </Card>
         </div>
       )}
+
+      {/* Exit Pass Confirmation Modal */}
+      <ExitPassConfirmationModal
+        isOpen={showExitPassModal}
+        onClose={handleExitPassClose}
+        onConfirm={handleExitPassConfirm}
+        onReprint={handleExitPassReprint}
+        vehicleData={exitPassVehicleData}
+        isReprinting={isReprinting}
+        isConfirming={isConfirming}
+      />
     </div>
   );
 }
