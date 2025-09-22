@@ -55,6 +55,52 @@ fn get_app_name() -> String {
 }
 
 #[tauri::command]
+fn get_network_info() -> Result<String, String> {
+    use std::process::Command;
+    
+    let mut info = String::new();
+    
+    // Get IP route info
+    if let Ok(output) = Command::new("ip")
+        .args(&["route", "get", "8.8.8.8"])
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            info.push_str("=== IP Route Info ===\n");
+            info.push_str(&output_str);
+            info.push_str("\n");
+        }
+    }
+    
+    // Get interface info
+    if let Ok(output) = Command::new("ip")
+        .args(&["addr", "show"])
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            info.push_str("=== Interface Info ===\n");
+            info.push_str(&output_str);
+            info.push_str("\n");
+        }
+    }
+    
+    // Get detected local IP
+    match get_local_ip() {
+        Ok(ip) => {
+            info.push_str(&format!("=== Detected Local IP ===\n{}\n", ip));
+            info.push_str(&format!("=== Network Prefix ===\n{}\n", get_network_prefix(&ip)));
+        }
+        Err(e) => {
+            info.push_str(&format!("=== Error getting local IP ===\n{}\n", e));
+        }
+    }
+    
+    Ok(info)
+}
+
+#[tauri::command]
 async fn discover_local_servers() -> Result<NetworkDiscoveryResult, String> {
     let start_time = std::time::Instant::now();
     let mut discovered_servers = Vec::new();
@@ -64,7 +110,8 @@ async fn discover_local_servers() -> Result<NetworkDiscoveryResult, String> {
     let local_ip = get_local_ip().map_err(|e| format!("Failed to get local IP: {}", e))?;
     let network_prefix = get_network_prefix(&local_ip);
     
-    println!("Starting network discovery on network: {}", network_prefix);
+    println!("🌐 Starting network discovery on network: {}", network_prefix);
+    println!("🔍 Detected local IP: {}", local_ip);
     
     // Create HTTP client with timeout
     let client = Client::builder()
@@ -81,6 +128,7 @@ async fn discover_local_servers() -> Result<NetworkDiscoveryResult, String> {
         // Scan the local network for this port
         let mut tasks = Vec::new();
         
+        // Scan from 1 to 254 to cover the entire subnet
         for i in 1..=254 {
             let ip = format!("{}.{}", network_prefix, i);
             let client_clone = client.clone();
@@ -92,6 +140,8 @@ async fn discover_local_servers() -> Result<NetworkDiscoveryResult, String> {
             
             tasks.push(task);
         }
+        
+        println!("🔍 Scanning {} IPs on port {}...", 254, port);
         
         // Wait for all tasks to complete with a timeout
         let scan_timeout = Duration::from_secs(15); // Shorter timeout per port
@@ -646,10 +696,131 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 }
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
-    // Try to get local IP by connecting to a known address
+    use std::process::Command;
+    
+    // First try to get ethernet IP using ip addr show command (prioritize ethernet)
+    if let Ok(output) = Command::new("ip")
+        .args(&["addr", "show"])
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            let mut ethernet_ips = Vec::new();
+            let mut other_ips = Vec::new();
+            
+            for line in output_str.lines() {
+                if line.contains("inet ") && !line.contains("127.0.0.1") {
+                    // Check if this is an ethernet interface
+                    let is_ethernet = line.contains("eth") || line.contains("enp") || line.contains("ens");
+                    
+                    if let Some(ip_part) = line.split_whitespace().find(|part| part.starts_with("inet")) {
+                        if let Some(ip_str) = ip_part.split_whitespace().nth(1) {
+                            if let Some(ip_with_mask) = ip_str.split('/').next() {
+                                if let Ok(ip) = ip_with_mask.parse::<IpAddr>() {
+                                    if ip.is_ipv4() && !ip.is_loopback() {
+                                        if is_ethernet {
+                                            ethernet_ips.push(ip);
+                                        } else {
+                                            other_ips.push(ip);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Prioritize ethernet IPs
+            if let Some(ethernet_ip) = ethernet_ips.first() {
+                println!("🔍 Found ethernet IP via ip addr: {}", ethernet_ip);
+                return Ok(*ethernet_ip);
+            }
+            
+            // Fallback to other IPs
+            if let Some(other_ip) = other_ips.first() {
+                println!("🔍 Found non-ethernet IP via ip addr: {}", other_ip);
+                return Ok(*other_ip);
+            }
+        }
+    }
+    
+    // Fallback: try to get IP using ip route command
+    if let Ok(output) = Command::new("ip")
+        .args(&["route", "get", "8.8.8.8"])
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                if line.contains("src") {
+                    if let Some(ip_part) = line.split_whitespace().find(|part| part.starts_with("src")) {
+                        if let Some(ip_str) = ip_part.split_whitespace().nth(1) {
+                            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                if ip.is_ipv4() && !ip.is_loopback() {
+                                    println!("🔍 Found IP via ip route: {}", ip);
+                                    return Ok(ip);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fallback: try to get ethernet IP using ifconfig command
+    if let Ok(output) = Command::new("ifconfig")
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                if line.contains("inet ") && (line.contains("eth0") || line.contains("enp") || line.contains("ens")) {
+                    if let Some(ip_part) = line.split_whitespace().find(|part| part.starts_with("inet")) {
+                        if let Some(ip_str) = ip_part.split_whitespace().nth(1) {
+                            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                if ip.is_ipv4() && !ip.is_loopback() {
+                                    println!("🔍 Found ethernet IP via ifconfig: {}", ip);
+                                    return Ok(ip);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fallback: try to get ethernet IP using nmcli command
+    if let Ok(output) = Command::new("nmcli")
+        .args(&["-t", "-f", "IP4.ADDRESS", "device", "show"])
+        .output()
+    {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                if line.contains("eth0") || line.contains("enp") || line.contains("ens") {
+                    if let Some(ip_str) = line.split(':').nth(1) {
+                        if let Some(ip) = ip_str.split('/').next() {
+                            if let Ok(ip_addr) = ip.parse::<IpAddr>() {
+                                if ip_addr.is_ipv4() && !ip_addr.is_loopback() {
+                                    println!("🔍 Found ethernet IP via nmcli: {}", ip_addr);
+                                    return Ok(ip_addr);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Final fallback: try to get local IP by connecting to a known address
     let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
     socket.connect("8.8.8.8:80")?;
     let local_addr = socket.local_addr()?;
+    println!("🔍 Using fallback method for IP detection: {}", local_addr.ip());
     Ok(local_addr.ip())
 }
 
@@ -746,6 +917,7 @@ fn main() {
             greet,
             get_app_version,
             get_app_name,
+            get_network_info,
             discover_local_servers,
             add_firewall_rule,
             proxy_localnode,
