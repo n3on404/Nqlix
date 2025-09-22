@@ -138,6 +138,9 @@ export default function MainBooking() {
   // Track vehicles that need exit pass confirmation
   const [vehiclesPendingExitConfirmation, setVehiclesPendingExitConfirmation] = useState<Set<string>>(new Set());
   
+  // Test exit pass state
+  const [showTestExitPass, setShowTestExitPass] = useState(false);
+  
   // Helper functions for queue management
   const normalizeDestinationName = (name: string) => {
     return name.replace(/^STATION /i, "").toUpperCase().trim();
@@ -186,8 +189,8 @@ export default function MainBooking() {
   };
 
   // Exit pass handling functions
-  const checkForFullyBookedVehicle = (destinationId: string, seatsBooked: number) => {
-    console.log('🔍 Checking for fully booked vehicle after booking:', { destinationId, seatsBooked });
+  const checkForFullyBookedVehicle = (destinationId: string, seatsBooked: number, bookingResponse?: any) => {
+    console.log('🔍 Checking for fully booked vehicle after booking:', { destinationId, seatsBooked, bookingResponse });
     
     // Find the destination in current state
     const destination = destinations.find(dest => dest.destinationId === destinationId);
@@ -197,23 +200,56 @@ export default function MainBooking() {
     }
 
     // Check if this destination now has 0 available seats (fully booked)
+    console.log('🔍 Checking destination availability:', {
+      destinationName: destination.destinationName,
+      totalAvailableSeats: destination.totalAvailableSeats,
+      seatsBooked: seatsBooked
+    });
+    
     if (destination.totalAvailableSeats === 0) {
       console.log('🎯 Destination is now fully booked, checking for vehicles to change status');
       
-      // Find vehicles in queue for this destination
-      const normalizedDestination = normalizeDestinationName(destination.destinationName);
-      const destinationQueues = queues[normalizedDestination] || [];
+      // Try to get vehicle info from booking response first
+      let vehicleToProcess = null;
       
-      // Find the first vehicle that's fully booked but not already READY
-      const fullyBookedVehicle = destinationQueues.find((queue: any) => 
-        queue.availableSeats === 0 && 
-        queue.status !== 'READY' &&
-        !vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)
-      );
+      if (bookingResponse && bookingResponse.bookings && bookingResponse.bookings.length > 0) {
+        // Get vehicle info from the first booking
+        const firstBooking = bookingResponse.bookings[0];
+        if (firstBooking.vehicleLicensePlate) {
+          vehicleToProcess = {
+            vehicle: {
+              licensePlate: firstBooking.vehicleLicensePlate
+            },
+            totalSeats: 8, // Default to 8 seats
+            availableSeats: 0, // Fully booked
+            status: 'WAITING' // Will be changed to READY
+          };
+          console.log('🚗 Using vehicle from booking response:', vehicleToProcess.vehicle.licensePlate);
+        }
+      }
       
-      if (fullyBookedVehicle) {
-        console.log('🚗 Found fully booked vehicle:', fullyBookedVehicle.vehicle.licensePlate);
-        triggerExitPassWorkflow(fullyBookedVehicle, destination.destinationName);
+      // If no vehicle from booking response, try to find in queues
+      if (!vehicleToProcess) {
+        const normalizedDestination = normalizeDestinationName(destination.destinationName);
+        const destinationQueues = queues[normalizedDestination] || [];
+        
+        // Find the first vehicle that's fully booked but not already READY
+        vehicleToProcess = destinationQueues.find((queue: any) => 
+          queue.availableSeats === 0 && 
+          queue.status !== 'READY' &&
+          !vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)
+        );
+        
+        if (vehicleToProcess) {
+          console.log('🚗 Found fully booked vehicle in queue:', vehicleToProcess.vehicle.licensePlate);
+        }
+      }
+      
+      if (vehicleToProcess) {
+        console.log('🎫 Triggering exit pass workflow for vehicle:', vehicleToProcess.vehicle.licensePlate);
+        triggerExitPassWorkflow(vehicleToProcess, destination.destinationName);
+      } else {
+        console.log('⚠️ No fully booked vehicle found to process for exit pass');
       }
     }
   };
@@ -261,8 +297,36 @@ export default function MainBooking() {
         previousVehicle: previousVehicle
       };
       
-      // Show confirmation modal immediately (don't auto-print)
-      console.log('📋 Showing exit pass confirmation modal');
+      // Auto-print exit pass and show confirmation modal
+      console.log('📋 Auto-printing exit pass and showing confirmation modal');
+      
+      // Get base price for the destination
+      const basePricePerSeat = getBasePriceForDestination(destinationName) || 2.0;
+      const totalBasePrice = basePricePerSeat * (vehicle.totalSeats || 8);
+      
+      const thermalExitPassData = {
+        licensePlate: vehicle.vehicle.licensePlate,
+        destinationName: destinationName,
+        previousLicensePlate: previousVehicle?.licensePlate || null,
+        previousExitTime: previousVehicle?.exitTime || null,
+        currentExitTime: new Date().toISOString(),
+        totalSeats: vehicle.totalSeats || 8,
+        basePricePerSeat: basePricePerSeat,
+        totalBasePrice: totalBasePrice
+      };
+      
+      // Print exit pass automatically
+      try {
+        const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+        const exitPassTicketData = thermalPrinter.formatExitPassTicketData(thermalExitPassData);
+        await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+        console.log('✅ Exit pass printed automatically for fully booked vehicle');
+      } catch (printError) {
+        console.error('❌ Failed to auto-print exit pass:', printError);
+        // Continue with modal even if printing fails
+      }
+      
+      // Show confirmation modal
       setExitPassVehicleData(exitPassData);
       setShowExitPassModal(true);
       
@@ -353,6 +417,93 @@ export default function MainBooking() {
   const handleExitPassClose = () => {
     setShowExitPassModal(false);
     setExitPassVehicleData(null);
+  };
+
+  // Test exit pass functionality
+  const testExitPass = () => {
+    console.log('🧪 Testing exit pass functionality...');
+    
+    // Create mock vehicle data for testing
+    const mockVehicle = {
+      vehicle: {
+        licensePlate: 'TEST123'
+      },
+      totalSeats: 8,
+      availableSeats: 0,
+      status: 'READY'
+    };
+    
+    const mockDestination = 'TEST DESTINATION';
+    
+    // Trigger the exit pass workflow with mock data
+    triggerExitPassWorkflow(mockVehicle, mockDestination);
+  };
+
+  // Test exit pass with previous vehicle data
+  const testExitPassWithPrevious = () => {
+    console.log('🧪 Testing exit pass with previous vehicle...');
+    
+    // Create mock vehicle data with previous vehicle
+    const mockVehicle = {
+      vehicle: {
+        licensePlate: 'TEST456'
+      },
+      totalSeats: 8,
+      availableSeats: 0,
+      status: 'READY'
+    };
+    
+    const mockDestination = 'TEST DESTINATION WITH PREVIOUS';
+    
+    // Add previous vehicle data to the mock
+    const previousVehicle = {
+      licensePlate: 'PREV789',
+      exitTime: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() // 2 hours ago
+    };
+    
+    // Trigger the exit pass workflow
+    triggerExitPassWorkflow(mockVehicle, mockDestination);
+    
+    // Manually set the exit pass data with previous vehicle info
+    setTimeout(() => {
+      if (exitPassVehicleData) {
+        setExitPassVehicleData({
+          ...exitPassVehicleData,
+          previousVehicle: previousVehicle
+        });
+      }
+    }, 100);
+  };
+
+  // Direct test of exit pass printing (bypasses modal)
+  const testExitPassDirect = async () => {
+    console.log('🧪 Testing exit pass printing directly...');
+    
+    try {
+      // Create mock exit pass data
+      const mockExitPassData = {
+        licensePlate: 'DIRECT123',
+        destinationName: 'DIRECT TEST DESTINATION',
+        previousLicensePlate: 'PREV456',
+        previousExitTime: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(), // 1 hour ago
+        currentExitTime: new Date().toISOString(),
+        totalSeats: 8,
+        basePricePerSeat: 4.0,
+        totalBasePrice: 32.0
+      };
+      
+      // Format and print directly
+      const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'Test Staff';
+      const exitPassTicketData = thermalPrinter.formatExitPassTicketData(mockExitPassData);
+      await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+      
+      console.log('✅ Direct exit pass test completed successfully');
+      alert('✅ Exit pass printed successfully! Check your printer.');
+      
+    } catch (error) {
+      console.error('❌ Direct exit pass test failed:', error);
+      alert(`❌ Exit pass test failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   // Fetch available destinations from API (only destinations with available seats)
@@ -947,15 +1098,16 @@ export default function MainBooking() {
         ticketType: 'booking',
         queuePosition: undefined,
         nextVehicle: undefined,
-        price: booking.totalAmount || (booking.basePrice * (booking.seatsBooked || 1)) || 0,
+        price: booking.basePrice || booking.totalAmount || 0, // Use basePrice for single seat
         departureStation: booking.startStationName || 'Station Actuelle',
         destinationStation: booking.destinationName,
         customerName: booking.customerName,
-        seatsBooked: booking.seatsBooked || booking.seats || 1,
-        verificationCode: booking.verificationCode
+        // Remove seatsBooked field - each ticket is for 1 seat only
+        verificationCode: booking.verificationCode,
+        seatNumber: booking.seatNumber || 1 // Add seat number for individual tickets
       };
 
-      console.log('Booking ticket data prepared for printing:', thermalData);
+      console.log('Individual seat ticket data prepared for printing:', thermalData);
       console.log('Full booking data:', booking);
       
       // Fallback to browser print
@@ -975,12 +1127,26 @@ export default function MainBooking() {
       const ticketData = thermalPrinter.formatBookingTicketData(booking);
       console.log('📄 Formatted ticket data:', ticketData);
       
-      // Print with thermal printer
-      console.log('🖨️ Calling thermal printer...');
-      const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
-      await thermalPrinter.printBookingTicket(ticketData, staffName);
+      // Format talon data for thermal printing
+      console.log('📝 Formatting talon data...');
+      const talonData = thermalPrinter.formatTalonData(booking);
+      console.log('📄 Formatted talon data:', talonData);
       
-      console.log('✅ Booking ticket printed successfully with thermal printer');
+      // Print main ticket with thermal printer
+      console.log('🖨️ Calling thermal printer for main ticket...');
+      const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+      const mainTicketResult = await thermalPrinter.printBookingTicket(ticketData, staffName);
+      console.log('✅ Main ticket printed:', mainTicketResult);
+      
+      // Small delay to ensure main ticket is fully printed before talon
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Print talon (detachable stub) with thermal printer
+      console.log('🖨️ Calling thermal printer for talon...');
+      const talonResult = await thermalPrinter.printTalon(talonData, staffName);
+      console.log('✅ Talon printed:', talonResult);
+      
+      console.log('✅ Booking ticket and talon printed successfully with thermal printer');
       
     } catch (error) {
       console.error('❌ Thermal printer error:', error);
@@ -1000,6 +1166,49 @@ export default function MainBooking() {
       console.error('❌ Failed to reprint last booking ticket:', error);
     }
   }
+
+  // Show OS notification after exit pass prints
+  const notifyExitPassPrinted = (licensePlate: string, destinationName: string) => {
+    try {
+      const show = () => new Notification('Exit pass printed', {
+        body: `Vehicle ${licensePlate} → ${destinationName}`
+      });
+      if ('Notification' in window) {
+        if (Notification.permission === 'granted') show();
+        else if (Notification.permission !== 'denied') {
+          Notification.requestPermission().then(p => { if (p === 'granted') show(); });
+        }
+      }
+    } catch {}
+  };
+
+  // Print exit pass directly (without modal), using current route pricing
+  const printExitPassDirectForVehicle = async (licensePlate: string, destinationName: string) => {
+    try {
+      const basePricePerSeat = getBasePriceForDestination(destinationName) || 0;
+      const totalSeats = 8; // Default when not available in response
+      const totalBasePrice = basePricePerSeat * totalSeats;
+
+      const exitPassData = {
+        licensePlate,
+        destinationName,
+        previousLicensePlate: null,
+        previousExitTime: null,
+        currentExitTime: new Date().toISOString(),
+        totalSeats,
+        basePricePerSeat,
+        totalBasePrice
+      };
+
+      const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+      const exitPassTicketData = thermalPrinter.formatExitPassTicketData(exitPassData);
+      await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+      notifyExitPassPrinted(licensePlate, destinationName);
+      console.log('✅ Exit pass printed after booking');
+    } catch (error) {
+      console.error('❌ Failed to auto-print exit pass after booking:', error);
+    }
+  };
 
   // Cancel last booking
   const handleCancelLastBooking = async (seatsToCancel?: number) => {
@@ -1168,36 +1377,62 @@ export default function MainBooking() {
           totalAmount: response.data.totalAmount || 0
         });
         
-        // Automatically print ticket for each seat after successful booking
+        // Automatically print one ticket per seat after successful booking
         if (response.data.bookings && response.data.bookings.length > 0) {
-          console.log('🎫 Booking successful, printing tickets for each seat...');
-          console.log('📋 Number of bookings to print:', response.data.bookings.length);
+          console.log('🎫 Booking successful, printing one ticket per seat...');
+          console.log('📋 Number of seats to print tickets for:', seatsToBook);
           
           let successfulPrints = 0;
+          const baseBooking = response.data.bookings[0];
           
-          // Print a separate ticket for each seat
-          for (let i = 0; i < response.data.bookings.length; i++) {
-            const booking = response.data.bookings[i];
-            console.log(`🎫 Printing ticket ${i + 1}/${response.data.bookings.length} for seat ${i + 1}:`, booking);
+          // Print one ticket for each seat (not per booking, but per seat)
+          for (let seatNumber = 1; seatNumber <= seatsToBook; seatNumber++) {
+            console.log(`🎫 Printing ticket ${seatNumber}/${seatsToBook} for seat ${seatNumber}`);
+            console.log(`💰 Using single seat price: ${basePrice} TND (not total price)`);
+            
+            // Use the first booking as template but modify for individual seat
+            const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'N/A';
+            const individualSeatBooking = {
+              ...baseBooking,
+              // Remove seats field and treat as single seat
+              seatsBooked: 1,
+              totalAmount: basePrice, // Price for one seat only
+              basePrice: basePrice, // Ensure basePrice is also set for one seat
+              verificationCode: `${baseBooking.verificationCode}-${seatNumber}`, // Unique code per seat
+              seatNumber: seatNumber, // Add seat number for reference
+              staffName: staffName // Add staff name for talon
+            };
             
             try {
-              await printTicket(booking);
-              console.log(`✅ Ticket ${i + 1} printed successfully`);
+              await printTicket(individualSeatBooking);
+              console.log(`✅ Ticket for seat ${seatNumber} printed successfully`);
               successfulPrints++;
               
               // Add a small delay between prints to avoid printer overload
-              if (i < response.data.bookings.length - 1) {
+              if (seatNumber < seatsToBook) {
                 await new Promise(resolve => setTimeout(resolve, 500));
               }
             } catch (printError) {
-              console.error(`❌ Failed to print ticket ${i + 1}:`, printError);
+              console.error(`❌ Failed to print ticket for seat ${seatNumber}:`, printError);
               // Continue printing other tickets even if one fails
             }
           }
           
           // Set the number of tickets printed for the success message
           setTicketsPrinted(successfulPrints);
-          console.log(`✅ ${successfulPrints}/${response.data.bookings.length} tickets printed successfully`);
+          console.log(`✅ ${successfulPrints}/${seatsToBook} tickets printed successfully`);
+
+          // If backend indicates a vehicle became READY/fully booked, auto-print exit pass
+          try {
+            const destinationName = selectedDestination.destinationName;
+            const licensePlate = baseBooking.vehicleLicensePlate || baseBooking.licensePlate || null;
+            const vehicleFullyBooked = !!response.data.vehicleFullyBooked || (response.data.exitPasses && response.data.exitPasses.length > 0);
+            if (vehicleFullyBooked && licensePlate) {
+              await printExitPassDirectForVehicle(licensePlate, destinationName);
+            }
+          } catch (e) {
+            console.warn('⚠️ Could not auto-print exit pass after booking:', e);
+          }
         } else {
           console.log('⚠️ No booking data found in response for printing');
           console.log('📋 Available data keys:', Object.keys(response.data));
@@ -1205,7 +1440,10 @@ export default function MainBooking() {
         }
         
         // Check if vehicle is now fully booked and trigger exit pass workflow
-        checkForFullyBookedVehicle(selectedDestination.destinationId, seatsToBook);
+        // Add a small delay to ensure queue data is updated
+        setTimeout(() => {
+          checkForFullyBookedVehicle(selectedDestination.destinationId, seatsToBook, response.data);
+        }, 1000);
         
         // Clear selection after successful booking
         setTimeout(() => {
@@ -1262,12 +1500,45 @@ export default function MainBooking() {
               </p>
             </div>
             
-            {currentStaff && (
-              <div className="text-right">
-                <p className="font-semibold">{currentStaff.firstName} {currentStaff.lastName}</p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">{currentStaff.role}</p>
+            <div className="flex items-center gap-4">
+              {/* Test Exit Pass Buttons */}
+              <div className="flex gap-2">
+                <Button
+                  onClick={testExitPass}
+                  variant="outline"
+                  size="sm"
+                  className="bg-orange-100 hover:bg-orange-200 text-orange-700 border-orange-300"
+                  title="Test exit pass modal workflow"
+                >
+                  🧪 Test Modal
+                </Button>
+                <Button
+                  onClick={testExitPassWithPrevious}
+                  variant="outline"
+                  size="sm"
+                  className="bg-blue-100 hover:bg-blue-200 text-blue-700 border-blue-300"
+                  title="Test exit pass with previous vehicle data"
+                >
+                  🧪 Test with Previous
+                </Button>
+                <Button
+                  onClick={testExitPassDirect}
+                  variant="outline"
+                  size="sm"
+                  className="bg-green-100 hover:bg-green-200 text-green-700 border-green-300"
+                  title="Test exit pass printing directly (bypasses modal)"
+                >
+                  🧪 Test Print
+                </Button>
               </div>
-            )}
+              
+              {currentStaff && (
+                <div className="text-right">
+                  <p className="font-semibold">{currentStaff.firstName} {currentStaff.lastName}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">{currentStaff.role}</p>
+                </div>
+              )}
+            </div>
           </div>
           
           {/* Tab Navigation */}
@@ -1613,7 +1884,7 @@ export default function MainBooking() {
                 <h3 className="text-lg font-bold text-green-600 mb-2">Réservation réussie !</h3>
                 <p className="text-gray-600 mb-2">
                   {ticketsPrinted > 0 
-                    ? `${ticketsPrinted} billet${ticketsPrinted > 1 ? 's' : ''} imprimé${ticketsPrinted > 1 ? 's' : ''} avec succès`
+                    ? `${ticketsPrinted} billet${ticketsPrinted > 1 ? 's' : ''} individuel${ticketsPrinted > 1 ? 's' : ''} imprimé${ticketsPrinted > 1 ? 's' : ''} avec succès (1 billet par place)`
                     : 'Les billets ont été générés'
                   }
                 </p>
@@ -1735,7 +2006,7 @@ export default function MainBooking() {
                     <div className="w-16 text-center">
                       <span className="text-2xl font-bold">{bookingData.seats}</span>
                       <div className="text-xs text-gray-500 mt-1">
-                        Debug: {bookingData.seats} seats
+                        {bookingData.seats} ticket{bookingData.seats > 1 ? 's' : ''} (1 par place)
                       </div>
                             </div>
                             
@@ -1833,7 +2104,7 @@ export default function MainBooking() {
                   <div className="space-y-2">
                     {[1, 2, 3, 4, 5, 6, 7, 8].map((seatCount) => (
                       <div key={seatCount} className="flex items-center justify-between p-2 bg-green-50 rounded-lg">
-                        <span className="text-sm">{seatCount} place{seatCount > 1 ? 's' : ''}</span>
+                        <span className="text-sm">{seatCount} place{seatCount > 1 ? 's' : ''} = {seatCount} billet{seatCount > 1 ? 's' : ''}</span>
                         <Badge variant="outline" className="font-mono text-xs">
                           Alt+{seatCount}
                         </Badge>

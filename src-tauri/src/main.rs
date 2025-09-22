@@ -373,15 +373,65 @@ fn check_auto_startup() -> Result<bool, String> {
 
 // Printer commands
 #[tauri::command]
-async fn get_printer_config() -> Result<PrinterConfig, String> {
+async fn get_all_printers() -> Result<Vec<PrinterConfig>, String> {
     let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
-    printer.get_config()
+    printer.get_all_printers()
 }
 
 #[tauri::command]
-async fn update_printer_config(config: PrinterConfig) -> Result<(), String> {
+async fn get_printer_by_id(printer_id: String) -> Result<Option<PrinterConfig>, String> {
     let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
-    printer.update_config(config)
+    printer.get_printer_by_id(&printer_id)
+}
+
+#[tauri::command]
+async fn get_current_printer() -> Result<Option<PrinterConfig>, String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer.get_current_printer()
+}
+
+#[tauri::command]
+async fn set_current_printer(printer_id: String) -> Result<(), String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer.set_current_printer(&printer_id)
+}
+
+#[tauri::command]
+async fn update_printer_config(printer_id: String, config: PrinterConfig) -> Result<(), String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer.update_printer_config(&printer_id, config)
+}
+
+#[tauri::command]
+async fn add_printer(printer: PrinterConfig) -> Result<(), String> {
+    let printer_service = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer_service.add_printer(printer)
+}
+
+#[tauri::command]
+async fn remove_printer(printer_id: String) -> Result<(), String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer.remove_printer(&printer_id)
+}
+
+#[tauri::command]
+async fn test_printer_connection_by_id(printer_id: String) -> Result<PrinterStatus, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.test_printer_connection(&printer_id).await
+}
+
+#[tauri::command]
+async fn auto_set_default_printer() -> Result<(), String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.auto_set_default_printer().await
 }
 
 #[tauri::command]
@@ -414,15 +464,6 @@ async fn print_receipt(content: String) -> Result<String, String> {
     printer_clone.print_receipt(content).await
 }
 
-#[tauri::command]
-async fn print_barcode(data: String, barcode_type: u8) -> Result<String, String> {
-    let printer = PRINTER_SERVICE.clone();
-    let printer_clone = {
-        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
-        printer_guard.clone()
-    };
-    printer_clone.print_barcode(data, barcode_type).await
-}
 
 #[tauri::command]
 async fn print_qr_code(data: String) -> Result<String, String> {
@@ -472,6 +513,16 @@ async fn print_booking_ticket(ticket_data: String, staff_name: Option<String>) -
         printer_guard.clone()
     };
     printer_clone.print_booking_ticket(ticket_data, staff_name).await
+}
+
+#[tauri::command]
+async fn print_talon(talon_data: String, staff_name: Option<String>) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_talon(talon_data, staff_name).await
 }
 
 #[tauri::command]
@@ -706,17 +757,24 @@ fn main() {
             setup_auto_startup,
             disable_auto_startup,
             check_auto_startup,
-            get_printer_config,
+            get_all_printers,
+            get_printer_by_id,
+            get_current_printer,
+            set_current_printer,
             update_printer_config,
+            add_printer,
+            remove_printer,
             test_printer_connection,
+            test_printer_connection_by_id,
+            auto_set_default_printer,
             print_ticket,
             print_receipt,
-            print_barcode,
             print_qr_code,
             execute_print_job,
             print_with_logo,
             print_standard_ticket,
             print_booking_ticket,
+            print_talon,
             print_entry_ticket,
             print_exit_ticket,
             print_day_pass_ticket,
@@ -735,6 +793,19 @@ fn main() {
                     println!("🚀 {}", message);
                 }
             }
+            
+            // Auto-set default printer on startup
+            let printer_service = PRINTER_SERVICE.clone();
+            tauri::async_runtime::spawn(async move {
+                let printer_clone = {
+                    let printer_guard = printer_service.lock().map_err(|e| e.to_string())?;
+                    printer_guard.clone()
+                };
+                if let Err(e) = printer_clone.auto_set_default_printer().await {
+                    println!("⚠️ Failed to auto-set default printer: {}", e);
+                }
+                Ok::<(), String>(())
+            });
             
             // Set up global shortcuts
             let mut shortcut_manager = app.global_shortcut_manager();

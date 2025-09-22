@@ -4,9 +4,9 @@ import { SystemStatus } from "../components/SystemStatus";
 import { UpdateSection } from "../components/UpdateSection";
 import EnhancedMqttConnectionTest from "../components/EnhancedMqttConnectionTest";
 import AppControls from "../components/AppControls";
+import { PrinterConfigComponent } from "../components/PrinterConfig";
 import { Moon, Sun } from "lucide-react";
 import { useState, useEffect } from "react";
-// Printer service removed
 
 export default function Settings() {
   const { setTheme, theme: currentTheme } = useSettingsContext();
@@ -58,21 +58,15 @@ export default function Settings() {
         {/* App Controls Section */}
         <AppControls />
 
-        {/* Printer Management Section - Removed */}
+        {/* Printer Management Section */}
         <div className="space-y-4">
           <div className="space-y-2">
             <h2 className="text-lg font-semibold">Gestion des imprimantes</h2>
             <p className="text-sm text-muted-foreground">
-              Fonctionnalité d'impression temporairement désactivée. Les données de tickets sont loggées dans la console.
+              Configurez et gérez vos imprimantes thermiques Epson TM-T20X.
             </p>
           </div>
-          
-          <div className="bg-card border rounded-lg p-4 space-y-4">
-            <div className="text-center py-4 text-muted-foreground">
-              <p>Les fonctionnalités d'impression ont été temporairement supprimées.</p>
-              <p className="text-sm mt-2">Les données de tickets sont disponibles dans la console du navigateur pour le développement.</p>
-            </div>
-          </div>
+          <PrinterConfigComponent />
         </div>
 
         {/* Enhanced Connection Test */}

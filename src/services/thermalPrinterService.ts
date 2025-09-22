@@ -1,10 +1,15 @@
 import { invoke } from '@tauri-apps/api/tauri';
 
 export interface PrinterConfig {
+  id: string;
+  name: string;
   ip: string;
   port: number;
   width: number;
   timeout: number;
+  model: string;
+  enabled: boolean;
+  is_default: boolean;
 }
 
 export interface PrintJob {
@@ -28,10 +33,15 @@ export class ThermalPrinterService {
 
   private constructor() {
     this.config = {
-      ip: '192.168.192.168', // Default IP for Epson TM-T20X
+      id: 'printer1',
+      name: 'Imprimante 1',
+      ip: '192.168.192.10', // Default IP for Epson TM-T20X
       port: 9100, // Default port for Epson printers
       width: 48,
       timeout: 5000,
+      model: 'TM-T20X',
+      enabled: true,
+      is_default: true,
     };
   }
 
@@ -43,14 +53,58 @@ export class ThermalPrinterService {
   }
 
   /**
+   * Get all printers
+   */
+  async getAllPrinters(): Promise<PrinterConfig[]> {
+    try {
+      return await invoke<PrinterConfig[]>('get_all_printers');
+    } catch (error) {
+      console.error('Failed to get all printers:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get printer by ID
+   */
+  async getPrinterById(printerId: string): Promise<PrinterConfig | null> {
+    try {
+      return await invoke<PrinterConfig | null>('get_printer_by_id', { printerId });
+    } catch (error) {
+      console.error('Failed to get printer by ID:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get current printer configuration
    */
-  async getConfig(): Promise<PrinterConfig> {
+  async getCurrentPrinter(): Promise<PrinterConfig | null> {
     try {
-      this.config = await invoke<PrinterConfig>('get_printer_config');
-      return this.config;
+      const printer = await invoke<PrinterConfig | null>('get_current_printer');
+      if (printer) {
+        this.config = printer;
+      }
+      return printer;
     } catch (error) {
-      console.error('Failed to get printer config:', error);
+      console.error('Failed to get current printer:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set current printer
+   */
+  async setCurrentPrinter(printerId: string): Promise<void> {
+    try {
+      await invoke('set_current_printer', { printerId });
+      // Update local config
+      const printer = await this.getPrinterById(printerId);
+      if (printer) {
+        this.config = printer;
+      }
+    } catch (error) {
+      console.error('Failed to set current printer:', error);
       throw error;
     }
   }
@@ -58,13 +112,46 @@ export class ThermalPrinterService {
   /**
    * Update printer configuration
    */
-  async updateConfig(config: Partial<PrinterConfig>): Promise<void> {
+  async updatePrinterConfig(printerId: string, config: Partial<PrinterConfig>): Promise<void> {
     try {
-      const newConfig = { ...this.config, ...config };
-      await invoke('update_printer_config', { config: newConfig });
-      this.config = newConfig;
+      const currentPrinter = await this.getPrinterById(printerId);
+      if (!currentPrinter) {
+        throw new Error(`Printer with ID ${printerId} not found`);
+      }
+      
+      const updatedConfig = { ...currentPrinter, ...config };
+      await invoke('update_printer_config', { printerId, config: updatedConfig });
+      
+      // Update local config if this is the current printer
+      if (this.config.id === printerId) {
+        this.config = updatedConfig;
+      }
     } catch (error) {
       console.error('Failed to update printer config:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add new printer
+   */
+  async addPrinter(printer: PrinterConfig): Promise<void> {
+    try {
+      await invoke('add_printer', { printer });
+    } catch (error) {
+      console.error('Failed to add printer:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Remove printer
+   */
+  async removePrinter(printerId: string): Promise<void> {
+    try {
+      await invoke('remove_printer', { printerId });
+    } catch (error) {
+      console.error('Failed to remove printer:', error);
       throw error;
     }
   }
@@ -75,6 +162,18 @@ export class ThermalPrinterService {
   async testConnection(): Promise<PrinterStatus> {
     try {
       return await invoke<PrinterStatus>('test_printer_connection');
+    } catch (error) {
+      console.error('Failed to test printer connection:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Test printer connection by ID
+   */
+  async testPrinterConnection(printerId: string): Promise<PrinterStatus> {
+    try {
+      return await invoke<PrinterStatus>('test_printer_connection_by_id', { printerId });
     } catch (error) {
       console.error('Failed to test printer connection:', error);
       throw error;
@@ -105,20 +204,6 @@ export class ThermalPrinterService {
     }
   }
 
-  /**
-   * Print a barcode
-   */
-  async printBarcode(data: string, barcodeType: number = 73): Promise<string> {
-    try {
-      return await invoke<string>('print_barcode', { 
-        data, 
-        barcodeType 
-      });
-    } catch (error) {
-      console.error('Failed to print barcode:', error);
-      throw error;
-    }
-  }
 
   /**
    * Print a QR code
@@ -151,10 +236,9 @@ export class ThermalPrinterService {
     header?: string;
     content: string;
     footer?: string;
-    barcode?: string;
     qrCode?: string;
   }): Promise<string> {
-    const { header, content, footer, barcode, qrCode } = ticketData;
+    const { header, content, footer, qrCode } = ticketData;
     
     let printContent = '';
     
@@ -168,10 +252,6 @@ export class ThermalPrinterService {
     // Content
     printContent += content;
     
-    // Barcode
-    if (barcode) {
-      printContent += `\n\nBarcode: ${barcode}`;
-    }
     
     // QR Code
     if (qrCode) {
@@ -306,6 +386,28 @@ Date: ${paymentData.date}
       return result;
     } catch (error) {
       console.error('❌ Failed to print booking ticket:', error);
+      console.error('❌ Error details:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Print talon (detachable stub) with thermal printer
+   */
+  async printTalon(talonData: string, staffName?: string): Promise<string> {
+    console.log('🖨️ ThermalPrinterService.printTalon called');
+    console.log('📄 Talon data:', talonData);
+    console.log('👤 Staff name:', staffName);
+    try {
+      console.log('📡 Calling Tauri command: print_talon');
+      const result = await invoke<string>('print_talon', { 
+        talonData, 
+        staffName: staffName || null 
+      });
+      console.log('✅ Tauri command result:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to print talon:', error);
       console.error('❌ Error details:', error);
       throw error;
     }
@@ -457,37 +559,23 @@ Date: ${paymentData.date}
       ticketContent += `Véhicule: ${booking.vehicleLicensePlate}\n`;
     }
     
-    // Seat information
-    if (booking.seatsBooked) {
-      ticketContent += `Places: ${booking.seatsBooked}\n`;
-    }
-    
-    if (booking.seatNumber) {
-      ticketContent += `Siège: ${booking.seatNumber}\n`;
-    }
+    // Seat information - removed as requested
     
     // Queue position
     if (booking.queuePosition) {
       ticketContent += `Position file: #${booking.queuePosition}\n`;
     }
     
-    // Price breakdown
-    if (booking.baseAmount !== undefined) {
-      ticketContent += `Prix de base: ${booking.baseAmount.toFixed(3)} TND\n`;
-    }
+    // Price breakdown - always show base price + service fees = total
+    const basePrice = booking.basePrice || booking.baseAmount || 0;
+    const serviceFee = basePrice * 0.1; // 10% service fee
+    const totalPrice = basePrice + serviceFee;
     
-    if (booking.serviceFeeAmount !== undefined) {
-      ticketContent += `Frais de service: ${booking.serviceFeeAmount.toFixed(3)} TND\n`;
-    }
+    ticketContent += `Prix de base: ${basePrice.toFixed(3)} TND\n`;
+    ticketContent += `Frais de service: ${serviceFee.toFixed(3)} TND\n`;
+    ticketContent += `Total: ${totalPrice.toFixed(3)} TND\n`;
     
-    if (booking.totalAmount) {
-      ticketContent += `Total: ${booking.totalAmount.toFixed(3)} TND\n`;
-    }
-    
-    // Booking type
-    if (booking.bookingType) {
-      ticketContent += `Type: ${booking.bookingType}\n`;
-    }
+    // Booking type - removed as requested
     
     // Date
     if (booking.createdAt) {
@@ -501,8 +589,47 @@ Date: ${paymentData.date}
       ticketContent += `Départ estimé: ${date.toLocaleString('fr-FR')}\n`;
     }
     
-    console.log('📄 Formatted ticket content:', ticketContent);
+    console.log('📄 Formatted main ticket content:', ticketContent);
     return ticketContent;
+  }
+
+  /**
+   * Format talon (detachable stub) data for thermal printing
+   */
+  formatTalonData(booking: any): string {
+    console.log('📝 formatTalonData called with booking:', booking);
+    let talonContent = '';
+    
+    // Talon header
+    talonContent += `${'='.repeat(48)}\n`;
+    talonContent += `TALON À DÉTACHER\n`;
+    talonContent += `${'='.repeat(48)}\n`;
+    
+    // Seat index (1/8, 2/8, etc.)
+    if (booking.seatNumber) {
+      talonContent += `Siège: ${booking.seatNumber}/8\n`;
+    }
+    
+    // Vehicle license plate
+    if (booking.vehicleLicensePlate) {
+      talonContent += `Véhicule: ${booking.vehicleLicensePlate}\n`;
+    }
+    
+    // Time
+    const currentTime = new Date();
+    talonContent += `Heure: ${currentTime.toLocaleTimeString('fr-FR')}\n`;
+    
+    // Staff name (from booking data or parameter)
+    const staffName = booking.staffName || 'N/A';
+    talonContent += `Agent: ${staffName}\n`;
+    
+    // Add perforation line for easy tearing
+    talonContent += `\n${'-'.repeat(48)}\n`;
+    talonContent += `DÉTACHER ICI\n`;
+    talonContent += `${'-'.repeat(48)}\n`;
+    
+    console.log('📄 Formatted talon content:', talonContent);
+    return talonContent;
   }
 
   /**
@@ -625,6 +752,12 @@ Date: ${paymentData.date}
     const exitPassNumber = `EXIT${Date.now().toString().slice(-8)}`;
     ticketContent += `N° Sortie: ${exitPassNumber}\n`;
     
+    // Current vehicle info
+    ticketContent += `Véhicule: ${exitPassData.licensePlate}\n`;
+    ticketContent += `Destination: ${exitPassData.destinationName}\n`;
+    ticketContent += `Sorti à: ${new Date(exitPassData.currentExitTime).toLocaleString('fr-FR')}\n`;
+    ticketContent += `\n`;
+    
     // Previous vehicle info (if any)
     if (exitPassData.previousLicensePlate && exitPassData.previousExitTime) {
       ticketContent += `Véhicule précédent: ${exitPassData.previousLicensePlate}\n`;
@@ -636,20 +769,12 @@ Date: ${paymentData.date}
       ticketContent += `\n`;
     }
     
-    // Current vehicle info
-    ticketContent += `Véhicule actuel: ${exitPassData.licensePlate}\n`;
-    ticketContent += `Sorti à: ${new Date(exitPassData.currentExitTime).toLocaleString('fr-FR')}\n`;
-    ticketContent += `\n`;
-    
-    // Destination
-    ticketContent += `Destination: ${exitPassData.destinationName}\n`;
-    ticketContent += `\n`;
-    
     // Pricing info
-    ticketContent += `Prix par place: ${exitPassData.basePricePerSeat.toFixed(2)} TND\n`;
+    ticketContent += `Prix par place: ${exitPassData.basePricePerSeat.toFixed(3)} TND\n`;
     ticketContent += `Total places: ${exitPassData.totalSeats}\n`;
-    ticketContent += `Prix total: ${exitPassData.totalBasePrice.toFixed(2)} TND\n`;
+    ticketContent += `Prix total: ${exitPassData.totalBasePrice.toFixed(3)} TND\n`;
     
+    console.log('📄 Formatted exit pass ticket content:', ticketContent);
     return ticketContent;
   }
 
@@ -664,28 +789,28 @@ Date: ${paymentData.date}
    * Set printer IP address
    */
   async setPrinterIP(ip: string): Promise<void> {
-    await this.updateConfig({ ip });
+    await this.updatePrinterConfig(this.config.id, { ip });
   }
 
   /**
    * Set printer port
    */
   async setPrinterPort(port: number): Promise<void> {
-    await this.updateConfig({ port });
+    await this.updatePrinterConfig(this.config.id, { port });
   }
 
   /**
    * Set printer width
    */
   async setPrinterWidth(width: number): Promise<void> {
-    await this.updateConfig({ width });
+    await this.updatePrinterConfig(this.config.id, { width });
   }
 
   /**
    * Set printer timeout
    */
   async setPrinterTimeout(timeout: number): Promise<void> {
-    await this.updateConfig({ timeout });
+    await this.updatePrinterConfig(this.config.id, { timeout });
   }
 }
 

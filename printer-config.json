@@ -1,0 +1,47 @@
+{
+  "printers": [
+    {
+      "id": "printer1",
+      "name": "Imprimante 1",
+      "ip": "192.168.192.10",
+      "port": 9100,
+      "width": 48,
+      "timeout": 5000,
+      "type": "EPSON",
+      "model": "TM-T20X",
+      "characterSet": "PC852_LATIN2",
+      "enabled": true,
+      "is_default": true
+    },
+    {
+      "id": "printer2",
+      "name": "Imprimante 2",
+      "ip": "192.168.192.11",
+      "port": 9100,
+      "width": 48,
+      "timeout": 5000,
+      "type": "EPSON",
+      "model": "TM-T20X",
+      "characterSet": "PC852_LATIN2",
+      "enabled": true,
+      "is_default": false
+    },
+    {
+      "id": "printer3",
+      "name": "Imprimante 3",
+      "ip": "192.168.192.12",
+      "port": 9100,
+      "width": 48,
+      "timeout": 5000,
+      "type": "EPSON",
+      "model": "TM-T20X",
+      "characterSet": "PC852_LATIN2",
+      "enabled": true,
+      "is_default": false
+    }
+  ],
+  "lastUpdated": "2025-01-21T22:44:12.233Z",
+  "status": "working",
+  "autoDetect": true,
+  "fallbackEnabled": true
+}
