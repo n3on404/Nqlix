@@ -527,29 +527,29 @@ const StaffManagement: React.FC = () => {
 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   <div className="bg-card p-3 rounded border">
-                    <div className="text-xs text-gray-600">Réservations (Espèces)</div>
-                    <div className="text-lg font-semibold">{formatTND(reportData.totals.totalCashBookingsAmount || 0)}</div>
+                    <div className="text-xs text-gray-600">Frais de Service</div>
+                    <div className="text-lg font-semibold">{formatTND(reportData.totals.totalServiceFees || 0)}</div>
                   </div>
                   <div className="bg-card p-3 rounded border">
                     <div className="text-xs text-gray-600">Pass Journaliers</div>
                     <div className="text-lg font-semibold">{formatTND(reportData.totals.totalDayPasses || 0)}</div>
                   </div>
                   <div className="bg-card p-3 rounded border">
-                    <div className="text-xs text-gray-600">Total Général</div>
-                    <div className="text-lg font-semibold">{formatTND(reportData.totals.grandTotal || 0)}</div>
+                    <div className="text-xs text-gray-600">Revenus Totaux</div>
+                    <div className="text-lg font-semibold">{formatTND(reportData.totals.totalIncome || 0)}</div>
                   </div>
                 </div>
 
                 <div className="space-y-3">
                   <div>
-                    <div className="font-semibold mb-2">Réservations</div>
+                    <div className="font-semibold mb-2">Réservations (Frais de Service)</div>
                     <div className="max-h-64 overflow-auto space-y-1 text-sm">
                       {reportData.items.bookings.length === 0 ? (
                         <div className="text-gray-500">Aucune réservation</div>
                       ) : reportData.items.bookings.map((b: any) => (
                         <div key={b.id} className="flex justify-between border-b py-1">
-                          <div>{b.seatsBooked} place(s) • {b.queue?.destinationName || '—'}</div>
-                          <div>{formatTND(b.totalAmount || 0)}</div>
+                          <div>{b.seatsBooked} place(s) • {(b.destinationName) || b.queue?.destinationName || '—'}</div>
+                          <div className="font-semibold text-green-700">{formatTND(b.serviceFeeAmount || 0)}</div>
                         </div>
                       ))}
                     </div>

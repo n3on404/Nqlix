@@ -480,7 +480,7 @@ async fn auto_set_default_printer() -> Result<(), String> {
     let printer_clone = {
         let printer_guard = printer.lock().map_err(|e| e.to_string())?;
         printer_guard.clone()
-    };
+    }; // printer_guard is automatically dropped here
     printer_clone.auto_set_default_printer().await
 }
 
@@ -490,7 +490,7 @@ async fn test_printer_connection() -> Result<PrinterStatus, String> {
     let printer_clone = {
         let printer_guard = printer.lock().map_err(|e| e.to_string())?;
         printer_guard.clone()
-    };
+    }; // printer_guard is automatically dropped here
     printer_clone.test_connection().await
 }
 
@@ -718,7 +718,7 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     // HARDCODED: Use the ethernet IP for testing
-    let hardcoded_ip = "192.168.192.1".parse::<IpAddr>()?;
+    let hardcoded_ip = "127.0.0.1".parse::<IpAddr>()?;
     println!("🔍 Using hardcoded ethernet IP: {}", hardcoded_ip);
     return Ok(hardcoded_ip);
     
@@ -1131,9 +1131,12 @@ fn main() {
                 }
             }
             
-            // Auto-set default printer on startup
+            // Auto-set default printer on startup (with delay to prevent early execution)
             let printer_service = PRINTER_SERVICE.clone();
             tauri::async_runtime::spawn(async move {
+                // Wait a bit to ensure the application is fully loaded
+                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                
                 let printer_clone = {
                     let printer_guard = printer_service.lock().map_err(|e| e.to_string())?;
                     printer_guard.clone()

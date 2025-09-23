@@ -41,7 +41,7 @@ const SupervisorVehicleManagement: React.FC = () => {
   const { currentStaff } = useAuth();
   const { addNotification } = useNotifications();
   const navigate = useNavigate();
-  const todayStr = () => new Date().toISOString().slice(0,10);
+  const todayStr = () => { const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; };
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [pendingRequests, setPendingRequests] = useState<DriverRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -78,6 +78,12 @@ const SupervisorVehicleManagement: React.FC = () => {
   });
   const [isCreatingStation, setIsCreatingStation] = useState(false);
   const [createStationError, setCreateStationError] = useState<string | null>(null);
+
+  // Helper
+  const formatTND = (value: any) => {
+    const n = typeof value === 'number' ? value : parseFloat(value || '0');
+    return `${(Number.isFinite(n) ? n : 0).toFixed(3)} TND`;
+  };
 
   // Function to select all Monastir delegations
   const selectAllMonastirDelegations = () => {
@@ -397,6 +403,37 @@ const SupervisorVehicleManagement: React.FC = () => {
     const res = await api.get<Vehicle>(`/api/vehicles/${id}`);
     if (res.success && res.data) {
       setVehicleDetails(res.data);
+      // Fetch today's income via exit passes
+      try {
+        const lp = res.data?.licensePlate;
+        if (lp) {
+          const today = todayStr();
+          const incomeRes = await api.getDriverIncome(lp, today);
+          if (incomeRes.success && incomeRes.data) {
+            const incomeEl = document.getElementById('driver-income-today');
+            const listEl = document.getElementById('driver-income-list');
+            const totalIncome = incomeRes.data?.totals?.totalIncome || 0;
+            if (incomeEl) incomeEl.textContent = formatTND(totalIncome);
+            if (listEl) {
+              listEl.innerHTML = '';
+              const items = Array.isArray(incomeRes.data.items) ? incomeRes.data.items : [];
+              items.forEach((it: any) => {
+                const div = document.createElement('div');
+                div.className = 'flex justify-between border-b py-1';
+                const when = it.exitTime ? new Date(it.exitTime).toLocaleTimeString() : '';
+                div.innerHTML = `<span>${it.destinationName || '—'} • ${when}</span><span class="font-semibold">${(Number(it.amount || 0)).toFixed(3)} TND</span>`;
+                listEl.appendChild(div);
+              });
+              if (items.length === 0) {
+                const div = document.createElement('div');
+                div.className = 'text-muted-foreground';
+                div.textContent = 'Aucune sortie aujourd\'hui';
+                listEl.appendChild(div);
+              }
+            }
+          }
+        }
+      } catch {}
     } else {
       setVehicleDetails(null);
     }
@@ -473,7 +510,7 @@ const SupervisorVehicleManagement: React.FC = () => {
           </h2>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={async () => {
-              const date = new Date().toISOString().slice(0,10);
+              const date = todayStr();
               const res = await api.get(`/api/vehicles/trips/daily?date=${encodeURIComponent(date)}`);
               if (res.success && res.data) {
                 try { sessionStorage.setItem(`allVehicleTrips:${date}`, JSON.stringify(res.data)); } catch {}
@@ -986,6 +1023,19 @@ const SupervisorVehicleManagement: React.FC = () => {
                     </Badge>
                   </div>
                 </div>
+                  {/* Driver Income (today, from exit passes) */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="bg-card p-3 rounded border">
+                      <div className="text-xs text-muted-foreground">Revenus d'aujourd'hui</div>
+                      <div className="text-lg font-semibold" id="driver-income-today">
+                        {/* Filled dynamically below */}
+                      </div>
+                    </div>
+                    <div className="md:col-span-2 bg-card p-3 rounded border">
+                      <div className="text-xs text-muted-foreground mb-1">Sorties aujourd'hui</div>
+                      <div className="space-y-1 text-sm max-h-32 overflow-auto" id="driver-income-list"></div>
+                    </div>
+                  </div>
                 <div className="flex flex-col gap-2">
                   <div className="font-semibold text-zinc-700 dark:text-zinc-200">Stations autorisées</div>
                   <div className="flex flex-wrap gap-2 items-center">
