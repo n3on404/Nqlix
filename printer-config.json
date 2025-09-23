@@ -7,9 +7,7 @@
       "port": 9100,
       "width": 48,
       "timeout": 5000,
-      "type": "EPSON",
       "model": "TM-T20X",
-      "characterSet": "PC852_LATIN2",
       "enabled": true,
       "is_default": true
     },
@@ -20,9 +18,7 @@
       "port": 9100,
       "width": 48,
       "timeout": 5000,
-      "type": "EPSON",
       "model": "TM-T20X",
-      "characterSet": "PC852_LATIN2",
       "enabled": true,
       "is_default": false
     },
@@ -33,15 +29,13 @@
       "port": 9100,
       "width": 48,
       "timeout": 5000,
-      "type": "EPSON",
       "model": "TM-T20X",
-      "characterSet": "PC852_LATIN2",
       "enabled": true,
       "is_default": false
     }
   ],
-  "lastUpdated": "2025-01-21T22:44:12.233Z",
+  "last_updated": "2025-09-23T00:26:21.023930166+00:00",
   "status": "working",
-  "autoDetect": true,
-  "fallbackEnabled": true
+  "auto_detect": true,
+  "fallback_enabled": true
 }

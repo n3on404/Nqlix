@@ -696,9 +696,50 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 }
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
+    // HARDCODED: Use the ethernet IP for testing
+    let hardcoded_ip = "192.168.192.1".parse::<IpAddr>()?;
+    println!("🔍 Using hardcoded ethernet IP: {}", hardcoded_ip);
+    return Ok(hardcoded_ip);
+    
+    /* DISABLED: All the complex IP detection logic
     use std::process::Command;
     
-    // First try to get ethernet IP using ip addr show command (prioritize ethernet)
+    println!("🔍 get_local_ip() function called!");
+    
+    // First, try to directly get the ethernet IP using ifconfig enp4s0
+    println!("🔍 Trying ifconfig enp4s0...");
+    if let Ok(output) = Command::new("ifconfig")
+        .args(&["enp4s0"])
+        .output()
+    {
+        println!("🔍 ifconfig command executed, status: {}", output.status);
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            println!("🔍 ifconfig output: {}", output_str);
+            for line in output_str.lines() {
+                if line.contains("inet ") {
+                    println!("🔍 Found inet line: {}", line);
+                    if let Some(ip_part) = line.split_whitespace().find(|part| part.starts_with("inet")) {
+                        if let Some(ip_str) = ip_part.split_whitespace().nth(1) {
+                            println!("🔍 Found IP string: {}", ip_str);
+                            if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                                if ip.is_ipv4() && !ip.is_loopback() {
+                                    println!("🔍 Found ethernet IP via ifconfig enp4s0: {}", ip);
+                                    return Ok(ip);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            println!("🔍 ifconfig command failed with status: {}", output.status);
+        }
+    } else {
+        println!("🔍 Failed to execute ifconfig command");
+    }
+    
+    // Fallback: try to get ethernet IP using ip addr show command
     if let Ok(output) = Command::new("ip")
         .args(&["addr", "show"])
         .output()
@@ -731,7 +772,19 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
                 }
             }
             
-            // Prioritize ethernet IPs
+            // Prioritize ethernet IPs (especially 192.168.192.x range)
+            if let Some(ethernet_ip) = ethernet_ips.iter().find(|ip| {
+                if let IpAddr::V4(ipv4) = ip {
+                    ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 && ipv4.octets()[2] == 192
+                } else {
+                    false
+                }
+            }) {
+                println!("🔍 Found ethernet IP in 192.168.192.x range: {}", ethernet_ip);
+                return Ok(*ethernet_ip);
+            }
+            
+            // Fallback to any ethernet IP
             if let Some(ethernet_ip) = ethernet_ips.first() {
                 println!("🔍 Found ethernet IP via ip addr: {}", ethernet_ip);
                 return Ok(*ethernet_ip);
@@ -745,26 +798,45 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
         }
     }
     
-    // Fallback: try to get IP using ip route command
+    // Fallback: try to get IP using ip route command, but prioritize 192.168.192.x
     if let Ok(output) = Command::new("ip")
         .args(&["route", "get", "8.8.8.8"])
         .output()
     {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
+            let mut found_ips = Vec::new();
+            
             for line in output_str.lines() {
                 if line.contains("src") {
                     if let Some(ip_part) = line.split_whitespace().find(|part| part.starts_with("src")) {
                         if let Some(ip_str) = ip_part.split_whitespace().nth(1) {
                             if let Ok(ip) = ip_str.parse::<IpAddr>() {
                                 if ip.is_ipv4() && !ip.is_loopback() {
-                                    println!("🔍 Found IP via ip route: {}", ip);
-                                    return Ok(ip);
+                                    found_ips.push(ip);
                                 }
                             }
                         }
                     }
                 }
+            }
+            
+            // Prioritize 192.168.192.x range
+            if let Some(printer_network_ip) = found_ips.iter().find(|ip| {
+                if let IpAddr::V4(ipv4) = ip {
+                    ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 && ipv4.octets()[2] == 192
+                } else {
+                    false
+                }
+            }) {
+                println!("🔍 Found printer network IP via ip route: {}", printer_network_ip);
+                return Ok(*printer_network_ip);
+            }
+            
+            // Fallback to any found IP
+            if let Some(ip) = found_ips.first() {
+                println!("🔍 Found IP via ip route: {}", ip);
+                return Ok(*ip);
             }
         }
     }
@@ -775,19 +847,38 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
+            let mut ethernet_ips = Vec::new();
+            
             for line in output_str.lines() {
                 if line.contains("inet ") && (line.contains("eth0") || line.contains("enp") || line.contains("ens")) {
                     if let Some(ip_part) = line.split_whitespace().find(|part| part.starts_with("inet")) {
                         if let Some(ip_str) = ip_part.split_whitespace().nth(1) {
                             if let Ok(ip) = ip_str.parse::<IpAddr>() {
                                 if ip.is_ipv4() && !ip.is_loopback() {
-                                    println!("🔍 Found ethernet IP via ifconfig: {}", ip);
-                                    return Ok(ip);
+                                    ethernet_ips.push(ip);
                                 }
                             }
                         }
                     }
                 }
+            }
+            
+            // Prioritize 192.168.192.x range
+            if let Some(printer_network_ip) = ethernet_ips.iter().find(|ip| {
+                if let IpAddr::V4(ipv4) = ip {
+                    ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 && ipv4.octets()[2] == 192
+                } else {
+                    false
+                }
+            }) {
+                println!("🔍 Found printer network IP via ifconfig: {}", printer_network_ip);
+                return Ok(*printer_network_ip);
+            }
+            
+            // Fallback to any ethernet IP
+            if let Some(ethernet_ip) = ethernet_ips.first() {
+                println!("🔍 Found ethernet IP via ifconfig: {}", ethernet_ip);
+                return Ok(*ethernet_ip);
             }
         }
     }
@@ -799,14 +890,68 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
+            let mut ethernet_ips = Vec::new();
+            
             for line in output_str.lines() {
                 if line.contains("eth0") || line.contains("enp") || line.contains("ens") {
                     if let Some(ip_str) = line.split(':').nth(1) {
                         if let Some(ip) = ip_str.split('/').next() {
                             if let Ok(ip_addr) = ip.parse::<IpAddr>() {
                                 if ip_addr.is_ipv4() && !ip_addr.is_loopback() {
-                                    println!("🔍 Found ethernet IP via nmcli: {}", ip_addr);
-                                    return Ok(ip_addr);
+                                    ethernet_ips.push(ip_addr);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Prioritize 192.168.192.x range
+            if let Some(printer_network_ip) = ethernet_ips.iter().find(|ip| {
+                if let IpAddr::V4(ipv4) = ip {
+                    ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 && ipv4.octets()[2] == 192
+                } else {
+                    false
+                }
+            }) {
+                println!("🔍 Found printer network IP via nmcli: {}", printer_network_ip);
+                return Ok(*printer_network_ip);
+            }
+            
+            // Fallback to any ethernet IP
+            if let Some(ethernet_ip) = ethernet_ips.first() {
+                println!("🔍 Found ethernet IP via nmcli: {}", ethernet_ip);
+                return Ok(*ethernet_ip);
+            }
+        }
+    }
+    
+    // Final fallback: try to get local IP by connecting to a known address
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect("8.8.8.8:80")?;
+    let local_addr = socket.local_addr()?;
+    let detected_ip = local_addr.ip();
+    
+    // If the detected IP is not in the printer network range, try to find ethernet IP manually
+    if let IpAddr::V4(ipv4) = detected_ip {
+        if !(ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 && ipv4.octets()[2] == 192) {
+            // Try to find ethernet IP manually using ifconfig
+            if let Ok(output) = Command::new("ifconfig")
+                .args(&["enp4s0"])
+                .output()
+            {
+                if output.status.success() {
+                    let output_str = String::from_utf8_lossy(&output.stdout);
+                    for line in output_str.lines() {
+                        if line.contains("inet ") {
+                            if let Some(ip_part) = line.split_whitespace().find(|part| part.starts_with("inet")) {
+                                if let Some(ip_str) = ip_part.split_whitespace().nth(1) {
+                                    if let Ok(ethernet_ip) = ip_str.parse::<IpAddr>() {
+                                        if ethernet_ip.is_ipv4() && !ethernet_ip.is_loopback() {
+                                            println!("🔍 Found ethernet IP via ifconfig enp4s0: {}", ethernet_ip);
+                                            return Ok(ethernet_ip);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -816,12 +961,9 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
         }
     }
     
-    // Final fallback: try to get local IP by connecting to a known address
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
-    socket.connect("8.8.8.8:80")?;
-    let local_addr = socket.local_addr()?;
-    println!("🔍 Using fallback method for IP detection: {}", local_addr.ip());
-    Ok(local_addr.ip())
+    println!("🔍 Using fallback method for IP detection: {}", detected_ip);
+    Ok(detected_ip)
+    */
 }
 
 fn get_network_prefix(ip: &IpAddr) -> String {
