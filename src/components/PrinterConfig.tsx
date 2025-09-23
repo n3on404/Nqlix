@@ -9,6 +9,7 @@ import { Separator } from './ui/separator';
 import { Select } from './ui/select';
 import { thermalPrinter, PrinterStatus } from '../services/thermalPrinterService';
 import type { PrinterConfig } from '../services/thermalPrinterService';
+import { getLocalStorage, setLocalStorage } from '../lib/storage';
 import { Printer, Wifi, Settings, TestTube, CheckCircle, XCircle, Loader2, Plus, Trash2, Edit } from 'lucide-react';
 
 export const PrinterConfigComponent: React.FC = () => {
@@ -31,10 +32,31 @@ export const PrinterConfigComponent: React.FC = () => {
       const allPrinters = await thermalPrinter.getAllPrinters();
       setPrinters(allPrinters);
       
+      // Try to get current printer from backend first
       const current = await thermalPrinter.getCurrentPrinter();
       setCurrentPrinterState(current);
+      
       if (current) {
         setSelectedPrinterId(current.id);
+        // Save to localStorage as well
+        setLocalStorage('defaultPrinterId', current.id);
+      } else {
+        // If no current printer from backend, try to load from localStorage
+        const savedPrinterId = getLocalStorage('defaultPrinterId');
+        if (savedPrinterId) {
+          const savedPrinter = allPrinters.find(p => p.id === savedPrinterId);
+          if (savedPrinter) {
+            setSelectedPrinterId(savedPrinterId);
+            setCurrentPrinterState(savedPrinter);
+            // Set it as current printer in backend
+            try {
+              await thermalPrinter.setCurrentPrinter(savedPrinterId);
+              setMessage(`Imprimante "${savedPrinter.name}" restaurée depuis la sauvegarde locale`);
+            } catch (error) {
+              console.error('Failed to restore printer from localStorage:', error);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to load printers:', error);
@@ -88,6 +110,15 @@ export const PrinterConfigComponent: React.FC = () => {
   const removePrinter = async (printerId: string) => {
     setLoading(true);
     try {
+      // Check if this is the currently selected printer
+      const savedPrinterId = getLocalStorage('defaultPrinterId');
+      if (savedPrinterId === printerId) {
+        // Clear the saved printer since it's being deleted
+        setLocalStorage('defaultPrinterId', '');
+        setSelectedPrinterId('');
+        setCurrentPrinterState(null);
+      }
+      
       await thermalPrinter.removePrinter(printerId);
       setMessage('Imprimante supprimée avec succès');
       await loadPrinters();
@@ -104,8 +135,13 @@ export const PrinterConfigComponent: React.FC = () => {
     try {
       await thermalPrinter.setCurrentPrinter(printerId);
       setSelectedPrinterId(printerId);
+      
+      // Save to localStorage for persistence
+      setLocalStorage('defaultPrinterId', printerId);
+      
       await loadPrinters();
-      setMessage(`Imprimante "${printers.find(p => p.id === printerId)?.name}" configurée comme imprimante par défaut pour cet ordinateur`);
+      const printerName = printers.find(p => p.id === printerId)?.name || 'Imprimante';
+      setMessage(`Imprimante "${printerName}" configurée comme imprimante par défaut pour cet ordinateur et sauvegardée localement`);
     } catch (error) {
       console.error('Failed to set current printer:', error);
       setMessage('Erreur lors du changement d\'imprimante');
@@ -297,6 +333,22 @@ export const PrinterConfigComponent: React.FC = () => {
                 <CheckCircle className="mr-1 h-3 w-3" />
                 {currentPrinter.name} - {currentPrinter.ip}:{currentPrinter.port}
               </Badge>
+              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                💾 Sauvegardé localement
+              </Badge>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={() => {
+                  setLocalStorage('defaultPrinterId', '');
+                  setSelectedPrinterId('');
+                  setCurrentPrinterState(null);
+                  setMessage('Sauvegarde locale de l\'imprimante effacée');
+                }}
+                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              >
+                Effacer
+              </Button>
             </div>
           )}
 

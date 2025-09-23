@@ -653,6 +653,12 @@ class ApiService {
     return this.get(`/api/staff/${id}`);
   }
 
+  // Driver income (based on exit passes)
+  public async getDriverIncome(licensePlate: string, date?: string): Promise<ApiResponse<any>> {
+    const qp = date ? `?date=${encodeURIComponent(date)}` : '';
+    return this.get(`/api/driver-tickets/income/${encodeURIComponent(licensePlate)}${qp}`);
+  }
+
   public async createStaffMember(staffData: any): Promise<ApiResponse<any>> {
     return this.post('/api/staff', staffData);
   }

@@ -9,7 +9,7 @@
       "timeout": 5000,
       "model": "TM-T20X",
       "enabled": true,
-      "is_default": true
+      "is_default": false
     },
     {
       "id": "printer2",
@@ -20,7 +20,7 @@
       "timeout": 5000,
       "model": "TM-T20X",
       "enabled": true,
-      "is_default": false
+      "is_default": true
     },
     {
       "id": "printer3",
@@ -34,7 +34,7 @@
       "is_default": false
     }
   ],
-  "last_updated": "2025-09-23T00:22:01.876183573+00:00",
+  "last_updated": "2025-09-23T05:06:12.227089018+00:00",
   "status": "working",
   "auto_detect": true,
   "fallback_enabled": true

@@ -168,6 +168,15 @@ impl PrinterService {
         let config_path = "printer-config.json";
         let content = serde_json::to_string_pretty(&*config_file)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        
+        // Check if the content has actually changed to avoid unnecessary file writes
+        if let Ok(existing_content) = std::fs::read_to_string(config_path) {
+            if existing_content == content {
+                // Content is the same, no need to write
+                return Ok(());
+            }
+        }
+        
         std::fs::write(config_path, content)
             .map_err(|e| format!("Failed to write config file: {}", e))?;
         Ok(())
@@ -256,6 +265,24 @@ impl PrinterService {
     /// Automatically set the first working printer as default
     pub async fn auto_set_default_printer(&self) -> Result<(), String> {
         let printers = self.get_all_printers()?;
+        
+        // Check if there's already a default printer set (without holding the lock across await)
+        let has_current_printer = {
+            let current_printer = self.current_printer.lock().map_err(|e| e.to_string())?;
+            current_printer.is_some()
+        };
+        
+        if has_current_printer {
+            // Already have a default printer, no need to change
+            println!("🎯 Default printer already set, skipping auto-setup");
+            return Ok(());
+        }
+        
+        // Check if there are any enabled printers
+        if !printers.iter().any(|p| p.enabled) {
+            println!("⚠️ No enabled printers found, skipping auto-setup");
+            return Ok(());
+        }
         
         // Try to find a working printer
         for printer in &printers {
@@ -1764,7 +1791,7 @@ printExitPassTicket();
         }
     }
 
-    // Direct TCP printing method for Windows (similar to PowerShell scripts)
+    // Direct TCP printing method for Windows (using PowerShell script)
     pub async fn print_direct_tcp(&self, printer_id: &str, content: &str) -> Result<String, String> {
         let config = self.get_printer_by_id(printer_id)?
             .ok_or_else(|| format!("Printer with ID {} not found", printer_id))?;
@@ -1772,25 +1799,27 @@ printExitPassTicket();
         println!("🖨️ [DIRECT TCP] Printing to {} ({}:{})", config.name, config.ip, config.port);
         println!("🖨️ [DIRECT TCP] Content: {}", content);
 
-        // Use tokio for async TCP connection
-        let result = tokio::time::timeout(
-            Duration::from_millis(config.timeout),
-            self.send_tcp_print(&config, content)
-        ).await;
+        // Use PowerShell script for reliable printing
+        let script_path = "scripts/simple-print.ps1";
+        let output = Command::new("powershell")
+            .args(&[
+                "-ExecutionPolicy", "Bypass",
+                "-File", script_path,
+                "-PrinterIP", &config.ip,
+                "-PrinterPort", &config.port.to_string(),
+                "-Content", content
+            ])
+            .output()
+            .map_err(|e| format!("Failed to execute PowerShell script: {}", e))?;
 
-        match result {
-            Ok(Ok(response)) => {
-                println!("🖨️ [DIRECT TCP] Print successful: {}", response);
-                Ok(response)
-            }
-            Ok(Err(e)) => {
-                println!("🖨️ [DIRECT TCP] Print failed: {}", e);
-                Err(format!("Direct TCP print failed: {}", e))
-            }
-            Err(_) => {
-                println!("🖨️ [DIRECT TCP] Print timeout after {}ms", config.timeout);
-                Err(format!("Print timeout after {}ms", config.timeout))
-            }
+        if output.status.success() {
+            let result = String::from_utf8_lossy(&output.stdout);
+            println!("🖨️ [DIRECT TCP] Print successful: {}", result);
+            Ok(result.to_string())
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            println!("🖨️ [DIRECT TCP] Print failed: {}", error);
+            Err(format!("PowerShell print failed: {}", error))
         }
     }
 
@@ -1828,35 +1857,48 @@ printExitPassTicket();
         Ok("Print job completed successfully".to_string())
     }
 
-    // Test direct TCP connection
+    // Test direct TCP connection using PowerShell
     pub async fn test_direct_tcp_connection(&self, printer_id: &str) -> Result<String, String> {
         let config = self.get_printer_by_id(printer_id)?
             .ok_or_else(|| format!("Printer with ID {} not found", printer_id))?;
 
         println!("🔍 [DIRECT TCP] Testing connection to {} ({}:{})", config.name, config.ip, config.port);
 
-        use tokio::net::TcpStream;
-        use tokio::time::{timeout, Duration};
+        // Use PowerShell to test connection
+        let test_script = format!(
+            r#"
+try {{
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    $tcp.Connect('{}', {})
+    if ($tcp.Connected) {{
+        Write-Host "✅ Connection successful to {}:{}" -ForegroundColor Green
+        $tcp.Close()
+        exit 0
+    }} else {{
+        Write-Host "❌ Connection failed to {}:{}" -ForegroundColor Red
+        exit 1
+    }}
+}} catch {{
+    Write-Host "❌ Connection error: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}}
+"#,
+            config.ip, config.port, config.ip, config.port, config.ip, config.port
+        );
 
-        let addr = format!("{}:{}", config.ip, config.port);
-        let result = timeout(
-            Duration::from_millis(config.timeout),
-            TcpStream::connect(&addr)
-        ).await;
+        let output = Command::new("powershell")
+            .args(&["-ExecutionPolicy", "Bypass", "-Command", &test_script])
+            .output()
+            .map_err(|e| format!("Failed to execute PowerShell test: {}", e))?;
 
-        match result {
-            Ok(Ok(_stream)) => {
-                println!("🔍 [DIRECT TCP] Connection successful to {}", addr);
-                Ok(format!("Connection successful to {}:{}", config.ip, config.port))
-            }
-            Ok(Err(e)) => {
-                println!("🔍 [DIRECT TCP] Connection failed to {}: {}", addr, e);
-                Err(format!("Connection failed: {}", e))
-            }
-            Err(_) => {
-                println!("🔍 [DIRECT TCP] Connection timeout to {}", addr);
-                Err(format!("Connection timeout after {}ms", config.timeout))
-            }
+        if output.status.success() {
+            let result = String::from_utf8_lossy(&output.stdout);
+            println!("🔍 [DIRECT TCP] Test successful: {}", result);
+            Ok(format!("Connection successful to {}:{}", config.ip, config.port))
+        } else {
+            let error = String::from_utf8_lossy(&output.stderr);
+            println!("🔍 [DIRECT TCP] Test failed: {}", error);
+            Err(format!("Connection test failed: {}", error))
         }
     }
 }

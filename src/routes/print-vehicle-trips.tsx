@@ -7,8 +7,9 @@ const A4: React.CSSProperties = { width: '210mm', minHeight: '297mm', padding: '
 export default function PrintVehicleTrips() {
   const [params] = useSearchParams();
   const vehicleId = params.get('vehicleId') || '';
-  const date = params.get('date') || new Date().toISOString().slice(0,10);
+  const date = params.get('date') || (() => { const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; })();
   const [data, setData] = useState<any | null>(null);
+  const [income, setIncome] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,6 +26,12 @@ export default function PrintVehicleTrips() {
         if (res.success) {
           setData(res.data);
           try { sessionStorage.setItem(key, JSON.stringify(res.data)); } catch {}
+          // Also load driver income from exit passes using license plate
+          const lp = res.data?.vehicle?.licensePlate;
+          if (lp) {
+            const incomeRes = await api.getDriverIncome(lp, date);
+            if (incomeRes.success) setIncome(incomeRes.data);
+          }
         } else if (!cached) setError(res.message || 'Erreur de chargement');
       } catch (e: any) {
         if (!data) setError(e?.message || 'Erreur de chargement');
@@ -59,42 +66,68 @@ export default function PrintVehicleTrips() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6mm', marginBottom: '10mm' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6mm', marginBottom: '10mm' }}>
         <div style={{ border: '1px solid #ddd', padding: '4mm' }}>
-          <div style={{ fontSize: '9pt', color: '#666' }}>Total places</div>
-          <div style={{ fontSize: '12pt', fontWeight: 700 }}>{toNumber(data.totals.totalSeats)}</div>
-        </div>
-        <div style={{ border: '1px solid #ddd', padding: '4mm' }}>
-          <div style={{ fontSize: '9pt', color: '#666' }}>Recette totale</div>
-          <div style={{ fontSize: '12pt', fontWeight: 700 }}>{formatTND(data.totals.totalRevenue)}</div>
+          <div style={{ fontSize: '9pt', color: '#666' }}>Revenus (sorties)</div>
+          <div style={{ fontSize: '12pt', fontWeight: 700 }}>
+            {income ? formatTND(income.totals?.totalIncome || 0) : formatTND(data.totals?.totalRevenue || 0)}
+          </div>
         </div>
       </div>
 
-      <section>
-        <h2 style={{ fontSize: '12pt', margin: 0, marginBottom: '2mm' }}>Trajets</h2>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '2mm' }}>Heure</th>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '2mm' }}>Destination</th>
-              <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Places</th>
-              <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Prix/Place</th>
-              <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Montant</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.trips.map((t: any, idx: number) => (
-              <tr key={idx}>
-                <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{new Date(t.time).toLocaleTimeString()}</td>
-                <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{t.destination}</td>
-                <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{t.seats}</td>
-                <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(t.basePrice)}</td>
-                <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(t.cost)}</td>
+      {income && Array.isArray(income.items) && income.items.length > 0 ? (
+        <section>
+          <h2 style={{ fontSize: '12pt', margin: 0, marginBottom: '2mm' }}>Sorties (calcul revenu)</h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '2mm' }}>Heure</th>
+                <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '2mm' }}>Destination</th>
+                <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Capacité</th>
+                <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Prix/Place</th>
+                <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Montant</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+            </thead>
+            <tbody>
+              {income.items.map((it: any) => (
+                <tr key={it.id}>
+                  <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{new Date(it.exitTime).toLocaleTimeString()}</td>
+                  <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{it.destinationName || '—'}</td>
+                  <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{toNumber(it.capacity)}</td>
+                  <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(it.basePrice)}</td>
+                  <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(it.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : (
+        <section>
+          <h2 style={{ fontSize: '12pt', margin: 0, marginBottom: '2mm' }}>Trajets</h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '2mm' }}>Heure</th>
+                <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '2mm' }}>Destination</th>
+                <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Places</th>
+                <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Prix/Place</th>
+                <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '2mm' }}>Montant</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.trips.map((t: any, idx: number) => (
+                <tr key={idx}>
+                  <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{new Date(t.time).toLocaleTimeString()}</td>
+                  <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{t.destination}</td>
+                  <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{t.seats}</td>
+                  <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(t.basePrice)}</td>
+                  <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(t.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </div>
   );
 }

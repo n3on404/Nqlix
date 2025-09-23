@@ -31,6 +31,7 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discoveredServers, setDiscoveredServers] = useState<Array<{ip: string, port: number, url: string, response_time: number}>>([]);
+  const [hasPerformedInitialChecks, setHasPerformedInitialChecks] = useState(false);
   
   // Load app version on component mount
   useEffect(() => {
@@ -110,6 +111,12 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   };
 
   const discoverServers = async () => {
+    // Prevent multiple simultaneous discovery calls
+    if (isDiscovering) {
+      console.log('🔍 Network discovery already in progress, skipping...');
+      return null;
+    }
+    
     setIsDiscovering(true);
     updateCheck(0, 'pending', 'Scanning local network for servers...');
     
@@ -265,8 +272,11 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   };
 
   useEffect(() => {
-    performChecks();
-  }, []);
+    if (!hasPerformedInitialChecks) {
+      setHasPerformedInitialChecks(true);
+      performChecks();
+    }
+  }, [hasPerformedInitialChecks]);
 
   if (showServerConfig) {
     return (

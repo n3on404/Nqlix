@@ -6,8 +6,9 @@ const A4: React.CSSProperties = { width: '210mm', minHeight: '297mm', padding: '
 
 export default function PrintAllVehicleTrips() {
   const [params] = useSearchParams();
-  const date = params.get('date') || new Date().toISOString().slice(0,10);
+  const date = params.get('date') || (() => { const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; })();
   const [data, setData] = useState<any | null>(null);
+  const [incomeByPlate, setIncomeByPlate] = useState<Record<string, { totalIncome: number; destCounts: Record<string, number> }> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,10 +21,23 @@ export default function PrintAllVehicleTrips() {
         const key = `allVehicleTrips:${date}`;
         const cached = sessionStorage.getItem(key);
         if (cached) setData(JSON.parse(cached));
-        const res = await api.get(`/api/vehicles/trips/daily?date=${encodeURIComponent(date)}`);
+        // Use exit-pass based aggregated endpoint for consistent data
+        const res = await api.get(`/api/vehicles/trips/daily-exit-income?date=${encodeURIComponent(date)}`);
         if (res.success) {
           setData(res.data);
           try { sessionStorage.setItem(key, JSON.stringify(res.data)); } catch {}
+          // Build quick lookup for totals/destinations by plate
+          const vehiclesArr = Array.isArray(res.data?.vehicles) ? res.data.vehicles : [];
+          const incomes: Record<string, { totalIncome: number; destCounts: Record<string, number> }> = {};
+          vehiclesArr.forEach((v: any) => {
+            const plate = v?.vehicle?.licensePlate;
+            if (!plate) return;
+            const destCounts: Record<string, number> = {};
+            const dests = Array.isArray(v.destinations) ? v.destinations : [];
+            dests.forEach((d: any) => { destCounts[d.destination || '—'] = Number(d.count || 0); });
+            incomes[plate] = { totalIncome: Number(v?.totals?.totalIncome || 0), destCounts };
+          });
+          setIncomeByPlate(incomes);
         } else if (!cached) setError(res.message || 'Erreur de chargement');
       } catch (e: any) {
         if (!data) setError(e?.message || 'Erreur de chargement');
@@ -38,8 +52,11 @@ export default function PrintAllVehicleTrips() {
   if (!data) return null;
 
   const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
-  const grandTotalSeats = vehicles.reduce((s: number, v: any) => s + toNumber(v.totals?.totalSeats), 0);
-  const grandTotalRevenue = vehicles.reduce((s: number, v: any) => s + toNumber(v.totals?.totalRevenue), 0);
+  const grandTotalIncome = vehicles.reduce((s: number, v: any) => {
+    const plate = v?.vehicle?.licensePlate;
+    const inc = plate && incomeByPlate ? incomeByPlate[plate] : null;
+    return s + toNumber(inc?.totalIncome || 0);
+  }, 0);
 
   return (
     <div style={A4}>
@@ -53,8 +70,7 @@ export default function PrintAllVehicleTrips() {
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: '10pt', color: '#555' }}>Total places: {grandTotalSeats}</div>
-          <div style={{ fontSize: '10pt', color: '#555' }}>Recette totale: {formatTND(grandTotalRevenue)}</div>
+          <div style={{ fontSize: '10pt', color: '#555' }}>Revenus totaux (sorties): {formatTND(grandTotalIncome)}</div>
         </div>
       </div>
 
@@ -64,15 +80,19 @@ export default function PrintAllVehicleTrips() {
             <th style={{ textAlign: 'left', borderBottom: '2px solid #000', padding: '2mm' }}>Plaque</th>
             <th style={{ textAlign: 'left', borderBottom: '2px solid #000', padding: '2mm' }}>Conducteur (CIN)</th>
             <th style={{ textAlign: 'left', borderBottom: '2px solid #000', padding: '2mm' }}>Destinations (x fois)</th>
-            <th style={{ textAlign: 'right', borderBottom: '2px solid #000', padding: '2mm' }}>Montant total</th>
+            <th style={{ textAlign: 'right', borderBottom: '2px solid #000', padding: '2mm' }}>Revenu (sorties)</th>
           </tr>
         </thead>
         <tbody>
           {vehicles.length === 0 ? (
             <tr><td colSpan={4} style={{ padding: '3mm', textAlign: 'center', color: '#777' }}>Aucun trajet aujourd'hui</td></tr>
           ) : vehicles.map((v: any, idx: number) => {
-            const dests = Array.isArray(v.destinations) ? v.destinations : [];
-            const destSummary = dests.map((d: any) => `${d.destination} (x${d.count})`).join('  •  ');
+            const plate = v?.vehicle?.licensePlate;
+            const inc = plate && incomeByPlate ? incomeByPlate[plate] : null;
+            // Prefer exit-pass based destination counts; fallback to trips aggregation
+            const destSummary = inc
+              ? Object.entries(inc.destCounts).map(([name, count]) => `${name} (x${count})`).join('  •  ')
+              : (Array.isArray(v.destinations) ? v.destinations.map((d: any) => `${d.destination} (x${d.count})`).join('  •  ') : '—');
             return (
               <tr key={idx}>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{v.vehicle.licensePlate}</td>
@@ -80,7 +100,7 @@ export default function PrintAllVehicleTrips() {
                   {v.vehicle.driver ? `CIN: ${v.vehicle.driver.cin}` : '—'}
                 </td>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{destSummary || '—'}</td>
-                <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(v.totals?.totalRevenue)}</td>
+                <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(inc?.totalIncome || 0)}</td>
               </tr>
             );
           })}
