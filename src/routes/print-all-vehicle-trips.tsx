@@ -24,10 +24,11 @@ export default function PrintAllVehicleTrips() {
         // Use exit-pass based aggregated endpoint for consistent data
         const res = await api.get(`/api/vehicles/trips/daily-exit-income?date=${encodeURIComponent(date)}`);
         if (res.success) {
-          setData(res.data);
+          const d: any = res.data || {};
+          setData(d);
           try { sessionStorage.setItem(key, JSON.stringify(res.data)); } catch {}
           // Build quick lookup for totals/destinations by plate
-          const vehiclesArr = Array.isArray(res.data?.vehicles) ? res.data.vehicles : [];
+          const vehiclesArr = Array.isArray(d?.vehicles) ? d.vehicles : [];
           const incomes: Record<string, { totalIncome: number; destCounts: Record<string, number> }> = {};
           vehiclesArr.forEach((v: any) => {
             const plate = v?.vehicle?.licensePlate;
