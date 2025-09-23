@@ -196,6 +196,67 @@ export const PrinterConfigComponent: React.FC = () => {
     }
   };
 
+  // Direct TCP test functions
+  const testDirectTcpConnection = async () => {
+    if (!selectedPrinterId) return;
+    
+    setTesting(true);
+    try {
+      const result = await thermalPrinter.testDirectTcpConnection(selectedPrinterId);
+      setMessage(`Test connexion TCP réussi: ${result}`);
+    } catch (error) {
+      console.error('Direct TCP connection test failed:', error);
+      setMessage(`Erreur test connexion TCP: ${error}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const printNumbersTest = async () => {
+    if (!selectedPrinterId) return;
+    
+    setTesting(true);
+    try {
+      const result = await thermalPrinter.printNumbers(selectedPrinterId);
+      setMessage(`Nombres 1-5 imprimés: ${result}`);
+    } catch (error) {
+      console.error('Print numbers test failed:', error);
+      setMessage(`Erreur impression nombres: ${error}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const printTestMessage = async () => {
+    if (!selectedPrinterId) return;
+    
+    setTesting(true);
+    try {
+      const result = await thermalPrinter.printTestMessage(selectedPrinterId, 'Test Direct TCP');
+      setMessage(`Message de test imprimé: ${result}`);
+    } catch (error) {
+      console.error('Print test message failed:', error);
+      setMessage(`Erreur impression message: ${error}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const printCustomContent = async () => {
+    if (!selectedPrinterId) return;
+    
+    setTesting(true);
+    try {
+      const result = await thermalPrinter.printDirectTcp(selectedPrinterId, testContent);
+      setMessage(`Contenu personnalisé imprimé: ${result}`);
+    } catch (error) {
+      console.error('Print custom content failed:', error);
+      setMessage(`Erreur impression contenu: ${error}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Printer Selection */}
@@ -440,6 +501,50 @@ export const PrinterConfigComponent: React.FC = () => {
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Test Ticket Générique
             </Button>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label className="text-sm font-semibold">Tests TCP Direct (Windows)</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button 
+                onClick={testDirectTcpConnection} 
+                disabled={testing || !selectedPrinterId} 
+                variant="outline"
+                className="bg-blue-50 hover:bg-blue-100"
+              >
+                {testing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Test Connexion TCP
+              </Button>
+              <Button 
+                onClick={printNumbersTest} 
+                disabled={testing || !selectedPrinterId} 
+                variant="outline"
+                className="bg-green-50 hover:bg-green-100"
+              >
+                {testing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Imprimer Nombres 1-5
+              </Button>
+              <Button 
+                onClick={printTestMessage} 
+                disabled={testing || !selectedPrinterId} 
+                variant="outline"
+                className="bg-purple-50 hover:bg-purple-100"
+              >
+                {testing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Message de Test
+              </Button>
+              <Button 
+                onClick={printCustomContent} 
+                disabled={testing || !selectedPrinterId} 
+                variant="outline"
+                className="bg-orange-50 hover:bg-orange-100"
+              >
+                {testing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Contenu Personnalisé
+              </Button>
+            </div>
           </div>
 
           {status.connected !== undefined && (

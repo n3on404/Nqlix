@@ -656,6 +656,27 @@ async fn print_exit_pass_ticket(ticket_data: String, staff_name: Option<String>)
     printer_clone.print_exit_pass_ticket(ticket_data, staff_name).await
 }
 
+// Direct TCP printing commands (Windows-compatible)
+#[tauri::command]
+async fn print_direct_tcp(printer_id: String, content: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.print_direct_tcp(&printer_id, &content).await
+}
+
+#[tauri::command]
+async fn test_direct_tcp_connection(printer_id: String) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let printer_guard = printer.lock().map_err(|e| e.to_string())?;
+        printer_guard.clone()
+    };
+    printer_clone.test_direct_tcp_connection(&printer_id).await
+}
+
 async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<DiscoveredServer>, Box<dyn std::error::Error + Send + Sync>> {
     let url = format!("http://{}:{}/health", ip, port);
     
@@ -1096,7 +1117,9 @@ fn main() {
             reprint_booking_ticket,
             reprint_entry_ticket,
             reprint_exit_ticket,
-            reprint_day_pass_ticket
+            reprint_day_pass_ticket,
+            print_direct_tcp,
+            test_direct_tcp_connection
         ])
         .setup(|app| {
             let app_handle = app.handle();

@@ -79,8 +79,8 @@ impl PrinterService {
                             name: "Imprimante 1".to_string(),
                             ip: "192.168.192.10".to_string(),
                             port: 9100,
-                            width: 48,
-                            timeout: 5000,
+                width: 48,
+                timeout: 5000,
                             model: "TM-T20X".to_string(),
                             enabled: true,
                             is_default: true,
@@ -375,7 +375,7 @@ impl PrinterService {
         let printer = printer.ok_or("No printer selected")?;
         self.execute_print_job_with_printer(&printer, job).await
     }
-
+        
     pub async fn execute_print_job_with_printer(&self, printer: &PrinterConfig, job: PrintJob) -> Result<String, String> {
         // Create the Node.js script content
         let script_content = self.create_print_script(printer, &job)?;
@@ -1761,6 +1761,102 @@ printExitPassTicket();
         match payload_opt {
             Some(payload) => self.print_day_pass_ticket(payload, None).await,
             None => Err("No previous day pass ticket to reprint".to_string()),
+        }
+    }
+
+    // Direct TCP printing method for Windows (similar to PowerShell scripts)
+    pub async fn print_direct_tcp(&self, printer_id: &str, content: &str) -> Result<String, String> {
+        let config = self.get_printer_by_id(printer_id)?
+            .ok_or_else(|| format!("Printer with ID {} not found", printer_id))?;
+
+        println!("🖨️ [DIRECT TCP] Printing to {} ({}:{})", config.name, config.ip, config.port);
+        println!("🖨️ [DIRECT TCP] Content: {}", content);
+
+        // Use tokio for async TCP connection
+        let result = tokio::time::timeout(
+            Duration::from_millis(config.timeout),
+            self.send_tcp_print(&config, content)
+        ).await;
+
+        match result {
+            Ok(Ok(response)) => {
+                println!("🖨️ [DIRECT TCP] Print successful: {}", response);
+                Ok(response)
+            }
+            Ok(Err(e)) => {
+                println!("🖨️ [DIRECT TCP] Print failed: {}", e);
+                Err(format!("Direct TCP print failed: {}", e))
+            }
+            Err(_) => {
+                println!("🖨️ [DIRECT TCP] Print timeout after {}ms", config.timeout);
+                Err(format!("Print timeout after {}ms", config.timeout))
+            }
+        }
+    }
+
+    async fn send_tcp_print(&self, printer: &PrinterConfig, content: &str) -> Result<String, String> {
+        use tokio::net::TcpStream;
+        use tokio::io::AsyncWriteExt;
+
+        // Connect to printer
+        let addr = format!("{}:{}", printer.ip, printer.port);
+        let mut stream = TcpStream::connect(&addr)
+            .await
+            .map_err(|e| format!("Failed to connect to printer: {}", e))?;
+
+        println!("🖨️ [DIRECT TCP] Connected to printer at {}", addr);
+
+        // Prepare content with ESC/POS commands
+        let mut print_data = Vec::new();
+        
+        // ESC/POS initialization
+        print_data.extend_from_slice(&[0x1B, 0x40]); // ESC @ - Initialize printer
+        
+        // Add content
+        print_data.extend_from_slice(content.as_bytes());
+        
+        // Add line feeds and cut
+        print_data.extend_from_slice(b"\n\n\n\n\n"); // Feed paper
+        print_data.extend_from_slice(&[0x1D, 0x56, 0x00]); // Cut paper
+
+        // Send data
+        stream.write_all(&print_data)
+            .await
+            .map_err(|e| format!("Failed to send print data: {}", e))?;
+
+        println!("🖨️ [DIRECT TCP] Data sent successfully");
+        Ok("Print job completed successfully".to_string())
+    }
+
+    // Test direct TCP connection
+    pub async fn test_direct_tcp_connection(&self, printer_id: &str) -> Result<String, String> {
+        let config = self.get_printer_by_id(printer_id)?
+            .ok_or_else(|| format!("Printer with ID {} not found", printer_id))?;
+
+        println!("🔍 [DIRECT TCP] Testing connection to {} ({}:{})", config.name, config.ip, config.port);
+
+        use tokio::net::TcpStream;
+        use tokio::time::{timeout, Duration};
+
+        let addr = format!("{}:{}", config.ip, config.port);
+        let result = timeout(
+            Duration::from_millis(config.timeout),
+            TcpStream::connect(&addr)
+        ).await;
+
+        match result {
+            Ok(Ok(_stream)) => {
+                println!("🔍 [DIRECT TCP] Connection successful to {}", addr);
+                Ok(format!("Connection successful to {}:{}", config.ip, config.port))
+            }
+            Ok(Err(e)) => {
+                println!("🔍 [DIRECT TCP] Connection failed to {}: {}", addr, e);
+                Err(format!("Connection failed: {}", e))
+            }
+            Err(_) => {
+                println!("🔍 [DIRECT TCP] Connection timeout to {}", addr);
+                Err(format!("Connection timeout after {}ms", config.timeout))
+            }
         }
     }
 }

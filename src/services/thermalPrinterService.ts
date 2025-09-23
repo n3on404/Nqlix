@@ -812,6 +812,56 @@ Date: ${paymentData.date}
   async setPrinterTimeout(timeout: number): Promise<void> {
     await this.updatePrinterConfig(this.config.id, { timeout });
   }
+
+  /**
+   * Print directly via TCP (Windows-compatible, similar to PowerShell scripts)
+   */
+  async printDirectTcp(printerId: string, content: string): Promise<string> {
+    try {
+      return await invoke<string>('print_direct_tcp', { printerId, content });
+    } catch (error) {
+      console.error('Failed to print via direct TCP:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Test direct TCP connection to printer
+   */
+  async testDirectTcpConnection(printerId: string): Promise<string> {
+    try {
+      return await invoke<string>('test_direct_tcp_connection', { printerId });
+    } catch (error) {
+      console.error('Failed to test direct TCP connection:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Print numbers 1-5 on a specific printer (for testing)
+   */
+  async printNumbers(printerId: string): Promise<string> {
+    let content = '';
+    for (let i = 1; i <= 5; i++) {
+      content += `Number: ${i}\n`;
+    }
+    content += '\n\n\n\n\n'; // Add spacing
+    
+    return this.printDirectTcp(printerId, content);
+  }
+
+  /**
+   * Print a test message on a specific printer
+   */
+  async printTestMessage(printerId: string, message: string = 'Test Print'): Promise<string> {
+    const content = `=== ${message} ===\n` +
+                   `Printer ID: ${printerId}\n` +
+                   `Date: ${new Date().toLocaleString()}\n` +
+                   `Password: MyPass123!\n` +
+                   '\n\n\n\n\n';
+    
+    return this.printDirectTcp(printerId, content);
+  }
 }
 
 // Export singleton instance
