@@ -3,7 +3,7 @@ import { getLocalStorage, setLocalStorage } from './storage';
 
 // Default API configuration
 const DEFAULT_CONFIG = {
-  baseUrl: 'http://localhost:3001/api',
+  baseUrl: 'http://192.168.192.30:3001/api',
   timeout: 10000,
 };
 

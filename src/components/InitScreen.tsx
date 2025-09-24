@@ -386,7 +386,7 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
                   variant="ghost"
                   onClick={() => {
                     // Skip discovery and try to connect with default URL
-                    setServerUrl('http://localhost:3001');
+                    setServerUrl('http://192.168.192.30:3001');
                     testServerConnection();
                   }}
                   className="flex-1"

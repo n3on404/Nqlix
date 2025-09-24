@@ -718,7 +718,7 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     // HARDCODED: Use the ethernet IP for testing
-    let hardcoded_ip = "127.0.0.1".parse::<IpAddr>()?;
+    let hardcoded_ip = "192.168.192.30".parse::<IpAddr>()?;
     println!("🔍 Using hardcoded ethernet IP: {}", hardcoded_ip);
     return Ok(hardcoded_ip);
     

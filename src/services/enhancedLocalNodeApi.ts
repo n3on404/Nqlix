@@ -3,7 +3,7 @@ import { getLocalStorage, setLocalStorage } from '../lib/storage';
 
 // Enhanced API configuration
 const DEFAULT_CONFIG = {
-  baseUrl: 'http://localhost:3001/api', // Fallback to localhost
+  baseUrl: 'http://192.168.192.30:3001/api', // Fallback to local IP
   discoveredServers: [] as string[],
   timeout: 10000,
   maxRetries: 3,
