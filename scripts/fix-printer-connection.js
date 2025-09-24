@@ -311,9 +311,11 @@ class PrinterConnectionFixer {
       status: 'working'
     };
     
-    const configPath = path.join(process.cwd(), 'printer-config.json');
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-    logSuccess('Configuration file created');
+    logInfo('Printer configuration is now managed via environment variables');
+    logInfo('Use the setup scripts to configure printer settings:');
+    logInfo('- Windows: setup-printer-env-windows.bat or setup-printer-env-windows.ps1');
+    logInfo('- Linux: setup-printer-env-linux.sh');
+    logSuccess('Environment variable configuration approach enabled');
   }
 
   async verifyFix() {

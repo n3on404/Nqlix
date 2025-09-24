@@ -4,7 +4,6 @@ import { SystemStatus } from "../components/SystemStatus";
 import { UpdateSection } from "../components/UpdateSection";
 import EnhancedMqttConnectionTest from "../components/EnhancedMqttConnectionTest";
 import AppControls from "../components/AppControls";
-import { PrinterConfigComponent } from "../components/PrinterConfig";
 import { Moon, Sun } from "lucide-react";
 import { useState, useEffect } from "react";
 
@@ -58,15 +57,28 @@ export default function Settings() {
         {/* App Controls Section */}
         <AppControls />
 
-        {/* Printer Management Section */}
+        {/* Printer Configuration Section */}
         <div className="space-y-4">
           <div className="space-y-2">
-            <h2 className="text-lg font-semibold">Gestion des imprimantes</h2>
+            <h2 className="text-lg font-semibold">Configuration de l'imprimante</h2>
             <p className="text-sm text-muted-foreground">
-              Configurez et gérez vos imprimantes thermiques Epson TM-T20X.
+              La configuration de l'imprimante est gérée via des variables d'environnement.
             </p>
           </div>
-          <PrinterConfigComponent />
+          <div className="p-4 border rounded-lg bg-muted/50">
+            <h3 className="font-medium mb-2">Variables d'environnement requises :</h3>
+            <div className="space-y-1 text-sm font-mono">
+              <div><span className="text-blue-600">PRINTER_IP</span> - Adresse IP de l'imprimante (défaut: 192.168.192.10)</div>
+              <div><span className="text-blue-600">PRINTER_PORT</span> - Port de l'imprimante (défaut: 9100)</div>
+              <div><span className="text-blue-600">PRINTER_NAME</span> - Nom de l'imprimante (défaut: "Imprimante Thermique")</div>
+              <div><span className="text-blue-600">PRINTER_WIDTH</span> - Largeur du papier (défaut: 48)</div>
+              <div><span className="text-blue-600">PRINTER_TIMEOUT</span> - Timeout en ms (défaut: 5000)</div>
+              <div><span className="text-blue-600">PRINTER_MODEL</span> - Modèle d'imprimante (défaut: "TM-T20X")</div>
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Redémarrez l'application après avoir modifié les variables d'environnement.
+            </p>
+          </div>
         </div>
 
         {/* Enhanced Connection Test */}

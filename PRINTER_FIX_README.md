@@ -125,7 +125,7 @@ node scripts/test-printer-windows.js
 ## Configuration Files
 
 The tools will create/update these files:
-- `printer-config.json` - Printer configuration
+- Environment variables - Printer configuration (PRINTER_IP, PRINTER_PORT, etc.)
 - `src-tauri/src/printer.rs` - Rust configuration
 - `src/services/thermalPrinterService.ts` - TypeScript configuration
 

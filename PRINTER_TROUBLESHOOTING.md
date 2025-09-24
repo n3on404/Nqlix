@@ -217,7 +217,7 @@ telnet 192.168.1.100 23
 ## Configuration Files
 
 ### Printer Configuration
-Location: `printer-config.json`
+Location: Environment variables (PRINTER_IP, PRINTER_PORT, etc.)
 ```json
 {
   "printer": {

@@ -32,11 +32,12 @@ export class ThermalPrinterService {
   private config: PrinterConfig;
 
   private constructor() {
+    // Configuration will be loaded from environment variables via the backend
     this.config = {
       id: 'printer1',
-      name: 'Imprimante 1',
-      ip: '192.168.192.10', // Default IP for Epson TM-T20X
-      port: 9100, // Default port for Epson printers
+      name: 'Imprimante Thermique',
+      ip: '192.168.192.10', // Will be overridden by environment variable
+      port: 9100, // Will be overridden by environment variable
       width: 48,
       timeout: 5000,
       model: 'TM-T20X',
@@ -133,27 +134,17 @@ export class ThermalPrinterService {
   }
 
   /**
-   * Add new printer
+   * Add new printer - Not supported with environment variable configuration
    */
   async addPrinter(printer: PrinterConfig): Promise<void> {
-    try {
-      await invoke('add_printer', { printer });
-    } catch (error) {
-      console.error('Failed to add printer:', error);
-      throw error;
-    }
+    throw new Error('Adding printers is not supported. Printer configuration is managed via environment variables.');
   }
 
   /**
-   * Remove printer
+   * Remove printer - Not supported with environment variable configuration
    */
   async removePrinter(printerId: string): Promise<void> {
-    try {
-      await invoke('remove_printer', { printerId });
-    } catch (error) {
-      console.error('Failed to remove printer:', error);
-      throw error;
-    }
+    throw new Error('Removing printers is not supported. Printer configuration is managed via environment variables.');
   }
 
   /**

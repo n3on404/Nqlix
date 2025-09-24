@@ -3,6 +3,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use reqwest::Client;
 use std::time::Duration;
+use std::env;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PrinterConfig {
@@ -17,14 +18,6 @@ pub struct PrinterConfig {
     pub is_default: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PrinterConfigFile {
-    pub printers: Vec<PrinterConfig>,
-    pub last_updated: String,
-    pub status: String,
-    pub auto_detect: bool,
-    pub fallback_enabled: bool,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PrintJob {
@@ -55,8 +48,7 @@ pub struct StaffInfo {
 
 #[derive(Clone)]
 pub struct PrinterService {
-    config_file: Arc<Mutex<PrinterConfigFile>>,
-    current_printer: Arc<Mutex<Option<String>>>, // ID of currently selected printer
+    printer_config: Arc<Mutex<PrinterConfig>>,
     node_script_path: String,
     // Cache last printed payloads for reprint functionality
     last_booking_payload: Arc<Mutex<Option<String>>>,
@@ -67,72 +59,37 @@ pub struct PrinterService {
 
 impl PrinterService {
     pub fn new() -> Self {
-        // Try to load existing configuration first
-        let config_file = match Self::load_config_from_file() {
-            Ok(config) => config,
-            Err(_) => {
-                // If no config exists, create default with first printer as default
-                PrinterConfigFile {
-                    printers: vec![
-                        PrinterConfig {
-                            id: "printer1".to_string(),
-                            name: "Imprimante 1".to_string(),
-                            ip: "192.168.192.10".to_string(),
-                            port: 9100,
-                width: 48,
-                timeout: 5000,
-                            model: "TM-T20X".to_string(),
-                            enabled: true,
-                            is_default: true,
-                        },
-                        PrinterConfig {
-                            id: "printer2".to_string(),
-                            name: "Imprimante 2".to_string(),
-                            ip: "192.168.192.11".to_string(),
-                            port: 9100,
-                            width: 48,
-                            timeout: 5000,
-                            model: "TM-T20X".to_string(),
-                            enabled: true,
-                            is_default: false,
-                        },
-                        PrinterConfig {
-                            id: "printer3".to_string(),
-                            name: "Imprimante 3".to_string(),
-                            ip: "192.168.192.12".to_string(),
-                            port: 9100,
-                            width: 48,
-                            timeout: 5000,
-                            model: "TM-T20X".to_string(),
-                            enabled: true,
-                            is_default: false,
-                        },
-                    ],
-                    last_updated: chrono::Utc::now().to_rfc3339(),
-                    status: "working".to_string(),
-                    auto_detect: true,
-                    fallback_enabled: true,
-                }
-            }
+        // Load printer configuration from environment variables
+        let printer_ip = env::var("PRINTER_IP").unwrap_or_else(|_| "192.168.192.10".to_string());
+        let printer_port = env::var("PRINTER_PORT")
+            .unwrap_or_else(|_| "9100".to_string())
+            .parse::<u16>()
+            .unwrap_or(9100);
+        let printer_name = env::var("PRINTER_NAME").unwrap_or_else(|_| "Imprimante Thermique".to_string());
+        let printer_width = env::var("PRINTER_WIDTH")
+            .unwrap_or_else(|_| "48".to_string())
+            .parse::<u8>()
+            .unwrap_or(48);
+        let printer_timeout = env::var("PRINTER_TIMEOUT")
+            .unwrap_or_else(|_| "5000".to_string())
+            .parse::<u64>()
+            .unwrap_or(5000);
+        let printer_model = env::var("PRINTER_MODEL").unwrap_or_else(|_| "TM-T20X".to_string());
+
+        let printer_config = PrinterConfig {
+            id: "printer1".to_string(),
+            name: printer_name,
+            ip: printer_ip,
+            port: printer_port,
+            width: printer_width,
+            timeout: printer_timeout,
+            model: printer_model,
+            enabled: true,
+            is_default: true,
         };
 
-        // Find the default printer
-        let default_printer_id = config_file.printers
-            .iter()
-            .find(|p| p.is_default)
-            .map(|p| p.id.clone())
-            .unwrap_or_else(|| {
-                // If no default found, set first printer as default
-                if let Some(first_printer) = config_file.printers.first() {
-                    first_printer.id.clone()
-                } else {
-                    "printer1".to_string()
-                }
-            });
-
         Self {
-            config_file: Arc::new(Mutex::new(config_file)),
-            current_printer: Arc::new(Mutex::new(Some(default_printer_id))),
+            printer_config: Arc::new(Mutex::new(printer_config)),
             node_script_path: "scripts/printer.js".to_string(),
             last_booking_payload: Arc::new(Mutex::new(None)),
             last_entry_payload: Arc::new(Mutex::new(None)),
@@ -141,176 +98,124 @@ impl PrinterService {
         }
     }
 
-    fn load_config_from_file() -> Result<PrinterConfigFile, String> {
-        let config_path = "printer-config.json";
-        if let Ok(content) = std::fs::read_to_string(config_path) {
-            let config: PrinterConfigFile = serde_json::from_str(&content)
-                .map_err(|e| format!("Failed to parse config file: {}", e))?;
-            Ok(config)
-        } else {
-            Err("Config file not found".to_string())
-        }
-    }
+    pub fn reload_config_from_env(&self) -> Result<(), String> {
+        // Reload configuration from environment variables
+        let printer_ip = env::var("PRINTER_IP").unwrap_or_else(|_| "192.168.192.10".to_string());
+        let printer_port = env::var("PRINTER_PORT")
+            .unwrap_or_else(|_| "9100".to_string())
+            .parse::<u16>()
+            .unwrap_or(9100);
+        let printer_name = env::var("PRINTER_NAME").unwrap_or_else(|_| "Imprimante Thermique".to_string());
+        let printer_width = env::var("PRINTER_WIDTH")
+            .unwrap_or_else(|_| "48".to_string())
+            .parse::<u8>()
+            .unwrap_or(48);
+        let printer_timeout = env::var("PRINTER_TIMEOUT")
+            .unwrap_or_else(|_| "5000".to_string())
+            .parse::<u64>()
+            .unwrap_or(5000);
+        let printer_model = env::var("PRINTER_MODEL").unwrap_or_else(|_| "TM-T20X".to_string());
 
-    pub fn reload_config_from_file(&self) -> Result<(), String> {
-        let config_path = "printer-config.json";
-        if let Ok(content) = std::fs::read_to_string(config_path) {
-            let config: PrinterConfigFile = serde_json::from_str(&content)
-                .map_err(|e| format!("Failed to parse config file: {}", e))?;
-            let mut config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-            *config_file = config;
-        }
-        Ok(())
-    }
+        let new_config = PrinterConfig {
+            id: "printer1".to_string(),
+            name: printer_name,
+            ip: printer_ip,
+            port: printer_port,
+            width: printer_width,
+            timeout: printer_timeout,
+            model: printer_model,
+            enabled: true,
+            is_default: true,
+        };
 
-    pub fn save_config_to_file(&self) -> Result<(), String> {
-        let config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        let config_path = "printer-config.json";
-        let content = serde_json::to_string_pretty(&*config_file)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        
-        // Check if the content has actually changed to avoid unnecessary file writes
-        if let Ok(existing_content) = std::fs::read_to_string(config_path) {
-            if existing_content == content {
-                // Content is the same, no need to write
-                return Ok(());
-            }
-        }
-        
-        std::fs::write(config_path, content)
-            .map_err(|e| format!("Failed to write config file: {}", e))?;
+        let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        *config = new_config;
         Ok(())
     }
 
     pub fn get_all_printers(&self) -> Result<Vec<PrinterConfig>, String> {
-        let config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        Ok(config_file.printers.clone())
+        let config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        Ok(vec![config.clone()])
     }
 
     pub fn get_printer_by_id(&self, id: &str) -> Result<Option<PrinterConfig>, String> {
-        let config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        Ok(config_file.printers.iter().find(|p| p.id == id).cloned())
-    }
-
-    pub fn get_default_printer(&self) -> Result<Option<PrinterConfig>, String> {
-        let config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        Ok(config_file.printers.iter().find(|p| p.is_default).cloned())
-    }
-
-    pub fn get_current_printer(&self) -> Result<Option<PrinterConfig>, String> {
-        let current_id = self.current_printer.lock().map_err(|e| e.to_string())?;
-        if let Some(id) = current_id.as_ref() {
-            self.get_printer_by_id(id)
+        let config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        if config.id == id {
+            Ok(Some(config.clone()))
         } else {
-            self.get_default_printer()
+            Ok(None)
         }
     }
 
+    pub fn get_default_printer(&self) -> Result<Option<PrinterConfig>, String> {
+        let config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        Ok(Some(config.clone()))
+    }
+
+    pub fn get_current_printer(&self) -> Result<Option<PrinterConfig>, String> {
+        let config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        Ok(Some(config.clone()))
+    }
+
     pub fn set_current_printer(&self, printer_id: &str) -> Result<(), String> {
-        let mut config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        if config_file.printers.iter().any(|p| p.id == printer_id) {
-            // Set all printers as non-default first
-            for printer in config_file.printers.iter_mut() {
-                printer.is_default = false;
-            }
-            
-            // Set the selected printer as default
-            if let Some(printer) = config_file.printers.iter_mut().find(|p| p.id == printer_id) {
-                printer.is_default = true;
-            }
-            
-            // Update current printer
-            let mut current = self.current_printer.lock().map_err(|e| e.to_string())?;
-            *current = Some(printer_id.to_string());
-            
-            // Save configuration to persist the default printer
-            config_file.last_updated = chrono::Utc::now().to_rfc3339();
-            drop(config_file); // Release the lock before calling save_config_to_file
-            self.save_config_to_file()?;
-            
+        let config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        if config.id == printer_id {
+            // Printer is already set as current
             Ok(())
         } else {
-            Err(format!("Printer with ID '{}' not found", printer_id))
+            Err(format!("Printer with ID '{}' not found. Only printer '{}' is available.", printer_id, config.id))
         }
     }
 
     pub fn update_printer_config(&self, printer_id: &str, new_config: PrinterConfig) -> Result<(), String> {
-        let mut config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        if let Some(printer) = config_file.printers.iter_mut().find(|p| p.id == printer_id) {
-            *printer = new_config;
-            config_file.last_updated = chrono::Utc::now().to_rfc3339();
-            self.save_config_to_file()?;
+        let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        if config.id == printer_id {
+            *config = new_config;
             Ok(())
         } else {
-            Err(format!("Printer with ID '{}' not found", printer_id))
+            Err(format!("Printer with ID '{}' not found. Only printer '{}' is available.", printer_id, config.id))
         }
     }
 
-    pub fn add_printer(&self, printer: PrinterConfig) -> Result<(), String> {
-        let mut config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        config_file.printers.push(printer);
-        config_file.last_updated = chrono::Utc::now().to_rfc3339();
-        self.save_config_to_file()?;
-        Ok(())
+    pub fn add_printer(&self, _printer: PrinterConfig) -> Result<(), String> {
+        // Only one printer is supported with environment variables
+        Err("Adding printers is not supported. Printer configuration is managed via environment variables.".to_string())
     }
 
-    pub fn remove_printer(&self, printer_id: &str) -> Result<(), String> {
-        let mut config_file = self.config_file.lock().map_err(|e| e.to_string())?;
-        config_file.printers.retain(|p| p.id != printer_id);
-        config_file.last_updated = chrono::Utc::now().to_rfc3339();
-        self.save_config_to_file()?;
-        Ok(())
+    pub fn remove_printer(&self, _printer_id: &str) -> Result<(), String> {
+        // Only one printer is supported with environment variables
+        Err("Removing printers is not supported. Printer configuration is managed via environment variables.".to_string())
     }
 
-    /// Automatically set the first working printer as default
+    /// Test the printer connection and set as default if working
     pub async fn auto_set_default_printer(&self) -> Result<(), String> {
-        let printers = self.get_all_printers()?;
-        
-        // Check if there's already a default printer set (without holding the lock across await)
-        let has_current_printer = {
-            let current_printer = self.current_printer.lock().map_err(|e| e.to_string())?;
-            current_printer.is_some()
+        // Clone the config to avoid holding the lock across await
+        let config = {
+            let config_guard = self.printer_config.lock().map_err(|e| e.to_string())?;
+            config_guard.clone()
         };
         
-        if has_current_printer {
-            // Already have a default printer, no need to change
-            println!("🎯 Default printer already set, skipping auto-setup");
+        if !config.enabled {
+            println!("⚠️ Printer is disabled, skipping auto-setup");
             return Ok(());
         }
         
-        // Check if there are any enabled printers
-        if !printers.iter().any(|p| p.enabled) {
-            println!("⚠️ No enabled printers found, skipping auto-setup");
-            return Ok(());
-        }
-        
-        // Try to find a working printer
-        for printer in &printers {
-            if printer.enabled {
-                match self.test_printer_connection(&printer.id).await {
-                    Ok(status) => {
-                        if status.connected {
-                            // Found a working printer, set it as default
-                            self.set_current_printer(&printer.id)?;
-                            println!("🎯 Auto-set default printer: {} ({})", printer.name, printer.ip);
-                            return Ok(());
-                        }
-                    }
-                    Err(_) => {
-                        // Continue to next printer
-                        continue;
-                    }
+        // Test the printer connection
+        match self.test_printer_connection(&config.id).await {
+            Ok(status) => {
+                if status.connected {
+                    println!("🎯 Printer connection test successful: {} ({})", config.name, config.ip);
+                    Ok(())
+                } else {
+                    println!("⚠️ Printer connection test failed: {} ({})", config.name, config.ip);
+                    Ok(())
                 }
             }
+            Err(e) => {
+                println!("⚠️ Printer connection test error: {}", e);
+                Ok(())
+            }
         }
-        
-        // If no working printer found, just set the first enabled printer as default
-        if let Some(first_printer) = printers.iter().find(|p| p.enabled) {
-            self.set_current_printer(&first_printer.id)?;
-            println!("🎯 Auto-set first available printer as default: {} ({})", first_printer.name, first_printer.ip);
-        }
-        
-        Ok(())
     }
 
     /// Fetch current staff information from the local node API
