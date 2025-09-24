@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use reqwest::Client;
 use std::time::Duration;
 use std::env;
+use std::fs;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PrinterConfig {
@@ -58,23 +59,94 @@ pub struct PrinterService {
 }
 
 impl PrinterService {
+    fn read_env_from_system(key: &str) -> Option<String> {
+        // Linux: read from system files first to reflect latest changes without restart
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(content) = fs::read_to_string("/etc/environment") {
+                for line in content.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') { continue; }
+                    // Accept KEY="value" or KEY=value
+                    if let Some((k, vraw)) = line.split_once('=') {
+                        if k.trim() == key {
+                            let mut v = vraw.trim().to_string();
+                            if v.starts_with('"') && v.ends_with('"') && v.len() >= 2 {
+                                v = v[1..v.len()-1].to_string();
+                            }
+                            if !v.is_empty() { return Some(v); }
+                        }
+                    }
+                }
+            }
+
+            // Try profile.d script format: export KEY="value"
+            if let Ok(content) = fs::read_to_string("/etc/profile.d/printer-env.sh") {
+                for line in content.lines() {
+                    let line = line.trim();
+                    if !line.starts_with("export ") { continue; }
+                    let rest = &line[7..];
+                    if let Some((k, vraw)) = rest.split_once('=') {
+                        if k.trim() == key {
+                            let mut v = vraw.trim().to_string();
+                            if v.starts_with('"') && v.ends_with('"') && v.len() >= 2 {
+                                v = v[1..v.len()-1].to_string();
+                            }
+                            if !v.is_empty() { return Some(v); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: none
+        None
+    }
+
+    fn read_u16_from_env(key: &str, default_val: u16) -> u16 {
+        Self::read_env_from_system(key)
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(default_val)
+    }
+
+    fn read_u8_from_env(key: &str, default_val: u8) -> u8 {
+        Self::read_env_from_system(key)
+            .and_then(|s| s.parse::<u8>().ok())
+            .unwrap_or(default_val)
+    }
+
+    fn read_u64_from_env(key: &str, default_val: u64) -> u64 {
+        Self::read_env_from_system(key)
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(default_val)
+    }
+
+    pub fn debug_env_snapshot(&self) -> std::collections::HashMap<String, String> {
+        let mut map = std::collections::HashMap::new();
+        let keys = [
+            "PRINTER_IP",
+            "PRINTER_PORT",
+            "PRINTER_NAME",
+            "PRINTER_WIDTH",
+            "PRINTER_TIMEOUT",
+            "PRINTER_MODEL",
+        ];
+        for k in keys.iter() {
+            if let Some(v) = Self::read_env_from_system(k) {
+                map.insert((*k).to_string(), v);
+            }
+        }
+        map
+    }
+
     pub fn new() -> Self {
-        // Load printer configuration from environment variables
-        let printer_ip = env::var("PRINTER_IP").unwrap_or_else(|_| "192.168.192.10".to_string());
-        let printer_port = env::var("PRINTER_PORT")
-            .unwrap_or_else(|_| "9100".to_string())
-            .parse::<u16>()
-            .unwrap_or(9100);
-        let printer_name = env::var("PRINTER_NAME").unwrap_or_else(|_| "Imprimante Thermique".to_string());
-        let printer_width = env::var("PRINTER_WIDTH")
-            .unwrap_or_else(|_| "48".to_string())
-            .parse::<u8>()
-            .unwrap_or(48);
-        let printer_timeout = env::var("PRINTER_TIMEOUT")
-            .unwrap_or_else(|_| "5000".to_string())
-            .parse::<u64>()
-            .unwrap_or(5000);
-        let printer_model = env::var("PRINTER_MODEL").unwrap_or_else(|_| "TM-T20X".to_string());
+        // Load printer configuration from system-level env sources (supports Linux /etc/environment)
+        let printer_ip = Self::read_env_from_system("PRINTER_IP").unwrap_or_else(|| "192.168.192.10".to_string());
+        let printer_port = Self::read_u16_from_env("PRINTER_PORT", 9100);
+        let printer_name = Self::read_env_from_system("PRINTER_NAME").unwrap_or_else(|| "Imprimante Thermique".to_string());
+        let printer_width = Self::read_u8_from_env("PRINTER_WIDTH", 48);
+        let printer_timeout = Self::read_u64_from_env("PRINTER_TIMEOUT", 5000);
+        let printer_model = Self::read_env_from_system("PRINTER_MODEL").unwrap_or_else(|| "TM-T20X".to_string());
 
         let printer_config = PrinterConfig {
             id: "printer1".to_string(),
@@ -99,22 +171,13 @@ impl PrinterService {
     }
 
     pub fn reload_config_from_env(&self) -> Result<(), String> {
-        // Reload configuration from environment variables
-        let printer_ip = env::var("PRINTER_IP").unwrap_or_else(|_| "192.168.192.10".to_string());
-        let printer_port = env::var("PRINTER_PORT")
-            .unwrap_or_else(|_| "9100".to_string())
-            .parse::<u16>()
-            .unwrap_or(9100);
-        let printer_name = env::var("PRINTER_NAME").unwrap_or_else(|_| "Imprimante Thermique".to_string());
-        let printer_width = env::var("PRINTER_WIDTH")
-            .unwrap_or_else(|_| "48".to_string())
-            .parse::<u8>()
-            .unwrap_or(48);
-        let printer_timeout = env::var("PRINTER_TIMEOUT")
-            .unwrap_or_else(|_| "5000".to_string())
-            .parse::<u64>()
-            .unwrap_or(5000);
-        let printer_model = env::var("PRINTER_MODEL").unwrap_or_else(|_| "TM-T20X".to_string());
+        // Reload configuration from system-level environment sources
+        let printer_ip = Self::read_env_from_system("PRINTER_IP").unwrap_or_else(|| "192.168.192.10".to_string());
+        let printer_port = Self::read_u16_from_env("PRINTER_PORT", 9100);
+        let printer_name = Self::read_env_from_system("PRINTER_NAME").unwrap_or_else(|| "Imprimante Thermique".to_string());
+        let printer_width = Self::read_u8_from_env("PRINTER_WIDTH", 48);
+        let printer_timeout = Self::read_u64_from_env("PRINTER_TIMEOUT", 5000);
+        let printer_model = Self::read_env_from_system("PRINTER_MODEL").unwrap_or_else(|| "TM-T20X".to_string());
 
         let new_config = PrinterConfig {
             id: "printer1".to_string(),
@@ -202,8 +265,8 @@ impl PrinterService {
         
         // Test the printer connection
         match self.test_printer_connection(&config.id).await {
-            Ok(status) => {
-                if status.connected {
+                    Ok(status) => {
+                        if status.connected {
                     println!("🎯 Printer connection test successful: {} ({})", config.name, config.ip);
                     Ok(())
                 } else {

@@ -82,7 +82,8 @@ export class ThermalPrinterService {
    */
   async getCurrentPrinter(): Promise<PrinterConfig | null> {
     try {
-      const printer = await invoke<PrinterConfig | null>('get_current_printer');
+      // Ask backend to reload from environment and return current config
+      const printer = await invoke<PrinterConfig | null>('reload_printer_env');
       if (printer) {
         this.config = printer;
       }

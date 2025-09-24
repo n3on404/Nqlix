@@ -4,15 +4,40 @@ import { SystemStatus } from "../components/SystemStatus";
 import { UpdateSection } from "../components/UpdateSection";
 import EnhancedMqttConnectionTest from "../components/EnhancedMqttConnectionTest";
 import AppControls from "../components/AppControls";
-import { Moon, Sun } from "lucide-react";
+import { Moon, Sun, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
+import { thermalPrinter } from "../services/thermalPrinterService";
+import { invoke } from "@tauri-apps/api/tauri";
 
 export default function Settings() {
   const { setTheme, theme: currentTheme } = useSettingsContext();
+  const [printerIp, setPrinterIp] = useState<string>("");
+  const [loadingPrinter, setLoadingPrinter] = useState<boolean>(false);
+  const [envSnapshot, setEnvSnapshot] = useState<string>("");
 
   const toggleTheme = () => {
     setTheme(currentTheme === "light" ? "dark" : "light");
   };
+
+  const loadCurrentPrinter = async () => {
+    setLoadingPrinter(true);
+    try {
+      const printer = await thermalPrinter.getCurrentPrinter();
+      setPrinterIp(printer?.ip ?? "");
+      try {
+        const snapshot = await invoke<string>("get_printer_env_snapshot");
+        setEnvSnapshot(snapshot);
+      } catch {}
+    } catch (e) {
+      setPrinterIp("");
+    } finally {
+      setLoadingPrinter(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCurrentPrinter();
+  }, []);
 
   return (
     <div className="flex flex-col h-full w-full p-6 space-y-6">
@@ -65,20 +90,22 @@ export default function Settings() {
               La configuration de l'imprimante est gérée via des variables d'environnement.
             </p>
           </div>
-          <div className="p-4 border rounded-lg bg-muted/50">
-            <h3 className="font-medium mb-2">Variables d'environnement requises :</h3>
-            <div className="space-y-1 text-sm font-mono">
-              <div><span className="text-blue-600">PRINTER_IP</span> - Adresse IP de l'imprimante (défaut: 192.168.192.10)</div>
-              <div><span className="text-blue-600">PRINTER_PORT</span> - Port de l'imprimante (défaut: 9100)</div>
-              <div><span className="text-blue-600">PRINTER_NAME</span> - Nom de l'imprimante (défaut: "Imprimante Thermique")</div>
-              <div><span className="text-blue-600">PRINTER_WIDTH</span> - Largeur du papier (défaut: 48)</div>
-              <div><span className="text-blue-600">PRINTER_TIMEOUT</span> - Timeout en ms (défaut: 5000)</div>
-              <div><span className="text-blue-600">PRINTER_MODEL</span> - Modèle d'imprimante (défaut: "TM-T20X")</div>
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Redémarrez l'application après avoir modifié les variables d'environnement.
-            </p>
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-muted-foreground">IP actuelle détectée :</span>
+            <span className="font-mono">{printerIp || "(non détectée)"}</span>
+            <Button variant="outline" size="sm" onClick={loadCurrentPrinter} disabled={loadingPrinter}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              {loadingPrinter ? "Actualisation..." : "Rafraîchir"}
+            </Button>
           </div>
+          {envSnapshot && (
+            <div className="p-4 border rounded-lg bg-muted/50">
+              <h3 className="text-sm font-medium mb-2">Valeurs système détectées</h3>
+              <pre className="text-xs p-2 bg-background border rounded overflow-auto max-h-48">
+{envSnapshot}
+              </pre>
+            </div>
+          )}
         </div>
 
         {/* Enhanced Connection Test */}

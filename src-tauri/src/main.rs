@@ -437,7 +437,23 @@ async fn get_printer_by_id(printer_id: String) -> Result<Option<PrinterConfig>, 
 #[tauri::command]
 async fn get_current_printer() -> Result<Option<PrinterConfig>, String> {
     let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    // Ensure we always reflect latest environment variables when queried
+    let _ = printer.reload_config_from_env();
     printer.get_current_printer()
+}
+
+#[tauri::command]
+async fn reload_printer_env() -> Result<Option<PrinterConfig>, String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    printer.reload_config_from_env()?;
+    printer.get_current_printer()
+}
+
+#[tauri::command]
+async fn get_printer_env_snapshot() -> Result<String, String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    let snapshot = printer.debug_env_snapshot();
+    serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1095,6 +1111,8 @@ fn main() {
             get_all_printers,
             get_printer_by_id,
             get_current_printer,
+            reload_printer_env,
+            get_printer_env_snapshot,
             set_current_printer,
             update_printer_config,
             add_printer,
