@@ -15,8 +15,8 @@ export const SERVER_CONFIG = {
   MQTT: {
     BROKER_URL: 'ws://192.168.192.100:8083/mqtt',
     TCP_URL: 'mqtt://192.168.192.100:1883',
-    USERNAME: '',
-    PASSWORD: '',
+    USERNAME: 'admin',
+    PASSWORD: 'transportation2024',
   },
   
   // Database Configuration (for direct connections)
@@ -31,7 +31,7 @@ export const SERVER_CONFIG = {
   // Redis Configuration
   REDIS: {
     HOST: '192.168.192.100',
-    PORT: 6380,
+    PORT: 6379,
     PASSWORD: '',
     DB: 0,
   },
