@@ -2,8 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { useEnhancedMqtt } from '../context/EnhancedMqttProvider';
-import { MqttConnectionState } from '../services/enhancedMqttClient';
+// Simplified static statuses for connection display
+enum MqttConnectionState {
+  DISCONNECTED = 'disconnected',
+  CONNECTED = 'connected',
+  AUTHENTICATED = 'authenticated',
+  CONNECTING = 'connecting',
+  DISCOVERING = 'discovering',
+  RECONNECTING = 'reconnecting',
+  FAILED = 'failed'
+}
 import { useAuth } from '../context/AuthProvider';
 // Printer service removed
 
@@ -17,13 +25,12 @@ interface SystemStatusProps {
 
 export function SystemStatus({ compact = false, showDetails = false, className = '' }: SystemStatusProps) {
   const { isAuthenticated } = useAuth();
-  const { 
-    connectionState, 
-    isConnected, 
-    isAuthenticated: isMqttAuthenticated,
-    connect,
-    disconnect
-  } = useEnhancedMqtt();
+  // Show disconnected and disable controls (no broker)
+  const [connectionState] = useState<MqttConnectionState>(MqttConnectionState.DISCONNECTED);
+  const isConnected = false;
+  const isMqttAuthenticated = false;
+  const connect = async () => {};
+  const disconnect = async () => {};
   
   const refreshConnection = async () => {
     await disconnect();

@@ -98,7 +98,7 @@ export default function PrintAllVehicleTrips() {
               <tr key={idx}>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{v.vehicle.licensePlate}</td>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>
-                  {v.vehicle.driver ? `CIN: ${v.vehicle.driver.cin}` : '—'}
+                  {v.vehicle.driver ? `${v.vehicle.driver.firstName} ${v.vehicle.driver.lastName}` : '—'}
                 </td>
                 <td style={{ padding: '2mm', borderBottom: '1px solid #eee' }}>{destSummary || '—'}</td>
                 <td style={{ padding: '2mm', textAlign: 'right', borderBottom: '1px solid #eee' }}>{formatTND(inc?.totalIncome || 0)}</td>

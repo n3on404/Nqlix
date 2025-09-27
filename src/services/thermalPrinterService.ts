@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/tauri';
+import { getLocalStorage } from '../lib/storage';
 
 export interface PrinterConfig {
   id: string;
@@ -32,12 +33,15 @@ export class ThermalPrinterService {
   private config: PrinterConfig;
 
   private constructor() {
-    // Configuration will be loaded from environment variables via the backend
+    // Load configuration from localStorage or use defaults
+    const savedIp = getLocalStorage('printerIp') || '';
+    const savedPort = getLocalStorage('printerPort') || '9100';
+    
     this.config = {
       id: 'printer1',
       name: 'Imprimante Thermique',
-      ip: '192.168.192.10', // Will be overridden by environment variable
-      port: 9100, // Will be overridden by environment variable
+      ip: savedIp || '192.168.1.100', // Default IP
+      port: parseInt(savedPort) || 9100, // Default port
       width: 48,
       timeout: 5000,
       model: 'TM-T20X',
@@ -82,12 +86,8 @@ export class ThermalPrinterService {
    */
   async getCurrentPrinter(): Promise<PrinterConfig | null> {
     try {
-      // Ask backend to reload from environment and return current config
-      const printer = await invoke<PrinterConfig | null>('reload_printer_env');
-      if (printer) {
-        this.config = printer;
-      }
-      return printer;
+      // Return local configuration loaded from localStorage
+      return this.config;
     } catch (error) {
       console.error('Failed to get current printer:', error);
       throw error;
@@ -156,6 +156,37 @@ export class ThermalPrinterService {
       return await invoke<PrinterStatus>('test_printer_connection');
     } catch (error) {
       console.error('Failed to test printer connection:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Test printer connection with specific IP and port
+   */
+  async testConnectionManual(ip: string, port: number): Promise<PrinterStatus> {
+    try {
+      return await invoke<PrinterStatus>('test_printer_connection_manual', { ip, port });
+    } catch (error) {
+      console.error('Failed to test printer connection:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update printer configuration manually
+   */
+  async updateConfig(config: { ip: string; port: number; enabled: boolean }): Promise<void> {
+    try {
+      await invoke('update_printer_config_manual', { config });
+      // Update local config
+      this.config = {
+        ...this.config,
+        ip: config.ip,
+        port: config.port,
+        enabled: config.enabled
+      };
+    } catch (error) {
+      console.error('Failed to update printer config:', error);
       throw error;
     }
   }
@@ -523,20 +554,6 @@ Date: ${paymentData.date}
     console.log('📝 formatBookingTicketData called with booking:', booking);
     let ticketContent = '';
     
-    // Ticket number - use verificationCode as primary, fallback to id
-    if (booking.verificationCode) {
-      ticketContent += `N° Ticket: ${booking.verificationCode}\n`;
-    } else if (booking.id) {
-      ticketContent += `N° Ticket: ${booking.id}\n`;
-    }
-    
-    // Customer name - might not be available in this API response
-    if (booking.customerName) {
-      ticketContent += `Passager: ${booking.customerName}\n`;
-    } else if (booking.customerPhone) {
-      ticketContent += `Téléphone: ${booking.customerPhone}\n`;
-    }
-    
     // Station information
     if (booking.startStationName) {
       ticketContent += `Station départ: ${booking.startStationName}\n`;
@@ -560,7 +577,7 @@ Date: ${paymentData.date}
     
     // Price breakdown - always show base price + service fees = total
     const basePrice = booking.basePrice || booking.baseAmount || 0;
-    const serviceFee = basePrice * 0.1; // 10% service fee
+    const serviceFee = 0.200; // Fixed 0.200 TND service fee per seat
     const totalPrice = basePrice + serviceFee;
     
     ticketContent += `Prix de base: ${basePrice.toFixed(3)} TND\n`;
@@ -592,20 +609,28 @@ Date: ${paymentData.date}
     console.log('📝 formatTalonData called with booking:', booking);
     let talonContent = '';
     
-    // Talon header
-    talonContent += `${'='.repeat(48)}\n`;
-    talonContent += `TALON À DÉTACHER\n`;
-    talonContent += `${'='.repeat(48)}\n`;
-    
-    // Seat index (1/8, 2/8, etc.)
-    if (booking.seatNumber) {
+    // Compact talon content
+    // Seat index (actual position/total capacity)
+    if (booking.seatNumber && booking.vehicleCapacity) {
+      talonContent += `Siège: ${booking.seatNumber}/${booking.vehicleCapacity}\n`;
+    } else if (booking.seatNumber) {
       talonContent += `Siège: ${booking.seatNumber}/8\n`;
+    } else {
+      console.warn('⚠️ No seat number found in booking:', booking);
+      talonContent += `Siège: N/A\n`;
     }
     
     // Vehicle license plate
     if (booking.vehicleLicensePlate) {
       talonContent += `Véhicule: ${booking.vehicleLicensePlate}\n`;
+    } else {
+      console.warn('⚠️ No vehicle license plate found in booking:', booking);
+      talonContent += `Véhicule: N/A\n`;
     }
+    
+    // Price per place (base price only, no service fees)
+    const basePrice = booking.basePrice || booking.baseAmount || 0;
+    talonContent += `Prix: ${basePrice.toFixed(3)} TND\n`;
     
     // Time
     const currentTime = new Date();
@@ -614,11 +639,6 @@ Date: ${paymentData.date}
     // Staff name (from booking data or parameter)
     const staffName = booking.staffName || 'N/A';
     talonContent += `Agent: ${staffName}\n`;
-    
-    // Add perforation line for easy tearing
-    talonContent += `\n${'-'.repeat(48)}\n`;
-    talonContent += `DÉTACHER ICI\n`;
-    talonContent += `${'-'.repeat(48)}\n`;
     
     console.log('📄 Formatted talon content:', talonContent);
     return talonContent;
@@ -747,7 +767,13 @@ Date: ${paymentData.date}
     // Current vehicle info
     ticketContent += `Véhicule: ${exitPassData.licensePlate}\n`;
     ticketContent += `Destination: ${exitPassData.destinationName}\n`;
-    ticketContent += `Sorti à: ${new Date(exitPassData.currentExitTime).toLocaleString('fr-FR')}\n`;
+    
+    const currentExitDate = new Date(exitPassData.currentExitTime);
+    if (!isNaN(currentExitDate.getTime())) {
+      ticketContent += `Sorti à: ${currentExitDate.toLocaleString('fr-FR')}\n`;
+    } else {
+      ticketContent += `Sorti à: ${exitPassData.currentExitTime}\n`; // Fallback to raw string
+    }
     ticketContent += `\n`;
     
     // Previous vehicle info (if any)

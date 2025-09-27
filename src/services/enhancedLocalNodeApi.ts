@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/tauri';
 import { getLocalStorage, setLocalStorage } from '../lib/storage';
+import { SERVER_CONFIG } from '../config/server';
 
 // Enhanced API configuration
 const DEFAULT_CONFIG = {
-  baseUrl: 'http://192.168.192.30:3001/api', // Fallback to local IP
+  baseUrl: SERVER_CONFIG.API.BASE_URL, // Using server IP
   discoveredServers: [] as string[],
-  timeout: 10000,
+  timeout: SERVER_CONFIG.API.TIMEOUT,
   maxRetries: 3,
   retryDelay: 1000,
   priorityLevels: 10,
@@ -216,7 +217,7 @@ class EnhancedLocalNodeApiService {
       console.log(`🔍 Using discovered server: ${serverUrl}`);
       return serverUrl;
     }
-    // Fallback to localhost
+    // Fallback to configured server IP
     const fallbackUrl = this.config.baseUrl.replace('/api', '');
     console.log(`🔍 Using fallback server: ${fallbackUrl}`);
     return fallbackUrl;
@@ -949,7 +950,7 @@ class EnhancedLocalNodeApiService {
         console.log(`✅ Discovered ${discoveredServers.length} servers: ${discoveredServers.join(', ')}`);
         return discoveredServers;
       } else {
-        console.log('⚠️ No servers discovered, using localhost fallback');
+        console.log('⚠️ No servers discovered, using configured server fallback');
         return [];
       }
     } catch (error) {

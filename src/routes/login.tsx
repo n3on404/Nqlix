@@ -120,7 +120,7 @@ export default function LoginScreen() {
                 type="text"
                 value={serverUrl}
                 onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="http://192.168.192.30:3001"
+                placeholder="http://192.168.192.100:3001"
                 className="w-full"
               />
             </div>

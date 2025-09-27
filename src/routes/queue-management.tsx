@@ -18,9 +18,11 @@ import {
   TrendingUp,
   X,
   MapPin,
+  ArrowUp,
+  Move,
   
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQueue } from "../context/QueueProvider";
 import { formatCurrency } from "../utils/formatters";
 import {
@@ -46,12 +48,13 @@ import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { useNotifications } from "../context/NotificationProvider";
 import { usePaymentNotifications } from "../components/NotificationToast";
-import { getWebSocketClient, initializeWebSocket } from "../lib/websocket";
+// TODO: Replace with MQTT integration
 import { thermalPrinter } from "../services/thermalPrinterService";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import api from "../lib/api";
 import { useAuth } from "../context/AuthProvider";
+import { dbClient } from "../services/dbClient";
 import React from "react";
 
 // Sortable queue item component
@@ -62,10 +65,12 @@ interface SortableQueueItemProps {
   getBasePriceForDestination: (destinationName: string) => number | undefined;
   onVehicleClick: (vehicle: any) => void;
   onExitQueue: (licensePlate: string) => void;
+  onEndTrip: (queueId: string, licensePlate: string, availableSeats: number, totalSeats: number) => void;
+  onMoveToFront: (queueId: string, destinationId: string) => void;
   actionLoading: string | null;
 }
 
-function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, actionLoading }: SortableQueueItemProps) {
+function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, onEndTrip, onMoveToFront, actionLoading }: SortableQueueItemProps) {
   const {
     attributes,
     listeners,
@@ -106,7 +111,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             className="flex items-center gap-3 flex-1 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
             onClick={() => onVehicleClick({ 
               licensePlate: queue.licensePlate,
-              cin: queue.vehicle?.driver?.cin,
+              // cin removed - no longer supported without driver table
               currentDestination: queue.destinationName, 
               currentDestinationId: queue.destinationId,
               queueId: queue.id 
@@ -115,7 +120,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             <Car className="h-5 w-5 text-gray-600" />
             <div>
               <div className="font-semibold text-gray-900">{queue.licensePlate}</div>
-              <div className="text-sm text-gray-600">CIN: {queue.vehicle?.driver?.cin}</div>
+                <div className="text-sm text-gray-600">Véhicule: {queue.vehicle?.licensePlate}</div>
             </div>
           </div>
         </div>
@@ -154,6 +159,46 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
         
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
+          {/* Move to Front Button */}
+          <Button 
+            variant="outline" 
+            size="sm"
+            className="text-purple-600 border-purple-300 hover:bg-purple-50"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveToFront(queue.id, queue.destinationId);
+            }}
+            disabled={actionLoading === queue.licensePlate || queue.status !== 'WAITING'}
+            title="Déplacer en première position"
+          >
+            {actionLoading === queue.licensePlate ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowUp className="h-4 w-4" />
+            )}
+          </Button>
+
+          {/* End Trip Button - only show if vehicle has booked seats */}
+          {queue.availableSeats < queue.totalSeats && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="text-green-600 border-green-300 hover:bg-green-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEndTrip(queue.id, queue.licensePlate, queue.availableSeats, queue.totalSeats);
+              }}
+              disabled={actionLoading === queue.licensePlate}
+              title={`Terminer le voyage avec ${queue.totalSeats - queue.availableSeats} sièges occupés`}
+            >
+              {actionLoading === queue.licensePlate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+          
           <Button 
             variant="outline" 
             size="sm"
@@ -178,7 +223,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             disabled={queue.status !== 'WAITING'}
             onClick={() => onVehicleClick({ 
               licensePlate: queue.licensePlate,
-              cin: queue.vehicle?.driver?.cin,
+              // cin removed - no longer supported without driver table
               currentDestination: queue.destinationName, 
               currentDestinationId: queue.destinationId,
               queueId: queue.id 
@@ -214,6 +259,7 @@ export default function QueueManagement() {
     enterQueue,
     exitQueue,
     updateVehicleStatus,
+    beginOptimisticSuppression,
   } = useQueue();
   const { addNotification } = useNotifications();
   const { currentStaff } = useAuth();
@@ -226,7 +272,41 @@ export default function QueueManagement() {
   const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null); // vehicle id or action
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshTimeout, setRefreshTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [dbOk, setDbOk] = useState<boolean | null>(null);
   const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
+  const [isReordering, setIsReordering] = useState(false);
+
+  // Debounced refresh function to prevent multiple simultaneous refreshes
+  const debouncedRefreshQueues = useCallback(() => {
+    // Clear any existing timeout
+    if (refreshTimeout) {
+      clearTimeout(refreshTimeout);
+    }
+
+    // If already refreshing, skip this refresh
+    if (isRefreshing) {
+      console.log('🔄 Refresh already in progress, skipping...');
+      return;
+    }
+
+    // Set refreshing state
+    setIsRefreshing(true);
+    console.log('🔄 Starting debounced refresh...');
+
+    // Execute lightweight refresh (summaries only) via QueueProvider.refreshQueues
+    refreshQueues();
+    setLastUpdated(new Date());
+
+    // Clear refreshing state after a short delay
+    const timeout = setTimeout(() => {
+      setIsRefreshing(false);
+      console.log('✅ Refresh completed');
+    }, 1000);
+
+    setRefreshTimeout(timeout);
+  }, [refreshQueues, isRefreshing, refreshTimeout]);
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(false);
   const [vehiclesError, setVehiclesError] = useState<string | null>(null);
@@ -366,25 +446,24 @@ export default function QueueManagement() {
     setDefaultDestination(null);
     
     try {
-      const response = await api.get(`/api/queue/vehicle/${licensePlate}/destinations`);
-      
-      if (response.success && response.data) {
-        const data = response.data as any;
-        console.log('🎯 Vehicle destinations loaded:', data);
-        setVehicleDestinations(data.destinations || []);
-        setDefaultDestination(data.defaultDestination);
-        
-        // Auto-select default destination if available
-        if (data.defaultDestination) {
-          setSelectedVehicleDestination(data.defaultDestination.stationId);
-          console.log('✅ Auto-selected default destination:', data.defaultDestination.stationName);
-        } else if (data.destinations && data.destinations.length > 0) {
-          // Auto-select first destination if no default
-          setSelectedVehicleDestination(data.destinations[0].stationId);
-          console.log('✅ Auto-selected first destination:', data.destinations[0].stationName);
-        }
-      } else {
-        console.warn('⚠️ Failed to load destinations:', response);
+      const data = await dbClient.getVehicleAuthorizedDestinations(licensePlate);
+      console.log('🎯 Vehicle authorized destinations loaded:', data);
+      const mapped = (data || []).map(d => ({
+        stationId: d.stationId,
+        stationName: d.stationName,
+        basePrice: d.basePrice,
+        isDefault: d.isDefault,
+        priority: d.priority,
+      }));
+      setVehicleDestinations(mapped);
+      const def = mapped.find(d => d.isDefault) || null;
+      setDefaultDestination(def);
+      if (def) {
+        setSelectedVehicleDestination(def.stationId);
+        console.log('✅ Auto-selected default destination:', def.stationName);
+      } else if (mapped.length > 0) {
+        setSelectedVehicleDestination(mapped[0].stationId);
+        console.log('✅ Auto-selected first destination:', mapped[0].stationName);
       }
     } catch (error: any) {
       console.error('Error fetching vehicle destinations:', error);
@@ -403,34 +482,22 @@ export default function QueueManagement() {
     setChangeQueueError(null);
     
     try {
-      const response = await api.get(`/api/queue/vehicle/${licensePlate}/destinations`);
-      console.log('🔄 Raw API response for destinations:', response);
-      
-      if (response.success && response.data) {
-        const data = response.data as any;
-        console.log('🔄 Change queue destinations loaded:', data);
-        console.log('🔄 All destinations:', data.destinations);
-        console.log('🔄 Current destination ID:', currentDestinationId);
-        
-        // Filter out current destination if vehicle is already in a queue
-        const availableDestinations = (data.destinations || []).filter((dest: any) => {
-          console.log(`🔄 Checking destination ${dest.stationName} (${dest.stationId}) vs current ${currentDestinationId}`);
-          return dest.stationId !== currentDestinationId;
-        });
-        
-        console.log('🔄 Available destinations after filtering:', availableDestinations);
+      const data = await dbClient.getVehicleAuthorizedDestinations(licensePlate);
+      console.log('🔄 Authorized destinations:', data);
+      const all = (data || []).map(d => ({
+        stationId: d.stationId,
+        stationName: d.stationName,
+        basePrice: d.basePrice,
+        isDefault: d.isDefault,
+        priority: d.priority,
+      }));
+      const availableDestinations = all.filter(dest => dest.stationId !== currentDestinationId);
         setChangeQueueDestinations(availableDestinations);
-        
-        // Auto-select first available destination
         if (availableDestinations.length > 0) {
           setSelectedNewDestination(availableDestinations[0].stationId);
           console.log('✅ Auto-selected first available destination for queue change:', availableDestinations[0].stationName);
         } else {
           console.log('⚠️ No available destinations after filtering');
-        }
-      } else {
-        console.warn('⚠️ Failed to load destinations for queue change:', response);
-        setChangeQueueError('Impossible de charger les destinations disponibles');
       }
     } catch (error: any) {
       console.error('❌ Error fetching destinations for queue change:', error);
@@ -453,208 +520,33 @@ export default function QueueManagement() {
     }
   };
 
-  // Real-time notifications for queue/vehicle events
+  // MQTT removed for DB-direct flow
+
+  // Periodic refresh (light) instead of MQTT
   useEffect(() => {
-    if (!isConnected) return;
-    const wsClient = getWebSocketClient();
-    
-    const queueHandler = (msg: any) => {
-      console.log('🔄 Queue update received:', msg);
-      
-      // Refresh queue data when update received
-      refreshQueues();
-      
-      if (msg?.payload?.queue) {
-        addNotification({
-          type: 'info',
-          title: 'Queue Update',
-          message: `Véhicule ${msg.payload.queue.vehicle?.licensePlate || ''} mis à jour dans la file d'attente ${msg.payload.queue.destinationName}`,
-          duration: 4000
-        });
-      }
-    };
-    
-    const bookingHandler = (msg: any) => {
-      console.log('🎯 Booking update received:', msg);
-      
-      // Refresh queue data when booking update received
-      refreshQueues();
-      
-      if (msg?.payload) {
-        const booking = msg.payload;
-        const bookedSeats = booking.seatsBooked || booking.seats;
-        const vehiclePlate = booking.vehicleLicensePlate || booking.licensePlate;
-        const destination = booking.destinationName || booking.destination;
-        
-        if (vehiclePlate && destination) {
-          addNotification({
-            type: 'success',
-            title: 'Nouvelle Réservation',
-            message: `${bookedSeats} place${bookedSeats > 1 ? 's' : ''} réservée${bookedSeats > 1 ? 's' : ''} sur ${vehiclePlate} → ${destination}`,
-            duration: 5000
-          });
-        }
-      }
-    };
-    
-    const queueUpdatedHandler = (msg: any) => {
-      console.log('🔄 Queue updated event received:', msg);
-      // Force refresh queue data when queue_updated event received
-      setTimeout(() => {
-        console.log('🔄 Force refreshing queues after queue update...');
-        refreshQueues();
-      }, 100); // Small delay to ensure backend has processed the update
-    };
-    
-    const bookingCreatedHandler = (msg: any) => {
-      console.log('🎯 Booking created event received:', msg);
-      // Force refresh queue data when booking_created event received
-      setTimeout(() => {
-        console.log('🔄 Force refreshing queues after booking created...');
-        refreshQueues();
-      }, 100);
-      
-      if (msg?.payload || msg) {
-        const booking = msg.payload || msg;
-        const seatsBooked = booking.seatsBooked || booking.seats || 1;
-        addNotification({
-          type: 'success',
-          title: 'Nouvelle Réservation',
-          message: `Réservation créée - ${seatsBooked} place${seatsBooked > 1 ? 's' : ''}`,
-          duration: 5000
-        });
-      }
-    };
-    
-    const vehicleStatusHandler = (msg: any) => {
-      console.log('🚗 Vehicle status update received:', msg);
-      
-      // Refresh queue data when vehicle status changes
-      refreshQueues();
-      
-      if (msg?.payload?.vehicle && msg?.payload?.status) {
-        const vehicle = msg.payload.vehicle;
-        const status = msg.payload.status;
-        
-        if (status === 'READY') {
-          addNotification({
-            type: 'warning',
-            title: 'Véhicule Complet',
-            message: `Véhicule ${vehicle.licensePlate} est maintenant complet et prêt au départ`,
-            duration: 6000
-          });
-        }
-      }
-    };
-
-    // Payment confirmation handler for queue management
-    const paymentHandler = (msg: any) => {
-      if (msg?.payload?.source === 'payment_confirmation') {
-        const paymentData = msg.payload;
-        
-        // Show payment success notification
-        notifyPaymentSuccess({
-          verificationCode: paymentData.verificationCode,
-          totalAmount: paymentData.totalAmount,
-          seatsBooked: paymentData.seatsBooked,
-          vehicleLicensePlate: paymentData.vehicle.licensePlate,
-          destinationName: paymentData.vehicle.destination,
-          paymentReference: paymentData.onlineTicketId || 'N/A'
-        });
-
-        // Refresh queue data to show updated seat counts
-        refreshQueues();
-      }
-    };
-
-    // Seat availability change handler for queue management
-    const seatHandler = (msg: any) => {
-      if (msg?.payload?.type === 'seat_availability_changed') {
-        const seatData = msg.payload;
-        
-        // Find the vehicle in current state to get old seat count
-        const currentVehicle = Object.values(queues).flat().find((q: any) => q.licensePlate === seatData.vehicleLicensePlate);
-        if (currentVehicle) {
-          notifySeatUpdate({
-            vehicleLicensePlate: seatData.vehicleLicensePlate,
-            destinationName: seatData.destinationName,
-            availableSeats: seatData.availableSeats,
-            totalSeats: seatData.totalSeats,
-            oldAvailableSeats: currentVehicle.availableSeats
-          });
-        }
-
-        // Refresh queue data
-        refreshQueues();
-      }
-    };
-
-    // Vehicle status change handler for queue management
-    const vehicleStatusChangeHandler = (msg: any) => {
-      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
-        notifyVehicleReady({
-          licensePlate: msg.payload.licensePlate,
-          destinationName: msg.payload.destinationName,
-          totalSeats: msg.payload.totalSeats
-        });
-
-        // Refresh queue data
-        refreshQueues();
-      }
-    };
-    
-    // Listen for multiple event types that could indicate queue/booking changes
-    wsClient.on('queue_update', queueHandler);
-    wsClient.on('booking_update', bookingHandler);
-    wsClient.on('vehicle_status_update', vehicleStatusHandler);
-    wsClient.on('queue_updated', queueUpdatedHandler);
-    wsClient.on('booking_created', bookingCreatedHandler);
-    wsClient.on('cash_booking_updated', queueUpdatedHandler);
-    wsClient.on('financial_update', queueUpdatedHandler);
-    wsClient.on('payment_confirmation', paymentHandler);
-    wsClient.on('seat_availability_changed', seatHandler);
-    wsClient.on('vehicle_status_changed', vehicleStatusChangeHandler);
-    
-    return () => {
-      wsClient.removeListener('queue_update', queueHandler);
-      wsClient.removeListener('booking_update', bookingHandler);
-      wsClient.removeListener('vehicle_status_update', vehicleStatusHandler);
-      wsClient.removeListener('queue_updated', queueUpdatedHandler);
-      wsClient.removeListener('booking_created', bookingCreatedHandler);
-      wsClient.removeListener('cash_booking_updated', queueUpdatedHandler);
-      wsClient.removeListener('financial_update', queueUpdatedHandler);
-      wsClient.removeListener('payment_confirmation', paymentHandler);
-      wsClient.removeListener('seat_availability_changed', seatHandler);
-      wsClient.removeListener('vehicle_status_changed', vehicleStatusChangeHandler);
-    };
-  }, [isConnected, addNotification, refreshQueues]);
-
-  // Initialize WebSocket connection for real-time updates
-  useEffect(() => {
-    console.log('🔌 Queue Management: Initializing WebSocket connection...');
-    const wsClient = initializeWebSocket();
-    
-    // Ensure we're connected for real-time updates
-    if (!wsClient.isConnected()) {
-      console.log('🔌 Queue Management: WebSocket not connected, connecting...');
-      wsClient.connect();
-    }
-
-    // Set up periodic refresh to ensure data stays current
     const refreshInterval = setInterval(() => {
-      console.log('🔄 Periodic queue refresh...');
-      refreshQueues();
-    }, 30000); // Refresh every 30 seconds
+      // Only run a light refresh cadence; details are fetched on demand
+      debouncedRefreshQueues();
+    }, 20000);
+    return () => clearInterval(refreshInterval);
+  }, [debouncedRefreshQueues]);
 
-    return () => {
-      clearInterval(refreshInterval);
-    };
-  }, [refreshQueues]);
+  // MQTT connection is handled automatically by useMQTT hook
+  // No need for manual connection management
+
+  // Remove aggressive per-interaction refresh to reduce churn
 
   // Update lastUpdated timestamp when queues change
   useEffect(() => {
     setLastUpdated(new Date());
   }, [queues]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      dbClient.health().then(setDbOk).catch(() => setDbOk(false));
+    }, 15000);
+    return () => clearInterval(t);
+  }, []);
 
   // Fetch queue data for selected destination
   useEffect(() => {
@@ -672,27 +564,53 @@ export default function QueueManagement() {
     if (showAddVehicleModal) {
       setVehiclesLoading(true);
       setVehiclesError(null);
-      import("../lib/api").then(({ default: api }) => {
-        api.getVehicles().then(async res => {
-          if (res.success && res.data) {
-            // Check day pass status for each vehicle
-            const vehiclesWithDayPassStatus = await Promise.all(
-              res.data.map(async (vehicle: any) => {
-                console.log('Checking day pass status for vehicle:', vehicle.licensePlate);
-                const hasDayPass = await checkDayPassStatus(vehicle.licensePlate);
-                console.log('Day pass status result for', vehicle.licensePlate, ':', hasDayPass);
-                return { ...vehicle, dayPassValid: hasDayPass };
-              })
-            );
-            setVehicles(vehiclesWithDayPassStatus);
+      api.getVehicles().then(async res => {
+        console.log('🚗 [VEHICLE DEBUG] API response:', res);
+        if (res.success && res.data) {
+          // Handle nested response structure
+          const vehiclesData = res.data?.data || res.data;
+          console.log('🚗 [VEHICLE DEBUG] Vehicles data:', vehiclesData);
+          
+          // Ensure vehiclesData is an array
+          if (Array.isArray(vehiclesData)) {
+            // Batch check day pass for faster resolution and show per-card loading until resolved
+            const plates = vehiclesData.map((v: any) => v.licensePlate).filter(Boolean);
+            // Set initial list with loading state
+            setVehicles(vehiclesData.map((v: any) => ({ ...v, dayPassValid: undefined })));
+            try {
+              const map = await dbClient.hasDayPassTodayBatch(plates);
+              setVehicles((prev: any[]) => prev.map((v: any) => ({
+                ...v,
+                dayPassValid: map?.[v.licensePlate] ?? false,
+              })));
+            } catch (e) {
+              // Fallback: sequential checks
+              const vehiclesWithDayPassStatus = await Promise.all(
+                vehiclesData.map(async (vehicle: any) => {
+                  try {
+                    const has = await dbClient.hasDayPassToday(vehicle.licensePlate);
+                    return { ...vehicle, dayPassValid: has };
+                  } catch {
+                    const has = await checkDayPassStatus(vehicle.licensePlate);
+                    return { ...vehicle, dayPassValid: has };
+                  }
+                })
+              );
+              setVehicles(vehiclesWithDayPassStatus);
+            }
           } else {
-            setVehiclesError(res.message || "Échec de la récupération des véhicules");
+            console.error('🚗 [VEHICLE DEBUG] Vehicles data is not an array:', vehiclesData);
+            setVehiclesError("Format de données de véhicules invalide");
           }
-          setVehiclesLoading(false);
-        }).catch(err => {
-          setVehiclesError("Échec de la récupération des véhicules");
-          setVehiclesLoading(false);
-        });
+        } else {
+          console.error('🚗 [VEHICLE DEBUG] API call failed:', res);
+          setVehiclesError(res.message || "Échec de la récupération des véhicules");
+        }
+        setVehiclesLoading(false);
+      }).catch(err => {
+        console.error('🚗 [VEHICLE DEBUG] API call error:', err);
+        setVehiclesError("Échec de la récupération des véhicules");
+        setVehiclesLoading(false);
       });
     }
   }, [showAddVehicleModal]);
@@ -735,7 +653,7 @@ export default function QueueManagement() {
   // Fetch governments for filtering
   const fetchGovernments = async () => {
     try {
-      const response = await api.getQueueLocations();
+      const response = await api.getAllLocations();
       if (response.success && response.data) {
         console.log('🏛️ Governments loaded:', response.data);
         setGovernments(response.data);
@@ -793,7 +711,7 @@ export default function QueueManagement() {
     setDayPassError(null);
     
     try {
-      // Find the selected vehicle to get driverId and vehicleId
+      // Find the selected vehicle to get vehicleId
       const vehicle = selectedVehicle;
       // Debug: Log vehicle data for day pass purchase
       console.log('🎫 [DAY PASS DEBUG] Vehicle data for day pass purchase:', {
@@ -815,20 +733,11 @@ export default function QueueManagement() {
         return { success: false, message: 'ID du véhicule manquant' };
       }
       
-      // Check for driver ID in different possible locations
-      const driverId = vehicle.driver?.id || vehicle.driverId || vehicle.driver_id;
-      console.log('🎫 [DAY PASS DEBUG] Driver ID found:', driverId);
-      
-      if (!driverId) {
-        console.log('❌ [DAY PASS DEBUG] Driver ID missing, available data:', vehicle);
-        setDayPassError('ID du conducteur manquant. Données disponibles: ' + JSON.stringify(vehicle));
-        return { success: false, message: 'ID du conducteur manquant' };
-      }
+      // Driver ID no longer required (driver table removed)
 
       console.log('🎫 [DAY PASS DEBUG] Making API call to purchase day pass...');
       const response = await api.post('/api/day-pass/purchase', {
         licensePlate,
-        driverId: driverId,
         vehicleId: vehicle.id,
         paymentMethod: 'cash' // Default to cash payment
       });
@@ -842,13 +751,27 @@ export default function QueueManagement() {
           message: `Pass journalier acheté avec succès pour ${licensePlate}`,
           duration: 4000
         });
+        // Immediately reflect day pass in UI based on notification
+        try {
+          // Mark selected vehicle as having valid day pass
+          setSelectedVehicle((prev: any) => prev && prev.licensePlate === licensePlate ? { ...prev, dayPassValid: true } : prev);
+          // Update vehicles list badge immediately
+          setVehicles((prev: any[]) => prev.map((v: any) => v.licensePlate === licensePlate ? { ...v, dayPassValid: true } : v));
+        } catch {}
+        // Trigger focused data refreshes to ensure server truth
+        try {
+          // Refresh destinations available for this vehicle (often unlocked by day pass)
+          await fetchVehicleDestinations(licensePlate);
+        } catch {}
+        // Also refresh queue summaries in background
+        try { debouncedRefreshQueues(); } catch {}
         
         // Print day pass ticket
         try {
           console.log('🎫 [DAY PASS DEBUG] Formatting day pass ticket data...');
           const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
             licensePlate: licensePlate,
-            driverName: vehicle.driver ? `CIN: ${vehicle.driver.cin}` : 'N/A',
+            driverName: vehicle.driver ? `${vehicle.driver.firstName} ${vehicle.driver.lastName}` : 'N/A',
             amount: dayPassPrice
           });
           console.log('🎫 [DAY PASS DEBUG] Day pass ticket data:', dayPassTicketData);
@@ -922,7 +845,14 @@ export default function QueueManagement() {
     
     // Check day pass status first
     console.log('🚗 [QUEUE DEBUG] Checking day pass status for:', selectedVehicle.licensePlate);
-    const hasDayPass = await checkDayPassStatus(selectedVehicle.licensePlate);
+    // Use Tauri day-pass check (Africa/Tunis timezone aware)
+    let hasDayPass = false;
+    try {
+      hasDayPass = await dbClient.hasDayPassToday(selectedVehicle.licensePlate);
+    } catch (e) {
+      // fallback to API if Tauri check fails
+      hasDayPass = await checkDayPassStatus(selectedVehicle.licensePlate);
+    }
     console.log('🚗 [QUEUE DEBUG] Day pass status:', hasDayPass);
     
     if (!hasDayPass) {
@@ -948,6 +878,9 @@ export default function QueueManagement() {
           setAddVehicleError(dayPassResult.message || 'Erreur lors de l\'achat du pass journalier');
           return;
         }
+        // Mark in-memory state so badge updates immediately
+        setSelectedVehicle((prev: any) => prev && prev.licensePlate === selectedVehicle.licensePlate ? { ...prev, dayPassValid: true } : prev);
+        setVehicles((prev: any[]) => prev.map((v: any) => v.licensePlate === selectedVehicle.licensePlate ? { ...v, dayPassValid: true } : v));
         
         console.log('✅ [QUEUE DEBUG] Day pass purchased automatically, proceeding with queue entry...');
       } catch (error) {
@@ -1211,22 +1144,6 @@ export default function QueueManagement() {
     })
   );
 
-  const handleDragEnd = (event: DragEndEvent, destination: string) => {
-    const { active, over } = event;
-
-    if (!over || active.id === over.id) {
-      return;
-    }
-
-    const currentQueues = queues[destination] || [];
-    const oldIndex = currentQueues.findIndex(q => q.id === active.id);
-    const newIndex = currentQueues.findIndex(q => q.id === over.id);
-
-    if (oldIndex !== -1 && newIndex !== -1) {
-      console.log(`🔄 Reordering queue for ${destination} from ${oldIndex} to ${newIndex}`);
-      // In a real app, you would call an API to update the queue positions
-    }
-  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -1290,36 +1207,43 @@ export default function QueueManagement() {
   // Enter queue with specific destination
   const handleEnterQueueWithDestination = async (licensePlate: string, destinationId: string, destinationName?: string) => {
     try {
-      const response = await api.post('/api/queue/enter', { 
-        licensePlate, 
-        destinationId, 
-        destinationName 
-      });
-      
-      if (response.success) {
-        const data = response.data as any;
-        if (data?.movedFromQueue && data?.previousDestination) {
-          addNotification({
-            type: 'info',
-            title: 'Véhicule déplacé',
-            message: `${licensePlate} déplacé de ${data.previousDestination} vers ${destinationName || 'la destination sélectionnée'}`,
-            duration: 5000
-          });
-        } else {
+      // Prevent duplicate clicks
+      setActionLoading(licensePlate);
+      try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
+      await dbClient.enterQueueWithDestination(licensePlate, destinationId, destinationName);
           addNotification({
             type: 'success',
             title: 'Véhicule ajouté',
             message: `${licensePlate} ajouté à la file pour ${destinationName || 'la destination sélectionnée'}`,
             duration: 4000
           });
+
+        try {
+          const summary = queueSummaries.find(s => s.destinationId === destinationId);
+        if (summary) setSelectedDestination(summary.destinationName);
+        } catch {}
+
+      // Focused fetch with short retries to avoid empty flashes
+      const attempts = 3;
+      for (let i = 0; i < attempts; i++) {
+              await fetchQueueForDestination(destinationId);
+        if (i < attempts - 1) {
+          await new Promise(r => setTimeout(r, 200));
         }
-        refreshQueues(); // Refresh the queue data
       }
-      
-      return response;
+        debouncedRefreshQueues();
+      setActionLoading(null);
+      return { success: true };
     } catch (error: any) {
       console.error('Error entering queue with destination:', error);
-      return { success: false, message: error.message || 'Échec de l\'entrée en file' };
+      setActionLoading(null);
+      addNotification({
+        type: 'error',
+        title: 'Échec de l\'entrée en file',
+        message: error?.message || 'Échec de l\'entrée en file',
+        duration: 4000
+      });
+      return { success: false, message: error?.message || 'Échec de l\'entrée en file' };
     }
   };
   const handleExitQueue = async (licensePlate: string) => {
@@ -1331,6 +1255,7 @@ export default function QueueManagement() {
     if (!confirmed) return;
     
     setActionLoading(licensePlate);
+    try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
     const result = await exitQueue(licensePlate);
     setActionLoading(null);
     
@@ -1348,6 +1273,168 @@ export default function QueueManagement() {
         message: result.message || 'Échec de la sortie de la file',
         duration: 4000
       });
+    }
+  };
+
+  const handleEndTrip = async (queueId: string, licensePlate: string, availableSeats: number, totalSeats: number) => {
+    const bookedSeats = totalSeats - availableSeats;
+    
+    // Show confirmation dialog with pricing info
+    const confirmed = window.confirm(
+      `Terminer le voyage pour ${licensePlate} ?\n\n` +
+      `Sièges occupés: ${bookedSeats}/${totalSeats}\n` +
+      `Sièges libres: ${availableSeats}\n\n` +
+      `Cette action va:\n` +
+      `• Imprimer le ticket de sortie\n` +
+      `• Calculer le prix basé sur les sièges occupés\n` +
+      `• Retirer le véhicule de la file d'attente`
+    );
+    
+    if (!confirmed) return;
+    
+    setActionLoading(licensePlate);
+    try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
+    
+    try {
+      const staffId = currentStaff?.id || undefined;
+      const result = await dbClient.endTripWithPartialCapacity(queueId, staffId);
+      setActionLoading(null);
+      
+      addNotification({
+        type: 'success',
+        title: 'Voyage terminé',
+        message: result,
+        duration: 5000
+      });
+      
+      // Refresh the queue to show updated data
+      debouncedRefreshQueues();
+    } catch (error: any) {
+      setActionLoading(null);
+      addNotification({
+        type: 'error',
+        title: 'Échec de la fin du voyage',
+        message: error?.message || 'Échec de la fin du voyage',
+        duration: 4000
+      });
+    }
+  };
+
+  const handleMoveToFront = async (queueId: string, destinationId: string) => {
+    setActionLoading(queueId);
+    
+    try {
+      const result = await dbClient.moveVehicleToFront(queueId, destinationId);
+      
+      addNotification({
+        type: 'success',
+        title: 'Véhicule déplacé',
+        message: 'Le véhicule a été déplacé en première position',
+        duration: 3000
+      });
+      
+      // Refresh the queue to show updated order
+      debouncedRefreshQueues();
+    } catch (error: any) {
+      addNotification({
+        type: 'error',
+        title: 'Échec du déplacement',
+        message: error?.message || 'Échec du déplacement du véhicule',
+        duration: 4000
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDragEnd = async (event: any) => {
+    const { active, over } = event;
+    
+    if (!active || !over || active.id === over.id) {
+      setIsReordering(false);
+      return;
+    }
+
+    const destinationName = selectedDestination;
+    if (!destinationName) return;
+
+    const destinationQueues = queues[destinationName] || [];
+    const oldIndex = destinationQueues.findIndex((item: any) => item.id === active.id);
+    const newIndex = destinationQueues.findIndex((item: any) => item.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) {
+      setIsReordering(false);
+      return;
+    }
+
+    // Get the actual destination ID from the queue summaries
+    console.log('🔍 [DRAG DEBUG] Available queue summaries:', queueSummaries);
+    console.log('🔍 [DRAG DEBUG] Looking for destination name:', destinationName);
+    console.log('🔍 [DRAG DEBUG] Destination queues:', destinationQueues);
+    
+    const summary = queueSummaries.find(s => s.destinationName === destinationName);
+    console.log('🔍 [DRAG DEBUG] Found summary:', summary);
+    
+    // Try to get destination ID from summary first, then from queue items
+    let destinationId = summary?.destinationId;
+    
+    // Fallback: try to get destination ID from queue items if they have it
+    if (!destinationId && destinationQueues.length > 0) {
+      const firstItem = destinationQueues[0] as any;
+      if (firstItem.destinationId) {
+        destinationId = firstItem.destinationId;
+        console.log('🔍 [DRAG DEBUG] Got destination ID from queue item:', destinationId);
+      }
+    }
+    
+    if (!destinationId) {
+      console.error('❌ [DRAG DEBUG] No destination ID found for destination:', destinationName);
+      console.error('❌ [DRAG DEBUG] Available summaries:', queueSummaries.map(s => ({ name: s.destinationName, id: s.destinationId })));
+      console.error('❌ [DRAG DEBUG] First queue item:', destinationQueues[0]);
+      setIsReordering(false);
+      return;
+    }
+    
+    console.log('✅ [DRAG DEBUG] Using destination ID:', destinationId);
+
+    // Create new order
+    const newOrder = [...destinationQueues];
+    const [movedItem] = newOrder.splice(oldIndex, 1);
+    newOrder.splice(newIndex, 0, movedItem);
+
+    // Update positions
+    const vehiclePositions = newOrder.map((item: any, index: number) => ({
+      queueId: item.id,
+      position: index + 1
+    }));
+
+    try {
+      console.log('🔄 [FRONTEND DEBUG] Updating queue positions:', {
+        destinationId,
+        vehiclePositions,
+        destinationName
+      });
+      
+      await dbClient.updateQueuePositions(destinationId, vehiclePositions);
+      
+      addNotification({
+        type: 'success',
+        title: 'Ordre mis à jour',
+        message: 'L\'ordre des véhicules a été mis à jour',
+        duration: 2000
+      });
+      
+      // Refresh the queue to show updated order
+      debouncedRefreshQueues();
+    } catch (error: any) {
+      addNotification({
+        type: 'error',
+        title: 'Échec de la mise à jour',
+        message: error?.message || 'Échec de la mise à jour de l\'ordre',
+        duration: 4000
+      });
+    } finally {
+      setIsReordering(false);
     }
   };
   const handleUpdateVehicleStatus = async (licensePlate: string, status: string) => {
@@ -1372,16 +1459,32 @@ export default function QueueManagement() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Gestion des Files</h1>
             <p className="text-sm text-gray-600 mt-1">Ajouter ou retirer des véhicules des files d'attente</p>
+            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+              <div className={`w-2 h-2 rounded-full ${dbOk === false ? 'bg-red-500' : 'bg-green-500'}`}></div>
+              <span>DB {dbOk === false ? 'Fail' : 'OK'}</span>
+              <span>•</span>
+              <span>Dernière mise à jour: {lastUpdated?.toLocaleTimeString() || 'Jamais'}</span>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <Button 
               variant="outline" 
-              onClick={() => refreshQueues()}
-              disabled={isLoading}
-              className="flex items-center gap-2"
+              onClick={() => {
+                console.log('🔄 Manual refresh triggered');
+                debouncedRefreshQueues();
+                if (selectedDestination) {
+                  const summary = queueSummaries.find(s => s.destinationName === selectedDestination);
+                  if (summary) {
+                    fetchQueueForDestination(summary.destinationId);
+                  }
+                }
+              }}
+              disabled={isLoading || isRefreshing}
+              className="flex items-center gap-2 bg-green-100 hover:bg-green-200 text-green-700 border-green-300"
+              title="Refresh all queue data manually"
             >
-              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-              Actualiser
+              <RefreshCw className={`h-4 w-4 ${isLoading || isRefreshing ? 'animate-spin' : ''}`} />
+              {isRefreshing ? 'Refreshing...' : 'Refresh'}
             </Button>
             <Button 
               onClick={() => setShowAddVehicleModal(true)}
@@ -1519,12 +1622,14 @@ export default function QueueManagement() {
               ) : (
                 <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
                   {vehicles.filter(v => {
+                    // Filter out banned vehicles
+                    if (v.isBanned) return false;
                     const plate = (v.licensePlate || '').toUpperCase().trim();
                     if (vehiclesInAnyQueue.includes(plate)) return false;
                     const q = search.toLowerCase();
                     return (
-                      v.licensePlate?.toLowerCase().includes(q) ||
-                      v.driver?.cin?.toLowerCase().includes(q)
+                      v.licensePlate?.toLowerCase().includes(q)
+                      // Driver CIN removed - no longer supported
                     );
                   }).map((v, index) => (
                     <div
@@ -1547,7 +1652,7 @@ export default function QueueManagement() {
                               {v.dayPassValid ? 'Pass OK' : 'Pas de pass'}
                             </div>
                           </div>
-                          <div className="text-sm text-gray-600">CIN: {v.driver?.cin}</div>
+                          <div className="text-sm text-gray-600">Véhicule: {v.licensePlate}</div>
                         </div>
                       </div>
                       {selectedVehicle?.licensePlate === v.licensePlate && (
@@ -1644,22 +1749,7 @@ export default function QueueManagement() {
                                   Prix: <span className="font-bold text-green-600">{formatCurrency(dest.basePrice)}</span>
                                 </span>
                               </div>
-                              <div className="flex items-center space-x-1">
-                                {(() => {
-                                  const route = getRouteForDestination(dest.stationName);
-                                  return route ? (
-                                    <div className="flex items-center text-green-600 text-xs">
-                                      <CheckCircle className="w-3 h-3 mr-1" />
-                                      Disponible
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center text-orange-600 text-xs">
-                                      <AlertCircle className="w-3 h-3 mr-1" />
-                                      Indisponible
-                                    </div>
-                                  );
-                                })()}
-                              </div>
+                              {/* Availability badge removed as requested */}
                             </div>
                           </div>
                         </div>
@@ -1743,7 +1833,7 @@ export default function QueueManagement() {
                   <div>
                     <div className="font-semibold text-gray-900">{selectedVehicleForQueueChange.licensePlate}</div>
                     <div className="text-sm text-gray-600">
-                      CIN: {selectedVehicleForQueueChange.cin}
+                      Véhicule: {selectedVehicleForQueueChange.licensePlate}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                       Actuellement: <span className="font-medium text-blue-600">{selectedVehicleForQueueChange.currentDestination}</span>
@@ -1825,22 +1915,7 @@ export default function QueueManagement() {
                                   Prix: <span className="font-bold text-green-600">{formatCurrency(dest.basePrice)}</span>
                                 </span>
                               </div>
-                              <div className="flex items-center space-x-1">
-                                {(() => {
-                                  const route = getRouteForDestination(dest.stationName);
-                                  return route ? (
-                                    <div className="flex items-center text-green-600 text-xs">
-                                      <CheckCircle className="w-3 h-3 mr-1" />
-                                      Disponible
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center text-orange-600 text-xs">
-                                      <AlertCircle className="w-3 h-3 mr-1" />
-                                      Indisponible
-                                    </div>
-                                  );
-                                })()}
-                              </div>
+                              {/* Availability badge removed as requested */}
                             </div>
                           </div>
                         </div>
@@ -1903,7 +1978,7 @@ export default function QueueManagement() {
                   setSelectedVehicleForQueueChange(null);
                   setSelectedNewDestination(null);
                   setChangeQueueDestinations([]);
-                  refreshQueues();
+                  debouncedRefreshQueues();
                 } else if (result?.message) {
                   setChangeQueueError(result.message);
                 }
@@ -1951,7 +2026,7 @@ export default function QueueManagement() {
                   <div>
                     <div className="font-semibold text-gray-900">{selectedVehicle.licensePlate}</div>
                     <div className="text-sm text-gray-600">
-                      CIN: {selectedVehicle.driver?.cin}
+                      Conducteur: {selectedVehicle.driver ? `${selectedVehicle.driver.firstName} ${selectedVehicle.driver.lastName}` : 'N/A'}
                     </div>
                   </div>
                 </div>
@@ -2193,13 +2268,20 @@ export default function QueueManagement() {
                         <DndContext
                           sensors={sensors}
                           collisionDetection={closestCenter}
-                          onDragEnd={(event) => handleDragEnd(event, destination)}
+                          onDragStart={() => setIsReordering(true)}
+                          onDragEnd={(event) => handleDragEnd(event)}
                         >
                           <SortableContext
                             items={destinationQueues.map(q => q.id) || []}
                             strategy={verticalListSortingStrategy}
                           >
-                            <div className="space-y-3">
+                            <div className={`space-y-3 ${isReordering ? 'opacity-75' : ''}`}>
+                              {isReordering && (
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center text-blue-700 text-sm">
+                                  <Move className="h-4 w-4 inline mr-2" />
+                                  Glissez-déposez pour réorganiser les véhicules
+                                </div>
+                              )}
                               {destinationQueues.map((queue) => (
                                 <SortableQueueItem
                                   key={queue.id}
@@ -2209,6 +2291,8 @@ export default function QueueManagement() {
                                   getBasePriceForDestination={getBasePriceForDestination}
                                   onVehicleClick={handleVehicleClick}
                                   onExitQueue={handleExitQueue}
+                                  onEndTrip={handleEndTrip}
+                                  onMoveToFront={handleMoveToFront}
                                   actionLoading={actionLoading}
                                 />
                               ))}

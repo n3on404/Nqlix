@@ -32,7 +32,8 @@ import {
   Keyboard
 } from 'lucide-react';
 import api from '../lib/api';
-import { getWebSocketClient } from '../lib/websocket';
+import { dbClient } from '../services/dbClient';
+import { useMQTT } from '../lib/useMQTT';
 import { usePaymentNotifications } from '../components/NotificationToast';
 import { TicketPrintout } from '../components/TicketPrintout';
 import { renderToString } from 'react-dom/server';
@@ -82,6 +83,7 @@ export default function MainBooking() {
     enterQueue,
     exitQueue,
     updateVehicleStatus,
+    beginOptimisticSuppression,
   } = useQueue();
   
   // Thermal printer integration removed - keeping console logging
@@ -140,6 +142,8 @@ export default function MainBooking() {
   
   // Test exit pass state
   const [showTestExitPass, setShowTestExitPass] = useState(false);
+  const [lastUpdateTime, setLastUpdateTime] = useState(new Date());
+  const [dbOk, setDbOk] = useState<boolean | null>(null);
   
   // Helper functions for queue management
   const normalizeDestinationName = (name: string) => {
@@ -258,6 +262,15 @@ export default function MainBooking() {
     console.log('🎫 Triggering exit pass workflow for vehicle:', vehicle.vehicle.licensePlate);
     
     try {
+      // Snapshot before booking to reconcile after server updates
+      const preBookingSnapshot = (() => {
+        const dest = destinations.find(d => selectedDestination && d.destinationId === selectedDestination.destinationId);
+        return dest ? {
+          destinationId: dest.destinationId,
+          destinationName: dest.destinationName,
+          seatsBefore: dest.totalAvailableSeats
+        } : null;
+      })();
       // Mark vehicle as pending exit confirmation
       setVehiclesPendingExitConfirmation(prev => new Set(prev).add(vehicle.vehicle.licensePlate));
       
@@ -517,13 +530,22 @@ export default function MainBooking() {
       filters.delegation = selectedDelegation;
     }
     
-    const response = await api.getAvailableDestinationsForBooking(filters);
-    if (response.success && response.data) {
-      // Filter out destinations with no available seats
-      const availableDestinations = response.data.filter((dest: Destination) => dest.totalAvailableSeats > 0);
+    const response = await dbClient.getAvailableBookingDestinations(filters);
+    const availableDestinations: Destination[] = (response || [])
+      .filter((d: any) => (d.totalAvailableSeats || 0) > 0)
+      .map((d: any) => ({
+        destinationId: d.destinationId,
+        destinationName: d.destinationName,
+        totalAvailableSeats: d.totalAvailableSeats,
+        vehicleCount: d.vehicleCount,
+        governorate: d.governorate,
+        governorateAr: d.governorateAr,
+        delegation: d.delegation,
+        delegationAr: d.delegationAr,
+      }));
       setDestinations(availableDestinations);
+      setLastUpdateTime(new Date());
       console.log(`📍 Fetched ${availableDestinations.length} available destinations`);
-    }
     setIsLoading(false);
   };
 
@@ -543,7 +565,7 @@ export default function MainBooking() {
   // Fetch available governments and delegations
   const fetchGovernments = async () => {
     try {
-      const response = await api.getAvailableLocations();
+      const response = await api.getAllLocations();
       if (response.success && response.data) {
         setGovernments(response.data);
         console.log(`🏛️ Fetched ${response.data.length} governments`);
@@ -629,9 +651,9 @@ export default function MainBooking() {
 
   // Fetch available seats and base price for selected destination
   const fetchAvailableSeats = async (destinationId: string) => {
-    const response = await api.getAvailableSeatsForDestination(destinationId);
-    if (response.success && response.data) {
-      const newAvailableSeats = response.data.totalAvailableSeats || 0;
+    const response = await dbClient.getAvailableSeatsForDestination(destinationId);
+    if (response && typeof response.totalAvailableSeats !== 'undefined') {
+      const newAvailableSeats = response.totalAvailableSeats || 0;
       setAvailableSeats(newAvailableSeats);
       
       // Preserve current seat selection if it's still valid, otherwise reset to 1
@@ -654,8 +676,8 @@ export default function MainBooking() {
         }
       });
       
-      if (response.data.vehicles && response.data.vehicles.length > 0) {
-        setBasePrice(response.data.vehicles[0].basePrice || 0);
+      if (response.vehicles && response.vehicles.length > 0) {
+        setBasePrice(response.vehicles[0].basePrice || 0);
       } else {
         setBasePrice(0);
       }
@@ -666,307 +688,47 @@ export default function MainBooking() {
     }
   };
 
-  // Initial fetch and WebSocket subscription for real-time updates
+  // MQTT removed for DB-direct flow
+
+  // Initial fetch and data loading
   useEffect(() => {
     fetchGovernments();
     fetchDestinations();
     fetchRoutes();
-    const wsClient = getWebSocketClient();
-    
-    // Handler for specific seat availability updates
-    const seatAvailabilityHandler = (data: any) => {
-      console.log('📊 Seat availability update received:', data);
-      
-      if (data?.destinationId && data?.availableSeats !== undefined) {
-        // Update specific destination in the list
-        setDestinations(prev => prev.map(dest => 
-          dest.destinationId === data.destinationId 
-            ? { ...dest, totalAvailableSeats: data.availableSeats }
-            : dest
-        ).filter(dest => dest.totalAvailableSeats > 0)); // Remove fully booked destinations
-        
-        // If this is the selected destination, update its available seats
-        if (selectedDestination?.destinationId === data.destinationId) {
-          setAvailableSeats(data.availableSeats);
-          
-          // If destination is now fully booked, clear selection
-          if (data.availableSeats === 0 && selectedDestination) {
-            console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is now fully booked, clearing selection`);
-            setSelectedDestination(null);
-            setShowSuccess(false);
-          }
-        }
-      }
-    };
-    
-    // Handler for destination list updates
-    const destinationListHandler = (data: any) => {
-      console.log('📍 Destination list update received:', data);
-      
-      if (data?.destinations) {
-        const availableDestinations = data.destinations.filter((dest: Destination) => dest.totalAvailableSeats > 0);
-        setDestinations(availableDestinations);
-        
-        // Check if selected destination is still available
-        if (selectedDestination) {
-          const stillAvailable = availableDestinations.find((dest: Destination) => dest.destinationId === selectedDestination.destinationId);
-          if (!stillAvailable) {
-            console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is no longer available, clearing selection`);
-            setSelectedDestination(null);
-            setShowSuccess(false);
-          } else if (stillAvailable.totalAvailableSeats !== selectedDestination.totalAvailableSeats) {
-            // Update selected destination data
-            setSelectedDestination(stillAvailable);
-            fetchAvailableSeats(stillAvailable.destinationId);
-          }
-        }
-      }
-    };
-    
-    // Legacy handlers for backward compatibility (will trigger full refresh if needed)
-    const legacyQueueHandler = () => {
-      console.log('🔄 Legacy queue update received, performing minimal refresh...');
-      // Only fetch if we don't have any destinations (fallback)
-      if (destinations.length === 0) {
-        fetchDestinations();
-      }
-    };
 
-    const legacyBookingHandler = () => {
-      console.log('🎯 Legacy booking update received, performing minimal refresh...');
-      // Only fetch if we don't have any destinations (fallback)
-      if (destinations.length === 0) {
-        fetchDestinations();
-      }
-    };
-    
-    // Handler for booking conflicts (immediate notification)
-    const bookingConflictHandler = (data: any) => {
-      console.log('🚨 Booking conflict received:', data);
-      
-      if (data?.destinationId && data?.message) {
-        // Show immediate conflict notification
-        if (data.conflictType === 'booking_conflict') {
-          alert(`⚠️ Booking Conflict!\n\n${data.message}\n\nAnother staff member just booked these seats. Please try again with updated availability.`);
-        } else if (data.conflictType === 'insufficient_seats') {
-          alert(`⚠️ Insufficient Seats!\n\n${data.message}\n\nPlease select fewer seats or choose a different destination.`);
-        } else if (data.conflictType === 'seat_taken') {
-          alert(`⚠️ Seats No Longer Available!\n\n${data.message}\n\nThe seats you selected were just taken. Please refresh and try again.`);
-        }
-        
-        // Clear current selection if it's for the same destination
-        if (selectedDestination?.destinationId === data.destinationId) {
-          setSelectedDestination(null);
-          setShowSuccess(false);
-        }
-        
-        // Force refresh destinations to show current state
-        fetchDestinations();
-      }
-    };
-    
-    // Handler for booking success notifications
-    const bookingSuccessHandler = (data: any) => {
-      console.log('🎉 Booking success notification received:', data);
-      
-      if (data?.destinationId && data?.seatsBooked) {
-        // Only show notification if it's not our own booking (to avoid duplicate notifications)
-        if (!isProcessing && selectedDestination?.destinationId !== data.destinationId) {
-          console.log(`✅ ${data.seatsBooked} seats were just booked for ${data.destinationName} by another staff member`);
-        }
-      }
-    };
+    const refreshInterval = setInterval(() => {
+      fetchDestinations();
+      dbClient.health().then(setDbOk).catch(() => setDbOk(false));
+    }, 15000);
 
-    // Payment confirmation handler for main booking
-    const paymentHandler = (msg: any) => {
-      if (msg?.payload?.source === 'payment_confirmation') {
-        const paymentData = msg.payload;
-        
-        // Show payment success notification
-        notifyPaymentSuccess({
-          verificationCode: paymentData.verificationCode,
-          totalAmount: paymentData.totalAmount,
-          seatsBooked: paymentData.seatsBooked,
-          vehicleLicensePlate: paymentData.vehicle.licensePlate,
-          destinationName: paymentData.vehicle.destination,
-          paymentReference: paymentData.onlineTicketId || 'N/A'
-        });
+    // With DB direct, rely on periodic refresh + explicit fetches around actions
 
-        // Refresh destinations to show updated seat counts
-        fetchDestinations();
-      }
-    };
+    const handleBookingCreated = () => {};
 
-    // Seat availability change handler for main booking
-    const seatHandler = (msg: any) => {
-      if (msg?.payload?.type === 'seat_availability_changed') {
-        const seatData = msg.payload;
-        
-        // Find the destination in current state to get old seat count
-        const currentDestination = destinations.find((d: Destination) => d.destinationName === seatData.destinationName);
-        if (currentDestination) {
-          notifySeatUpdate({
-            vehicleLicensePlate: seatData.vehicleLicensePlate,
-            destinationName: seatData.destinationName,
-            availableSeats: seatData.availableSeats,
-            totalSeats: seatData.totalSeats,
-            oldAvailableSeats: currentDestination.totalAvailableSeats
-          });
-        }
+    const handleBookingConflict = () => {};
 
-        // Refresh destinations
-        fetchDestinations();
-      }
-    };
+    const handlePaymentConfirmation = () => {};
 
-    // Vehicle status change handler for main booking
-    const vehicleStatusHandler = (msg: any) => {
-      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
-        notifyVehicleReady({
-          licensePlate: msg.payload.licensePlate,
-          destinationName: msg.payload.destinationName,
-          totalSeats: msg.payload.totalSeats
-        });
+    const handleVehicleStatusChanged = () => {};
 
-        // Refresh destinations
-        fetchDestinations();
-      }
-    };
+    const handleExitTicketGenerated = async () => {};
 
-    // Exit ticket generation handler for fully booked vehicles
-    const exitTicketHandler = async (msg: any) => {
-      console.log('🔍 [EXIT TICKET DEBUG] Received WebSocket message:', msg);
-      if (msg?.payload?.type === 'exit_ticket_generated') {
-        console.log('🎫 [EXIT TICKET DEBUG] Exit ticket generated for fully booked vehicle:', msg.payload);
-        
-        try {
-          // Format and print the exit ticket
-          const exitTicketData = thermalPrinter.formatExitTicketData(msg.payload.ticket, msg.payload.vehicle);
-          const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
-          await thermalPrinter.printExitTicket(exitTicketData, staffName);
-          console.log('✅ Exit ticket printed successfully for fully booked vehicle');
-          
-          // Also print exit pass for the vehicle
-          console.log('🚪 Printing exit pass for fully booked vehicle...');
-          try {
-            // Get base price from route table
-            const destinationName = msg.payload.vehicle.destination;
-            const basePricePerSeat = getBasePriceForDestination(destinationName) || 2.0;
-            const totalSeats = msg.payload.vehicle.totalSeats || 8;
-            
-            // Check if there was a previous vehicle on the same day
-            let previousLicensePlate = null;
-            let previousExitTime = null;
-            
-            if (msg.payload.previousVehicle?.licensePlate && msg.payload.previousVehicle?.exitTime) {
-              const previousExitDate = new Date(msg.payload.previousVehicle.exitTime);
-              const currentDate = new Date();
-              
-              // Check if previous vehicle exited on the same day
-              const isSameDay = previousExitDate.toDateString() === currentDate.toDateString();
-              
-              if (isSameDay) {
-                previousLicensePlate = msg.payload.previousVehicle.licensePlate;
-                previousExitTime = msg.payload.previousVehicle.exitTime;
-                console.log('📅 Previous vehicle found on same day:', {
-                  licensePlate: previousLicensePlate,
-                  exitTime: previousExitTime
-                });
-              } else {
-                console.log('📅 Previous vehicle was from different day, showing N/A');
-              }
-            } else {
-              console.log('📅 No previous vehicle data available, showing N/A');
-            }
-            
-            console.log('💰 Exit pass pricing:', {
-              destinationName,
-              basePricePerSeat,
-              totalSeats,
-              totalBasePrice: basePricePerSeat * totalSeats,
-              previousVehicle: previousLicensePlate || 'N/A'
-            });
-            
-            const exitPassData = {
-              licensePlate: msg.payload.vehicle.licensePlate,
-              destinationName: destinationName,
-              previousLicensePlate: previousLicensePlate,
-              previousExitTime: previousExitTime,
-              currentExitTime: new Date().toISOString(),
-              totalSeats: totalSeats,
-              basePricePerSeat: basePricePerSeat,
-              totalBasePrice: basePricePerSeat * totalSeats
-            };
-            
-            const exitPassTicketData = thermalPrinter.formatExitPassTicketData(exitPassData);
-            await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
-            console.log('✅ Exit pass printed successfully for fully booked vehicle');
-          } catch (exitPassError) {
-            console.error('❌ Failed to print exit pass for fully booked vehicle:', exitPassError);
-          }
-        } catch (printError) {
-          console.error('❌ Failed to print exit ticket for fully booked vehicle:', printError);
-        }
-      }
-    };
-
-    // Vehicle departure handler
-    const vehicleDepartureHandler = (msg: any) => {
-      if (msg?.payload?.type === 'vehicle_departed') {
-        console.log('🚪 Vehicle departed from queue:', msg.payload);
+    const handleVehicleDeparted = (data: any) => {
+      if (data?.type === 'vehicle_departed') {
+        console.log('🚪 Vehicle departed from queue:', data);
         
         // Show notification about vehicle departure
-        if (msg.payload.reason === 'fully_booked') {
-          console.log(`✅ Vehicle ${msg.payload.licensePlate} has departed - fully booked and exit ticket printed`);
+        if (data.reason === 'fully_booked') {
+          console.log(`✅ Vehicle ${data.licensePlate} has departed - fully booked and exit ticket printed`);
         }
         
         // Refresh destinations to update the queue
         fetchDestinations();
       }
     };
-    
-    // Listen for the new granular update events
-    wsClient.on('seat_availability_changed', seatAvailabilityHandler);
-    wsClient.on('destinations_updated', destinationListHandler);
-    wsClient.on('booking_conflict', bookingConflictHandler);
-    wsClient.on('booking_success', bookingSuccessHandler);
-    wsClient.on('payment_confirmation', paymentHandler);
-    wsClient.on('vehicle_status_changed', vehicleStatusHandler);
-    wsClient.on('exit_ticket_generated', exitTicketHandler);
-    console.log('🔌 [EXIT TICKET DEBUG] Registered exit_ticket_generated event listener');
-    wsClient.on('vehicle_departed', vehicleDepartureHandler);
-    
-    // Keep legacy events for backward compatibility but with minimal impact
-    wsClient.on('queue_update', legacyQueueHandler);
-    wsClient.on('booking_update', legacyBookingHandler);
-    wsClient.on('cash_booking_updated', legacyQueueHandler);
-    wsClient.on('queue_updated', legacyQueueHandler);
-    wsClient.on('booking_created', legacyBookingHandler);
-    
-    // Periodic background sync (every 30 seconds) as fallback
-    const backgroundSyncInterval = setInterval(() => {
-      if (!wsClient.isConnected()) {
-        console.log('🔄 WebSocket disconnected, performing background sync...');
-        updateDestinationsIfChanged();
-      }
-    }, 30000);
-    
-    return () => {
-      wsClient.removeListener('seat_availability_changed', seatAvailabilityHandler);
-      wsClient.removeListener('destinations_updated', destinationListHandler);
-      wsClient.removeListener('booking_conflict', bookingConflictHandler);
-      wsClient.removeListener('booking_success', bookingSuccessHandler);
-      wsClient.removeListener('payment_confirmation', paymentHandler);
-      wsClient.removeListener('vehicle_status_changed', vehicleStatusHandler);
-      wsClient.removeListener('exit_ticket_generated', exitTicketHandler);
-      wsClient.removeListener('vehicle_departed', vehicleDepartureHandler);
-      wsClient.removeListener('queue_update', legacyQueueHandler);
-      wsClient.removeListener('booking_update', legacyBookingHandler);
-      wsClient.removeListener('cash_booking_updated', legacyQueueHandler);
-      wsClient.removeListener('queue_updated', legacyQueueHandler);
-      wsClient.removeListener('booking_created', legacyBookingHandler);
-      clearInterval(backgroundSyncInterval);
-    };
+
+    // Cleanup
+    return () => { if (refreshInterval) clearInterval(refreshInterval as any); };
   }, [selectedDestination, destinations.length, isProcessing]);
 
   // When a destination is selected, fetch its available seats
@@ -989,6 +751,27 @@ export default function MainBooking() {
       setShowSuccess(false);
     }
   }, [selectedDestination, availableSeats]);
+
+  // TODO: Replace with MQTT connection logic
+
+  // Aggressive refresh on any user interaction
+  useEffect(() => {
+    const handleUserInteraction = () => {
+      console.log('👆 User interaction detected - refreshing destinations');
+      fetchDestinations();
+    };
+
+    // Add event listeners for various user interactions
+    document.addEventListener('click', handleUserInteraction);
+    document.addEventListener('keydown', handleUserInteraction);
+    document.addEventListener('focus', handleUserInteraction);
+
+    return () => {
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
+      document.removeEventListener('focus', handleUserInteraction);
+    };
+  }, []);
 
   // Keyboard shortcuts for numberpad
   useEffect(() => {
@@ -1143,8 +926,16 @@ export default function MainBooking() {
       
       // Print talon (detachable stub) with thermal printer
       console.log('🖨️ Calling thermal printer for talon...');
+      console.log('📄 Talon data to print:', talonData);
+      console.log('👤 Staff name for talon:', staffName);
+      try {
       const talonResult = await thermalPrinter.printTalon(talonData, staffName);
-      console.log('✅ Talon printed:', talonResult);
+        console.log('✅ Talon printed successfully:', talonResult);
+      } catch (talonError) {
+        console.error('❌ Talon printing failed:', talonError);
+        console.error('❌ Talon error details:', talonError instanceof Error ? talonError.message : 'Unknown error');
+        // Don't throw - continue with the booking even if talon fails
+      }
       
       console.log('✅ Booking ticket and talon printed successfully with thermal printer');
       
@@ -1256,7 +1047,14 @@ export default function MainBooking() {
 
           console.log(`🚫 Cancelling ${seatsToRemoveFromThisBooking} seats from booking ${booking.id}`);
 
-          const response = await api.cancelQueueBooking(booking.id, seatsToRemoveFromThisBooking);
+          const response = await (async () => {
+            try {
+              await dbClient.cancelQueueBooking(booking.id);
+              return { success: true } as any;
+            } catch (e: any) {
+              return { success: false, message: e?.message } as any;
+            }
+          })();
 
           if (response.success) {
             cancelResults.push({
@@ -1359,47 +1157,110 @@ export default function MainBooking() {
 
     setIsProcessing(true);
 
-    try {
-      const response = await api.createQueueBooking({
-        destinationId: selectedDestination.destinationId,
-        seatsRequested: seatsToBook,
-        staffId: currentStaff.id
-      });
+    // Snapshot before booking for reconciliation
+    const preBookingSnapshot = (() => {
+      const dest = destinations.find(d => d.destinationId === selectedDestination.destinationId);
+      return dest ? {
+        destinationId: dest.destinationId,
+        destinationName: dest.destinationName,
+        seatsBefore: dest.totalAvailableSeats
+      } : null;
+    })();
 
-      if (response.success && response.data) {
-        console.log('✅ Booking created successfully:', response.data);
+    try {
+      const response = await dbClient.createQueueBooking(
+        selectedDestination.destinationId,
+        seatsToBook,
+        currentStaff?.id
+      );
+
+      if (response && response.bookings) {
+        console.log('✅ Booking created successfully:', response);
         setShowSuccess(true);
         
         // Store booking data for cancel functionality
         setLastBookingData({
-          bookings: response.data.bookings || [],
+          bookings: response.bookings || [],
           totalSeats: seatsToBook,
-          totalAmount: response.data.totalAmount || 0
+          totalAmount: response.totalAmount || 0
         });
+
+        // No local updates; rely on backend events. Trigger a refresh for server-truth.
+        try { await refreshQueues(); } catch {}
+
+        // Manual reconciliation: fetch latest destinations and detailed queue for the focused destination
+        try {
+          await fetchDestinations();
+          if (selectedDestination) {
+            await fetchQueueForDestination(selectedDestination.destinationId);
+          }
+        } catch {}
+
+        // Compare expected seats with latest
+        try {
+          if (preBookingSnapshot && selectedDestination) {
+            const after = destinations.find(d => d.destinationId === preBookingSnapshot.destinationId);
+            const expectedSeats = Math.max(0, (preBookingSnapshot.seatsBefore || 0) - seatsToBook);
+            if (after && after.totalAvailableSeats !== expectedSeats) {
+              console.warn('⚠️ Reconciliation mismatch after booking:', {
+                destination: preBookingSnapshot.destinationName,
+                beforeSeats: preBookingSnapshot.seatsBefore,
+                seatsBooked: seatsToBook,
+                expectedSeats,
+                actualSeats: after.totalAvailableSeats
+              });
+              // Try one more refresh to resolve any race
+              try {
+                await refreshQueues();
+                await fetchDestinations();
+                await fetchQueueForDestination(preBookingSnapshot.destinationId);
+              } catch {}
+            } else if (after) {
+              console.log('✅ Reconciliation OK:', {
+                destination: preBookingSnapshot.destinationName,
+                beforeSeats: preBookingSnapshot.seatsBefore,
+                seatsBooked: seatsToBook,
+                actualSeats: after.totalAvailableSeats
+              });
+            }
+          }
+        } catch (reconErr) {
+          console.warn('⚠️ Reconciliation check failed:', reconErr);
+        }
         
         // Automatically print one ticket per seat after successful booking
-        if (response.data.bookings && response.data.bookings.length > 0) {
+        if (response.bookings && response.bookings.length > 0) {
           console.log('🎫 Booking successful, printing one ticket per seat...');
           console.log('📋 Number of seats to print tickets for:', seatsToBook);
           
           let successfulPrints = 0;
-          const baseBooking = response.data.bookings[0];
+          const baseBooking = response.bookings[0];
+          
+          // Calculate seat positions based on vehicle capacity and current booking
+          const vehicleCapacity = baseBooking.vehicleCapacity || 8;
+          const seatsAlreadyBooked = vehicleCapacity - (preBookingSnapshot?.seatsBefore || vehicleCapacity);
           
           // Print one ticket for each seat (not per booking, but per seat)
           for (let seatNumber = 1; seatNumber <= seatsToBook; seatNumber++) {
-            console.log(`🎫 Printing ticket ${seatNumber}/${seatsToBook} for seat ${seatNumber}`);
+            const actualSeatPosition = seatsAlreadyBooked + seatNumber;
+            console.log(`🎫 Printing ticket ${seatNumber}/${seatsToBook} for seat ${actualSeatPosition}/${vehicleCapacity}`);
             console.log(`💰 Using single seat price: ${basePrice} TND (not total price)`);
             
             // Use the first booking as template but modify for individual seat
             const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'N/A';
+            const serviceFee = 0.200; // Fixed 0.200 TND service fee per seat
             const individualSeatBooking = {
               ...baseBooking,
               // Remove seats field and treat as single seat
               seatsBooked: 1,
-              totalAmount: basePrice, // Price for one seat only
+              baseAmount: basePrice, // Base price for one seat
+              serviceFeeAmount: serviceFee, // Service fee for one seat
+              totalAmount: basePrice + serviceFee, // Total price for one seat
               basePrice: basePrice, // Ensure basePrice is also set for one seat
               verificationCode: `${baseBooking.verificationCode}-${seatNumber}`, // Unique code per seat
-              seatNumber: seatNumber, // Add seat number for reference
+              seatNumber: actualSeatPosition, // Actual seat position in vehicle
+              seatIndex: seatNumber, // Index within this booking (1, 2, 3...)
+              vehicleCapacity: vehicleCapacity, // Total vehicle capacity
               staffName: staffName // Add staff name for talon
             };
             
@@ -1428,7 +1289,27 @@ export default function MainBooking() {
             const licensePlate = baseBooking.vehicleLicensePlate || baseBooking.licensePlate || null;
             const vehicleFullyBooked = !!response.data.vehicleFullyBooked || (response.data.exitPasses && response.data.exitPasses.length > 0);
             if (vehicleFullyBooked && licensePlate) {
-              await printExitPassDirectForVehicle(licensePlate, destinationName);
+              // Enhanced exit pass printing with all required data
+              const basePricePerSeat = getBasePriceForDestination(destinationName) || 0;
+              const totalSeats = 8; // Default when not available in response
+              const totalBasePrice = basePricePerSeat * totalSeats;
+
+              const exitPassData = {
+                licensePlate,
+                destinationName,
+                previousLicensePlate: null, // Will be filled by backend
+                previousExitTime: null, // Will be filled by backend
+                currentExitTime: new Date().toISOString(),
+                totalSeats,
+                basePricePerSeat,
+                totalBasePrice
+              };
+
+              const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+              const exitPassTicketData = thermalPrinter.formatExitPassTicketData(exitPassData);
+              await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+              notifyExitPassPrinted(licensePlate, destinationName);
+              console.log('✅ Enhanced exit pass printed after booking');
             }
           } catch (e) {
             console.warn('⚠️ Could not auto-print exit pass after booking:', e);
@@ -1498,9 +1379,34 @@ export default function MainBooking() {
               <p className="text-gray-600 dark:text-gray-400">
                 {destinations.length} destinations disponibles
               </p>
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <div className={`w-2 h-2 rounded-full ${dbOk === false ? 'bg-red-500' : 'bg-green-500'}`}></div>
+                <span>DB {dbOk === false ? 'Fail' : 'OK'}</span>
+                <span>•</span>
+                <span>Dernière mise à jour: {lastUpdateTime.toLocaleTimeString()}</span>
+              </div>
             </div>
             
             <div className="flex items-center gap-4">
+              {/* Refresh Button */}
+              <Button
+                onClick={() => {
+                  console.log('🔄 Manual refresh triggered');
+                  fetchDestinations();
+                  if (selectedDestination) {
+                    fetchAvailableSeats(selectedDestination.destinationId);
+                    fetchQueueForDestination(selectedDestination.destinationId);
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                className="bg-green-100 hover:bg-green-200 text-green-700 border-green-300"
+                title="Refresh data manually"
+              >
+                <RefreshCw className="h-4 w-4 mr-1" />
+                Refresh
+              </Button>
+              
               {/* Test Exit Pass Buttons */}
               <div className="flex gap-2">
                 <Button

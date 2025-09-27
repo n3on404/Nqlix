@@ -6,10 +6,10 @@ export function TicketPrintout({ booking }: { booking: any }) {
   const printStyles = {
     container: {
       width: '80mm',
-      padding: '12px 16px',
+      padding: '6px 8px',
       fontFamily: 'Arial, sans-serif',
-      fontSize: '12px',
-      lineHeight: '1.3',
+      fontSize: '10px',
+      lineHeight: '1.2',
       backgroundColor: '#fff',
       color: '#000',
       border: '1px solid #000',
@@ -19,51 +19,52 @@ export function TicketPrintout({ booking }: { booking: any }) {
         boxShadow: 'none',
         border: 'none',
         margin: '0 4mm',
-        padding: '8px 12px'
+        padding: '4px 6px'
       }
     } as React.CSSProperties,
 
     header: {
-      textAlign: 'center' as const,
-      borderBottom: '2px solid #000',
-      paddingBottom: '8px',
-      marginBottom: '8px'
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottom: '1px solid #000',
+      paddingBottom: '4px',
+      marginBottom: '4px'
     },
 
     logo: {
-      width: '60px',
+      width: '30px',
       height: 'auto',
-      margin: '0 auto 4px',
       display: 'block'
     } as React.CSSProperties,
 
     companyName: {
-      textAlign: 'center' as const,
-      margin: '0 0 4px 0',
-      fontSize: '16px',
+      fontSize: '12px',
       fontWeight: 'bold',
       textTransform: 'uppercase' as const,
-      letterSpacing: '1px'
+      letterSpacing: '0.5px',
+      flex: 1,
+      textAlign: 'left' as const
     },
 
     ticketTitle: {
       textAlign: 'center' as const,
-      fontSize: '14px',
+      fontSize: '10px',
       fontWeight: 'bold',
-      margin: '4px 0',
+      margin: '2px 0',
       textTransform: 'uppercase' as const
     },
 
     datetime: {
       textAlign: 'center' as const,
-      fontSize: '10px',
-      marginBottom: '8px'
+      fontSize: '8px',
+      marginBottom: '4px'
     },
 
     divider: {
       border: 'none',
       borderTop: '1px solid #000',
-      margin: '6px 0',
+      margin: '3px 0',
       width: '100%'
     },
 
@@ -71,42 +72,42 @@ export function TicketPrintout({ booking }: { booking: any }) {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      margin: '4px 0',
-      fontSize: '11px',
-      minHeight: '18px'
+      margin: '2px 0',
+      fontSize: '9px',
+      minHeight: '12px'
     },
 
     englishLabel: {
       fontWeight: 'bold' as const,
       textTransform: 'uppercase' as const,
-      fontSize: '10px',
+      fontSize: '8px',
       textAlign: 'left' as const,
       flex: '0 0 auto',
-      minWidth: '55px'
+      minWidth: '40px'
     },
 
     arabicLabel: {
       fontWeight: 'bold' as const,
-      fontSize: '10px',
+      fontSize: '8px',
       textAlign: 'right' as const,
       flex: '0 0 auto',
-      minWidth: '75px',
+      minWidth: '50px',
       direction: 'rtl' as const,
-      marginRight: '25px'
+      marginRight: '15px'
     },
 
     centerValue: {
       fontWeight: 'normal' as const,
       textAlign: 'center' as const,
       flex: 1,
-      fontSize: '11px',
-      margin: '0 8px'
+      fontSize: '9px',
+      margin: '0 4px'
     },
 
     journeySection: {
       textAlign: 'center' as const,
-      margin: '8px 0',
-      padding: '6px',
+      margin: '3px 0',
+      padding: '3px',
       border: '1px solid #000'
     },
 
@@ -114,127 +115,110 @@ export function TicketPrintout({ booking }: { booking: any }) {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      margin: '4px 0'
+      margin: '2px 0'
     },
 
     station: {
-      fontSize: '12px',
+      fontSize: '9px',
       fontWeight: 'bold',
       flex: 1,
       textAlign: 'center' as const
     },
 
     arrow: {
-      fontSize: '16px',
+      fontSize: '12px',
       fontWeight: 'bold',
-      margin: '0 8px',
+      margin: '0 4px',
       color: '#000'
     },
 
     vehicleSection: {
       textAlign: 'center' as const,
-      margin: '8px 0',
-      padding: '6px',
+      margin: '3px 0',
+      padding: '3px',
       border: '1px solid #000'
     },
 
     vehiclePlate: {
-      fontSize: '14px',
+      fontSize: '10px',
       fontWeight: 'bold',
       fontFamily: 'monospace',
-      letterSpacing: '1px',
-      margin: '4px 0'
+      letterSpacing: '0.5px',
+      margin: '2px 0'
     },
 
     ticketNumber: {
       textAlign: 'center' as const,
-      fontSize: '14px',
+      fontSize: '10px',
       fontWeight: 'bold',
-      margin: '8px 0',
-      padding: '6px',
-      border: '2px solid #000',
-      borderRadius: '2px'
-    },
-
-    qrSection: {
-      textAlign: 'center' as const,
-      margin: '8px 0'
-    },
-
-    qrPlaceholder: {
-      width: '50px',
-      height: '50px',
-      margin: '4px auto',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: '8px',
+      margin: '3px 0',
+      padding: '3px',
       border: '1px solid #000',
-      fontFamily: 'monospace'
+      borderRadius: '2px'
     },
 
     footer: {
       textAlign: 'center' as const,
-      marginTop: '8px',
-      fontSize: '9px',
+      marginTop: '3px',
+      fontSize: '7px',
       fontStyle: 'italic' as const,
       borderTop: '1px solid #000',
-      paddingTop: '6px'
+      paddingTop: '3px'
     },
 
     priceSection: {
       textAlign: 'center' as const,
-      margin: '6px 0',
-      padding: '4px',
+      margin: '3px 0',
+      padding: '2px',
       border: '1px solid #000'
     },
 
     totalPrice: {
-      fontSize: '14px',
+      fontSize: '10px',
       fontWeight: 'bold',
       color: '#000'
     },
 
     verificationCode: {
       textAlign: 'center' as const,
-      fontSize: '10px',
+      fontSize: '8px',
       fontFamily: 'monospace',
-      margin: '4px 0',
-      padding: '2px',
+      margin: '2px 0',
+      padding: '1px',
       border: '1px solid #000'
     },
 
     passengerSection: {
       textAlign: 'center' as const,
-      margin: '6px 0',
-      padding: '4px',
+      margin: '3px 0',
+      padding: '2px',
       border: '1px solid #000'
     },
 
     passengerName: {
-      fontSize: '12px',
+      fontSize: '9px',
       fontWeight: 'bold',
-      margin: '2px 0'
+      margin: '1px 0'
     },
 
     bilingualTitle: {
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
-      margin: '4px 0'
+      margin: '2px 0'
     },
 
     englishTitle: {
-      fontSize: '10px',
+      fontSize: '8px',
       fontWeight: 'bold',
       textTransform: 'uppercase' as const
     },
 
     arabicTitle: {
-      fontSize: '10px',
+      fontSize: '8px',
       fontWeight: 'bold',
       direction: 'rtl' as const,
-      paddingRight: '12px'
+      paddingRight: '8px'
     }
   };
 
@@ -298,6 +282,7 @@ export function TicketPrintout({ booking }: { booking: any }) {
     <div className="ticket-printout" style={printStyles.container}>
       {/* Header */}
       <div style={printStyles.header}>
+        <h2 style={printStyles.companyName}>WASLA TRANSPORTATION</h2>
         <img
           src={logoUrl}
           alt="Company Logo"
@@ -306,18 +291,15 @@ export function TicketPrintout({ booking }: { booking: any }) {
             (e.target as HTMLImageElement).style.display = 'none';
           }}
         />
+      </div>
 
-        <h2 style={printStyles.companyName}>WASLA TRANSPORTATION</h2>
+      <div style={printStyles.bilingualTitle}>
+        <span style={printStyles.englishTitle}>PASSENGER TICKET</span>
+        <span style={printStyles.arabicTitle}>تذكرة راكب</span>
+      </div>
 
-        <div style={printStyles.bilingualTitle}>
-          <span style={printStyles.englishTitle}>PASSENGER TICKET</span>
-          <span style={{...printStyles.arabicTitle, marginRight: '20px'}}>تذكرة راكب</span>
-        </div>
-
-        <div style={printStyles.datetime}>
-          <div>{date}</div>
-          <div>{time}</div>
-        </div>
+      <div style={printStyles.datetime}>
+        <div>{date} {time}</div>
       </div>
 
       <hr style={printStyles.divider} />
@@ -430,37 +412,23 @@ export function TicketPrintout({ booking }: { booking: any }) {
         </div>
       )}
 
-      {/* QR Code Placeholder */}
-      <div style={printStyles.qrSection}>
-        <div style={printStyles.qrPlaceholder}>
-          QR CODE
+      {/* Issuer Information */}
+      {(booking.staffName || booking.issuedBy) && (
+        <div style={printStyles.bilingualRow}>
+          <span style={printStyles.englishLabel}>ISSUED BY</span>
+          <span style={printStyles.centerValue}>{booking.staffName || booking.issuedBy || 'Staff'}</span>
+          <span style={printStyles.arabicLabel}>صادر من</span>
         </div>
-        <div style={{ fontSize: '8px' }}>
-          <div style={printStyles.bilingualTitle}>
-            <span>Scan for verification</span>
-            <span style={{ direction: 'rtl', paddingRight: '12px' }}>امسح للتحقق</span>
-          </div>
-        </div>
-      </div>
-
-      <hr style={printStyles.divider} />
+      )}
 
       {/* Footer */}
       <div style={printStyles.footer}>
         <div style={printStyles.bilingualTitle}>
-          <span>Keep this ticket for your journey</span>
-          <span style={{ direction: 'rtl', marginRight: '20px' }}>احتفظ بهذه التذكرة لرحلتك</span>
-        </div>
-        <div style={printStyles.bilingualTitle}>
           <span>Valid for one trip only</span>
-          <span style={{ direction: 'rtl', marginRight: '20px' }}>صالحة لرحلة واحدة فقط</span>
+          <span style={{ direction: 'rtl', paddingRight: '8px' }}>صالحة لرحلة واحدة فقط</span>
         </div>
-        <div style={printStyles.bilingualTitle}>
-          <span>Thank you for traveling with us!</span>
-          <span style={{ direction: 'rtl', marginRight: '20px' }}>شكرًا لسفرك معنا!</span>
-        </div>
-        <div style={{ marginTop: '4px', fontSize: '8px', textAlign: 'center' }}>
-          Printed on {new Date().toLocaleString()} | طُبع في {new Date().toLocaleString()}
+        <div style={{ marginTop: '2px', fontSize: '6px', textAlign: 'center' }}>
+          Printed: {new Date().toLocaleString()} | طُبع: {new Date().toLocaleString()}
         </div>
       </div>
     </div>

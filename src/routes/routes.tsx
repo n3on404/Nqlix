@@ -8,6 +8,7 @@ import { MapPin, DollarSign, Shield } from 'lucide-react';
 export default function RoutesPage() {
   const { currentStaff } = useAuth();
   const isSupervisor = currentStaff?.role === 'SUPERVISOR';
+  const isAdmin = currentStaff?.role === 'ADMIN';
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -26,7 +27,7 @@ export default function RoutesPage() {
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="flex items-center gap-1">
             <Shield className="h-3 w-3" />
-            {currentStaff?.role === 'SUPERVISOR' ? 'Superviseur' : currentStaff?.role === 'ADMIN' ? 'Administrateur' : 'Utilisateur'}
+            {isAdmin ? 'Administrateur' : isSupervisor ? 'Superviseur' : 'Utilisateur'}
           </Badge>
         </div>
       </div>

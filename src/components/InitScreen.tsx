@@ -8,6 +8,7 @@ import { useInit } from '../context/InitProvider';
 import { useTauri } from '../context/TauriProvider';
 import api from '../lib/api';
 import { WaslaLogo } from './WaslaLogo';
+import { getLocalStorage } from '../lib/storage';
 
 interface SystemCheck {
   name: string;
@@ -73,9 +74,9 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
       icon: <User className="w-5 h-5" />
     },
     {
-      name: 'Ticket Printer',
+      name: 'Printer Configuration',
       status: 'pending',
-      message: 'Detecting printer connection...',
+      message: 'Checking printer configuration...',
       icon: <Printer className="w-5 h-5" />
     },
     {
@@ -176,25 +177,23 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
       ...check,
       status: 'pending',
       message: check.name === 'Network Discovery' 
-        ? 'Searching for local node servers...' 
+        ? 'Skipping discovery - using localhost...' 
         : check.name === 'Server Connection'
-        ? 'Connecting to local server...'
+        ? 'Connecting to 192.168.192.100:3001...'
         : check.message.replace(/success|error|warning/i, 'pending')
     })));
     
-    // Check 1: Network Discovery
+    // Check 1: Skip Network Discovery - use localhost directly
     setCurrentStep(0);
-    const discoveredUrl = await discoverServers();
+    const localhostUrl = 'http://192.168.192.100:3001';
     
-    if (!discoveredUrl) {
-      // Show server config if no servers found
-      setShowServerConfig(true);
-      return; // Stop checks if no servers found
-    }
-
-    // Auto-connect to discovered server
-    setServerUrl(discoveredUrl);
-    const connectionSuccess = await updateServerUrl(discoveredUrl);
+    // Mark network discovery as skipped
+    updateCheck(0, 'success', 'Using hardcoded 192.168.192.100:3001');
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Auto-connect to localhost
+    setServerUrl(localhostUrl);
+    const connectionSuccess = await updateServerUrl(localhostUrl);
     if (!connectionSuccess) {
       setShowServerConfig(true);
       return;
@@ -206,9 +205,9 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
       const isConnected = await api.checkConnection();
       
       if (isConnected) {
-        updateCheck(1, 'success', `Connected to local server (${discoveredUrl})`);
+        updateCheck(1, 'success', `Connected to 192.168.192.100:3001`);
       } else {
-        updateCheck(1, 'error', 'Failed to connect to local server');
+        updateCheck(1, 'error', 'Failed to connect to 192.168.192.100:3001');
         setShowServerConfig(true);
         return; // Stop checks if server connection fails
       }
@@ -236,16 +235,16 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
       updateCheck(2, 'warning', 'Could not verify authentication status');
     }
 
-    // Check 4: Printer Connection
+    // Check 4: Printer Configuration
     setCurrentStep(3);
     await new Promise(resolve => setTimeout(resolve, 800));
     
-    // Simulate printer check (70% success rate)
-    const printerConnected = Math.random() > 0.3;
-    if (printerConnected) {
-      updateCheck(3, 'success', 'Thermal printer ready (USB001)');
+    // Check if printer is configured
+    const printerIp = getLocalStorage('printerIp') || '';
+    if (printerIp) {
+      updateCheck(3, 'success', `Imprimante configurée: ${printerIp}`);
     } else {
-      updateCheck(3, 'warning', 'Printer not detected - manual tickets only');
+      updateCheck(3, 'warning', 'Imprimante non configurée - configurez dans les paramètres');
     }
 
     // Check 5: App Updates
@@ -332,14 +331,14 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
                   id="server-url"
                   value={serverUrl}
                   onChange={handleServerUrlChange}
-                  placeholder="http://192.168.1.100:3001"
+                  placeholder="http://192.168.192.100:3001"
                   className="w-full"
                 />
                 {connectionError && (
                   <p className="text-sm text-red-500">{connectionError}</p>
                 )}
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Example: http://192.168.1.100:3001
+                  Example: http://192.168.192.100:3001
                 </p>
               </div>
 
@@ -386,7 +385,7 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
                   variant="ghost"
                   onClick={() => {
                     // Skip discovery and try to connect with default URL
-                    setServerUrl('http://192.168.192.30:3001');
+                    setServerUrl('http://192.168.192.100:3001');
                     testServerConnection();
                   }}
                   className="flex-1"
@@ -398,13 +397,13 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
                   variant="ghost"
                   onClick={() => {
                     // Skip discovery and try to connect with common local IP
-                    setServerUrl('http://192.168.1.100:3001');
+                    setServerUrl('http://192.168.192.100:3001');
                     testServerConnection();
                   }}
                   className="flex-1"
                 >
                   <Globe className="w-4 h-4 mr-2" />
-                  Try Common IP
+                  Try Localhost (Alt)
                 </Button>
               </div>
             </div>

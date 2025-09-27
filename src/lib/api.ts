@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/tauri';
 import { getLocalStorage, setLocalStorage } from './storage';
+import { SERVER_CONFIG } from '../config/server';
 
-// Default API configuration
+// Default API configuration - Using server IP
 const DEFAULT_CONFIG = {
-  baseUrl: 'http://192.168.192.30:3001/api',
-  timeout: 10000,
+  baseUrl: SERVER_CONFIG.API.BASE_URL,
+  timeout: SERVER_CONFIG.API.TIMEOUT,
 };
 
 // API Configuration interface
@@ -55,6 +56,9 @@ interface ConnectionStatus {
 class ApiService {
   private config: ApiConfig;
   private token: string | null = null;
+  private requestCache: Map<string, { data: any; timestamp: number }> = new Map();
+  private pendingRequests: Map<string, Promise<any>> = new Map();
+  private readonly CACHE_TTL = 30000; // 30 seconds
 
   constructor(config?: Partial<ApiConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -117,6 +121,72 @@ class ApiService {
   }
 
   /**
+   * Generate cache key for request
+   */
+  private getCacheKey(endpoint: string, method: string, data?: any): string {
+    const dataStr = data ? JSON.stringify(data) : '';
+    return `${method}:${endpoint}:${dataStr}`;
+  }
+
+  /**
+   * Check if cached data is still valid
+   */
+  private isCacheValid(timestamp: number): boolean {
+    return Date.now() - timestamp < this.CACHE_TTL;
+  }
+
+  /**
+   * Get cached response if available
+   */
+  private getCachedResponse(cacheKey: string): any | null {
+    const cached = this.requestCache.get(cacheKey);
+    if (cached && this.isCacheValid(cached.timestamp)) {
+      console.log(`📦 Using cached response for ${cacheKey}`);
+      return cached.data;
+    }
+    return null;
+  }
+
+  /**
+   * Cache response data
+   */
+  private setCachedResponse(cacheKey: string, data: any): void {
+    this.requestCache.set(cacheKey, {
+      data,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * Clear expired cache entries
+   */
+  private clearExpiredCache(): void {
+    const now = Date.now();
+    for (const [key, value] of this.requestCache.entries()) {
+      if (now - value.timestamp >= this.CACHE_TTL) {
+        this.requestCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Clear cache for specific endpoint patterns
+   */
+  public clearCache(pattern?: string): void {
+    if (pattern) {
+      for (const key of this.requestCache.keys()) {
+        if (key.includes(pattern)) {
+          this.requestCache.delete(key);
+        }
+      }
+      console.log(`🗑️ Cleared cache for pattern: ${pattern}`);
+    } else {
+      this.requestCache.clear();
+      console.log(`🗑️ Cleared all cache`);
+    }
+  }
+
+  /**
    * Make API request using Rust proxy (bypasses browser restrictions)
    */
   private async requestViaProxy<T>(
@@ -127,64 +197,42 @@ class ApiService {
     serverUrl?: string
   ): Promise<ApiResponse<T>> {
     try {
-      // Determine the server URL to use
-      let targetServerUrl = serverUrl;
-      if (!targetServerUrl) {
-        // Extract server URL from current API config
-        const baseUrl = this.config.baseUrl;
-        targetServerUrl = baseUrl.replace('/api', '');
-      }
+      // Generate cache key for GET requests
+      const cacheKey = this.getCacheKey(endpoint, method, data);
       
-      console.log(`🔍 Proxy Request: ${method} ${endpoint}`);
-      console.log(`🔍 Server URL:`, targetServerUrl);
-      console.log(`🔍 Body:`, data);
-      console.log(`🔍 Auth Token:`, this.token ? 'Present' : 'Missing');
-
-      // Prepare headers and body for proxy
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      if (requiresAuth && this.token) {
-        headers['Authorization'] = `Bearer ${this.token}`;
+      // Check cache for GET requests
+      if (method === 'GET') {
+        const cachedResponse = this.getCachedResponse(cacheKey);
+        if (cachedResponse) {
+          return cachedResponse;
+        }
       }
 
-      // Prepare request body
-      let body: string | null = null;
-      if (data) {
-        body = JSON.stringify(data);
+      // Check for pending identical requests (deduplication)
+      if (this.pendingRequests.has(cacheKey)) {
+        console.log(`🔄 Deduplicating request: ${method} ${endpoint}`);
+        return await this.pendingRequests.get(cacheKey)!;
       }
 
-      // Call Rust proxy
-      const responseText = await invoke<string>('proxy_localnode', {
-        method,
-        endpoint,
-        body,
-        serverUrl: targetServerUrl,
-        headers // <-- pass headers to Rust
-      });
-
-      console.log(`🔍 Proxy Response:`, responseText);
-
-      // Parse response
-      const responseData = JSON.parse(responseText);
+      // Create the request promise
+      const requestPromise = this.executeRequest<T>(endpoint, method, data, requiresAuth, serverUrl);
       
-      console.log(`🔍 Parsed Response:`, responseData);
-      
-      if (!responseData.success && responseData.message) {
-        // Handle authentication errors
-        if (responseData.code === 'UNAUTHORIZED') {
-          this.clearToken();
+      // Store pending request for deduplication
+      this.pendingRequests.set(cacheKey, requestPromise);
+
+      try {
+        const response = await requestPromise;
+        
+        // Cache successful GET responses
+        if (method === 'GET' && response.success) {
+          this.setCachedResponse(cacheKey, response);
         }
         
-        return {
-          success: false,
-          message: responseData.message || 'Request failed',
-          code: responseData.code || 'UNKNOWN_ERROR',
-        };
+        return response;
+      } finally {
+        // Remove from pending requests
+        this.pendingRequests.delete(cacheKey);
       }
-      
-      return responseData;
     } catch (error: any) {
       console.error(`🔍 Proxy Request Error:`, error);
       
@@ -194,6 +242,76 @@ class ApiService {
         code: 'PROXY_ERROR',
       };
     }
+  }
+
+  /**
+   * Execute the actual request
+   */
+  private async executeRequest<T>(
+    endpoint: string,
+    method: string,
+    data?: any,
+    requiresAuth: boolean = true,
+    serverUrl?: string
+  ): Promise<ApiResponse<T>> {
+    // Determine the server URL to use
+    let targetServerUrl = serverUrl;
+    if (!targetServerUrl) {
+      // Extract server URL from current API config
+      const baseUrl = this.config.baseUrl;
+      targetServerUrl = baseUrl.replace('/api', '');
+    }
+    
+    console.log(`🔍 Proxy Request: ${method} ${endpoint}`);
+    console.log(`🔍 Server URL:`, targetServerUrl);
+    console.log(`🔍 Body:`, data);
+    console.log(`🔍 Auth Token:`, this.token ? 'Present' : 'Missing');
+
+    // Prepare headers and body for proxy
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (requiresAuth && this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    // Prepare request body
+    let body: string | null = null;
+    if (data) {
+      body = JSON.stringify(data);
+    }
+
+    // Call Rust proxy
+    const responseText = await invoke<string>('proxy_localnode', {
+      method,
+      endpoint,
+      body,
+      serverUrl: targetServerUrl,
+      headers // <-- pass headers to Rust
+    });
+
+    console.log(`🔍 Proxy Response:`, responseText);
+
+    // Parse response
+    const responseData = JSON.parse(responseText);
+    
+    console.log(`🔍 Parsed Response:`, responseData);
+    
+    if (!responseData.success && responseData.message) {
+      // Handle authentication errors
+      if (responseData.code === 'UNAUTHORIZED') {
+        this.clearToken();
+      }
+      
+      return {
+        success: false,
+        message: responseData.message || 'Request failed',
+        code: responseData.code || 'UNKNOWN_ERROR',
+      };
+    }
+    
+    return responseData;
   }
 
   /**
@@ -308,6 +426,40 @@ class ApiService {
   }
 
   /**
+   * Create initial admin account for system setup
+   */
+  public async createAdmin(adminData: {
+    firstName: string;
+    lastName: string;
+    phoneNumber: string;
+    cin: string;
+    password: string;
+  }): Promise<AuthResponse> {
+    try {
+      console.log('🔍 Creating admin account via proxy');
+      
+      const response = await this.requestViaProxy<any>(
+        '/api/auth/create-admin',
+        'POST',
+        adminData,
+        false
+      );
+      
+      return {
+        success: response.success,
+        message: response.message || 'Unknown error',
+        data: response.data,
+      };
+    } catch (error) {
+      console.error('🔍 Create admin failed:', error);
+      return {
+        success: false,
+        message: 'Create admin failed',
+      };
+    }
+  }
+
+  /**
    * Verify token validity
    */
   public async verifyToken(): Promise<ApiResponse<any>> {
@@ -383,29 +535,85 @@ class ApiService {
   }
 
   /**
-   * Get vehicles with optional filters
+   * Get all vehicles with their queue status
    */
-  public async getVehicles(filters?: any): Promise<ApiResponse<any>> {
-    const queryParams = filters ? `?${new URLSearchParams(filters).toString()}` : '';
-    return this.requestViaProxy<any>(`/api/vehicles${queryParams}`, 'GET');
+  public async getVehicles(): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/vehicles', 'GET', undefined, false);
+  }
+
+  /**
+   * Create new vehicle (SUPERVISOR, ADMIN)
+   */
+  public async createVehicle(vehicleData: {
+    licensePlate: string;
+    capacity: number;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/vehicles', 'POST', vehicleData);
   }
 
   /**
    * Get vehicle by ID
    */
   public async getVehicleById(id: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/vehicles/${id}`, 'GET');
+    return this.requestViaProxy<any>(`/api/vehicles/${id}`, 'GET', undefined, false);
   }
 
   /**
-   * Get queue statistics
+   * Update vehicle information (SUPERVISOR, ADMIN)
    */
-  public async getQueueStats(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/queue/stats', 'GET');
+  public async updateVehicle(id: string, vehicleData: {
+    licensePlate?: string;
+    capacity?: number;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/vehicles/${id}`, 'PUT', vehicleData);
   }
 
   /**
-   * Get available queues with optional filtering
+   * Delete vehicle (ADMIN only)
+   */
+  public async deleteVehicle(id: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/vehicles/${id}`, 'DELETE');
+  }
+
+
+  /**
+   * Remove vehicle authorization for a station (SUPERVISOR, ADMIN)
+   */
+  public async removeVehicleStationAuthorization(vehicleId: string, stationData: {
+    stationId: string;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/vehicles/${vehicleId}/authorize-station`, 'DELETE', stationData);
+  }
+
+  /**
+   * Enter vehicle into queue for a destination
+   */
+  public async enterQueue(queueData: {
+    licensePlate: string;
+    destinationId: string;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/queue/enter', 'POST', queueData, false);
+  }
+
+  /**
+   * Remove vehicle from queue
+   */
+  public async exitQueue(queueData: {
+    licensePlate: string;
+  }): Promise<ApiResponse<any>> {
+    const response = await this.requestViaProxy<any>('/api/queue/exit', 'POST', queueData, false);
+    
+    // Clear frontend cache on successful exit to ensure immediate UI update
+    if (response.success) {
+      this.clearCache('queue');
+      console.log('🗑️ Cleared frontend cache after vehicle exit');
+    }
+    
+    return response;
+  }
+
+  /**
+   * Get all available destination queues with summary (SUPERVISOR, ADMIN)
    */
   public async getAvailableQueues(filters?: {
     governorate?: string;
@@ -424,14 +632,31 @@ class ApiService {
   }
 
   /**
-   * Get available locations for queue filtering
+   * Get comprehensive queue statistics (SUPERVISOR, ADMIN)
    */
-  public async getQueueLocations(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/queue/locations', 'GET');
+  public async getQueueStats(): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/queue/stats', 'GET');
   }
 
   /**
-   * Get available destinations for booking (only destinations with available seats)
+   * Get detailed queue for specific destination (SUPERVISOR, ADMIN)
+   */
+  public async getQueueByDestination(destinationId: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/queue/${destinationId}`, 'GET');
+  }
+
+  /**
+   * Update vehicle queue status (SUPERVISOR, ADMIN)
+   */
+  public async updateQueueStatus(statusData: {
+    licensePlate: string;
+    status: string;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/queue/status', 'PUT', statusData);
+  }
+
+  /**
+   * Get all available destinations with seat counts (SUPERVISOR, ADMIN)
    */
   public async getAvailableDestinationsForBooking(filters?: {
     governorate?: string;
@@ -452,81 +677,48 @@ class ApiService {
   }
 
   /**
-   * Get available locations (governments and delegations) for filtering
+   * Create new cash booking (SUPERVISOR, ADMIN)
    */
-  public async getAvailableLocations(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/queue-booking/locations', 'GET');
-  }
-
-  /**
-   * Get queue by destination
-   */
-  public async getQueueByDestination(destinationId: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/queue/${destinationId}`, 'GET');
-  }
-
-  /**
-   * Update vehicle status
-   */
-  public async updateVehicleStatus(licensePlate: string, status: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/vehicles/${licensePlate}/status`, 'PUT', { status });
-  }
-
-  /**
-   * Create cash booking
-   */
-  public async createCashBooking(bookingData: any): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/cash-booking/book', 'POST', bookingData);
-  }
-
-  /**
-   * List cash bookings
-   */
-  public async listCashBookings(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/cash-booking/stats', 'GET');
-  }
-
-  /**
-   * Generate cash booking receipt
-   */
-  public async generateCashBookingReceipt(bookingId: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/cash-booking/${bookingId}/receipt`, 'GET');
-  }
-
-  /**
-   * Create queue booking
-   */
-  public async createQueueBooking(bookingData: any): Promise<ApiResponse<any>> {
+  public async createQueueBooking(bookingData: {
+    destinationId: string;
+    seatsRequested: number;
+  }): Promise<ApiResponse<any>> {
     return this.requestViaProxy<any>('/api/queue-booking/book', 'POST', bookingData);
   }
 
   /**
-   * Cancel queue booking completely or remove specific number of seats
+   * Get booking details by verification code (SUPERVISOR, ADMIN)
    */
-  public async cancelQueueBooking(bookingId: string, seatsToCancel?: number): Promise<ApiResponse<any>> {
-    const data = seatsToCancel ? { seatsToCancel } : undefined;
-    return this.requestViaProxy<any>(`/api/queue-booking/cancel/${bookingId}`, 'DELETE', data);
+  public async getBookingByVerificationCode(verificationCode: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/queue-booking/verify/${verificationCode}`, 'GET');
   }
 
   /**
-   * List queue bookings
+   * Verify and mark ticket as used (SUPERVISOR, ADMIN)
    */
-  public async listQueueBookings(): Promise<ApiResponse<any>> {
+  public async verifyBooking(verificationCode: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/queue-booking/verify', 'POST', { verificationCode });
+  }
+
+  /**
+   * Cancel specific number of seats from booking (SUPERVISOR, ADMIN)
+   */
+  public async cancelQueueBookingSeats(bookingId: string, seatsToCancel: number): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/queue-booking/cancel/${bookingId}`, 'PUT', { seatsToCancel });
+  }
+
+  /**
+   * Cancel entire booking (SUPERVISOR, ADMIN)
+   */
+  public async cancelQueueBooking(bookingId: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/queue-booking/cancel/${bookingId}`, 'DELETE');
+  }
+
+  /**
+   * Get booking statistics for today (SUPERVISOR, ADMIN)
+   */
+  public async getQueueBookingStats(): Promise<ApiResponse<any>> {
     return this.requestViaProxy<any>('/api/queue-booking/stats', 'GET');
-  }
-
-  /**
-   * Assign booking to vehicle
-   */
-  public async assignBookingToVehicle(bookingId: string, vehicleId: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/bookings/${bookingId}/assign`, 'POST', { vehicleId });
-  }
-
-  /**
-   * Verify booking
-   */
-  public async verifyBooking(bookingId: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/bookings/${bookingId}/verify`, 'POST');
   }
 
   /**
@@ -561,7 +753,9 @@ class ApiService {
    * Get all dashboard data
    */
   public async getDashboardAll(): Promise<ApiResponse<any>> {
-    return this.get<any>('/api/dashboard/all');
+    // Endpoint not available on server; keeping method for backward-compat.
+    // Prefer calling getDashboardStats/Queues/Vehicles/Bookings individually.
+    return this.requestViaProxy<any>('/api/dashboard/all', 'GET');
   }
 
   /**
@@ -595,28 +789,48 @@ class ApiService {
   }
 
   // Overnight Queue Management
+  /**
+   * Add vehicle to overnight queue (SUPERVISOR, ADMIN)
+   */
+  public async addVehicleToOvernightQueue(overnightData: {
+    licensePlate: string;
+    destinationId?: string;
+    departureTime?: string;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/overnight-queue/add', 'POST', overnightData);
+  }
+
+  /**
+   * Remove vehicle from overnight queue (SUPERVISOR, ADMIN)
+   */
+  public async removeVehicleFromOvernightQueue(queueData: {
+    licensePlate: string;
+  }): Promise<ApiResponse<any>> {
+    const response = await this.requestViaProxy<any>('/api/overnight-queue/remove', 'POST', queueData);
+    
+    // Clear frontend cache on successful removal to ensure immediate UI update
+    if (response.success) {
+      this.clearCache('queue');
+      console.log('🗑️ Cleared frontend cache after overnight vehicle removal');
+    }
+    
+    return response;
+  }
+
+  /**
+   * Get all overnight queue entries (SUPERVISOR, ADMIN)
+   */
   public async getOvernightQueues(): Promise<ApiResponse<any>> {
     return this.requestViaProxy<any>('/api/overnight-queue/all', 'GET');
   }
 
-  public async getOvernightQueueByDestination(destinationId: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/overnight-queue/${destinationId}`, 'GET');
-  }
-
-  public async addVehicleToOvernightQueue(licensePlate: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/overnight-queue/add', 'POST', { licensePlate });
-  }
-
-  public async removeVehicleFromOvernightQueue(licensePlate: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/overnight-queue/remove', 'POST', { licensePlate });
-  }
-
-  public async transferOvernightToRegular(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/overnight-queue/transfer', 'POST');
-  }
-
-  public async getOvernightQueueStats(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/overnight-queue/stats', 'GET');
+  /**
+   * Transfer vehicle from overnight queue to regular queue (SUPERVISOR, ADMIN)
+   */
+  public async transferOvernightToRegular(transferData: {
+    licensePlate: string;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/overnight-queue/transfer', 'POST', transferData);
   }
 
   // Vehicle Management by CIN
@@ -640,44 +854,59 @@ class ApiService {
   }
 
   // Staff Management API methods
-  public async getStaffMembers(filters?: any): Promise<ApiResponse<any>> {
+  /**
+   * Get all staff members with optional filtering
+   */
+  public async getStaffMembers(filters?: {
+    role?: string;
+    status?: string;
+  }): Promise<ApiResponse<any>> {
     const queryParams = new URLSearchParams();
     if (filters?.role) queryParams.append('role', filters.role);
     if (filters?.status) queryParams.append('status', filters.status);
     
     const endpoint = queryParams.toString() ? `/api/staff?${queryParams.toString()}` : '/api/staff';
-    return this.get(endpoint);
+    return this.requestViaProxy<any>(endpoint, 'GET');
   }
 
+  /**
+   * Get specific staff member by ID
+   */
   public async getStaffMember(id: string): Promise<ApiResponse<any>> {
-    return this.get(`/api/staff/${id}`);
+    return this.requestViaProxy<any>(`/api/staff/${id}`, 'GET');
   }
 
-  // Driver income (based on exit passes)
-  public async getDriverIncome(licensePlate: string, date?: string): Promise<ApiResponse<any>> {
-    const qp = date ? `?date=${encodeURIComponent(date)}` : '';
-    return this.get(`/api/driver-tickets/income/${encodeURIComponent(licensePlate)}${qp}`);
+  /**
+   * Create new staff member
+   */
+  public async createStaffMember(staffData: {
+    firstName: string;
+    lastName: string;
+    phoneNumber: string;
+    cin: string;
+    password: string;
+    role: 'ADMIN' | 'SUPERVISOR' | 'WORKER';
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/staff', 'POST', staffData);
   }
 
-  public async createStaffMember(staffData: any): Promise<ApiResponse<any>> {
-    return this.post('/api/staff', staffData);
+  /**
+   * Update staff member information
+   */
+  public async updateStaffMember(id: string, staffData: {
+    firstName?: string;
+    lastName?: string;
+    phoneNumber?: string;
+    isActive?: boolean;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/staff/${id}`, 'PUT', staffData);
   }
 
-  public async updateStaffMember(id: string, staffData: any): Promise<ApiResponse<any>> {
-    return this.put(`/api/staff/${id}`, staffData);
-  }
-
-  public async toggleStaffStatus(id: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy(`/api/staff/${id}/toggle-status`, 'PATCH');
-  }
-
+  /**
+   * Deactivate staff member (soft delete)
+   */
   public async deleteStaffMember(id: string): Promise<ApiResponse<any>> {
-    return this.delete(`/api/staff/${id}`);
-  }
-
-  public async getStaffTransactions(id: string, date?: string): Promise<ApiResponse<any>> {
-    const query = date ? `?date=${encodeURIComponent(date)}` : '';
-    return this.get(`/api/staff/${id}/transactions${query}`);
+    return this.requestViaProxy<any>(`/api/staff/${id}`, 'DELETE');
   }
 
   // Tunisia location data API methods
@@ -705,40 +934,53 @@ class ApiService {
     return this.requestViaProxy<any>('/api/queue-booking/verify', 'POST', { verificationCode: code });
   }
 
-  /**
-   * Get full booking details by verification code
-   */
-  public async getBookingByVerificationCode(verificationCode: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/queue-booking/verify/${verificationCode}`, 'GET');
-  }
-
   // Routes Management API methods
   /**
    * Get all routes
    */
   public async getAllRoutes(): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>('/api/routes', 'GET');
+    return this.requestViaProxy<any>('/api/routes', 'GET', undefined, false);
+  }
+
+  /**
+   * Create new route (ADMIN only)
+   */
+  public async createRoute(routeData: {
+    stationId: string;
+    stationName: string;
+    basePrice: number;
+    governorate: string;
+    delegation: string;
+  }): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/routes', 'POST', routeData);
   }
 
   /**
    * Get route by ID
    */
   public async getRouteById(id: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/routes/${id}`, 'GET');
+    return this.requestViaProxy<any>(`/api/routes/${id}`, 'GET', undefined, false);
   }
 
   /**
-   * Update route price (SUPERVISOR only)
+   * Update route price (SUPERVISOR, ADMIN)
    */
   public async updateRoutePrice(id: string, basePrice: number): Promise<ApiResponse<any>> {
     return this.requestViaProxy<any>(`/api/routes/${id}`, 'PUT', { basePrice });
   }
 
   /**
+   * Delete route (ADMIN only)
+   */
+  public async deleteRoute(id: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/routes/${id}`, 'DELETE');
+  }
+
+  /**
    * Get routes by station ID
    */
   public async getRoutesByStation(stationId: string): Promise<ApiResponse<any>> {
-    return this.requestViaProxy<any>(`/api/routes/station/${stationId}`, 'GET');
+    return this.requestViaProxy<any>(`/api/routes/station/${stationId}`, 'GET', undefined, false);
   }
 
   // Driver Tickets API methods
@@ -758,19 +1000,78 @@ class ApiService {
    * Ban a vehicle by ID
    */
   public async banVehicle(id: string): Promise<ApiResponse<any>> {
-    return this.post(`/api/vehicles/${id}/ban`);
+    return this.requestViaProxy<any>(`/api/vehicles/${id}`, 'PUT', { isBanned: true });
+  }
+
+  /**
+   * Unban a vehicle by ID
+   */
+  public async unbanVehicle(id: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/vehicles/${id}`, 'PUT', { isBanned: false });
+  }
+
+  /**
+   * Authorize vehicle for a station
+   */
+  public async authorizeVehicleStation(vehicleId: string, stationId: string, stationName: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/vehicles/${vehicleId}/authorize-station`, 'POST', {
+      stationId,
+      stationName
+    });
   }
 
   // Vehicle trips report
   public async getVehicleTrips(id: string, date?: string): Promise<ApiResponse<any>> {
     const q = date ? `?date=${encodeURIComponent(date)}` : '';
-    return this.get(`/api/vehicles/${id}/trips${q}`);
+    return this.requestViaProxy<any>(`/api/vehicles/${id}/trips${q}`, 'GET');
   }
 
   // Staff daily report (all staff)
   public async getAllStaffDailyReport(date?: string): Promise<ApiResponse<any>> {
     const q = date ? `?date=${encodeURIComponent(date)}` : '';
     return this.get(`/api/staff/report/daily${q}`);
+  }
+
+  // Public Endpoints
+  /**
+   * Get public queue information for a destination
+   */
+  public async getPublicQueue(destinationId: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/public/queue/${destinationId}`, 'GET', undefined, false);
+  }
+
+  /**
+   * Get all available destinations (public)
+   */
+  public async getPublicDestinations(): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>('/api/public/destinations', 'GET', undefined, false);
+  }
+
+  /**
+   * Get staff transactions (SUPERVISOR, ADMIN)
+   */
+  public async getStaffTransactions(staffId: string, date: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/staff/${staffId}/transactions?date=${date}`, 'GET');
+  }
+
+  /**
+   * Get driver income (SUPERVISOR, ADMIN)
+   * Note: This endpoint doesn't exist in the backend yet
+   */
+  public async getDriverIncome(licensePlate: string, date: string): Promise<ApiResponse<any>> {
+    // TODO: Implement this endpoint in the backend
+    return Promise.resolve({
+      success: false,
+      message: 'Driver income endpoint not implemented yet',
+      data: null
+    });
+  }
+
+  /**
+   * Toggle staff status (ADMIN)
+   */
+  public async toggleStaffStatus(staffId: string): Promise<ApiResponse<any>> {
+    return this.requestViaProxy<any>(`/api/staff/${staffId}/toggle-status`, 'PATCH');
   }
 }
 

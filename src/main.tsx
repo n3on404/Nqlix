@@ -1,8 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
-import { EnhancedMqttProvider } from './context/EnhancedMqttProvider';
-import EnhancedMqttConnectionTest from './components/EnhancedMqttConnectionTest';
 import Layout from "./layout";
 import ErrorPage from "./error-page";
 import Home from "./routes/home";
@@ -166,10 +164,7 @@ const router = createBrowserRouter([
         path: "/preview-ticket",
         element: <PreviewTicket />,
       },
-      {
-        path: "/mqtt-connection-test",
-        element: <EnhancedMqttConnectionTest />,
-      },
+      // Connection test route removed
       {
         path: "/logo-showcase",
         element: <LogoShowcasePage />,
@@ -207,12 +202,11 @@ const App: React.FC = () => {
   useEnhancedSystemInit();
   const { isInitialized, isInitializing, shouldShowLogin, completeInitialization } = useInit();
 
-  // Initialize WebSocket connection when app is ready (MQTT disabled in favor of WebSocket)
+  // Socket.IO will be initialized when app is ready
   useEffect(() => {
     if (isInitialized && !isInitializing) {
-      console.log('🚀 App initialized, WebSocket will handle real-time communication');
-      // WebSocket connection is handled by individual components and contexts
-      // No need for MQTT since WebSocket provides the same functionality
+      console.log('🚀 App initialized, Socket.IO will handle real-time communication');
+      // Socket.IO connection will be handled by individual components and contexts
     }
   }, [isInitialized, isInitializing]);
 
@@ -234,18 +228,16 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <InitProvider>
         <NotificationProvider>
           <AuthProvider>
-            <EnhancedMqttProvider>
-              <DashboardProvider>
-                <QueueProvider>
-                  <SettingsProvider>
-                    <SupervisorModeProvider>
-                      <App />
-                      <Toaster />
-                    </SupervisorModeProvider>
-                  </SettingsProvider>
-                </QueueProvider>
-              </DashboardProvider>
-            </EnhancedMqttProvider>
+            <DashboardProvider>
+              <QueueProvider>
+                <SettingsProvider>
+                  <SupervisorModeProvider>
+                    <App />
+                    <Toaster />
+                  </SupervisorModeProvider>
+                </SettingsProvider>
+              </QueueProvider>
+            </DashboardProvider>
           </AuthProvider>
         </NotificationProvider>
       </InitProvider>

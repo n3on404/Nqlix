@@ -44,7 +44,7 @@ interface Vehicle {
   driver: {
     firstName: string;
     lastName: string;
-    cin: string;
+    // cin removed - no longer supported without driver table
     phoneNumber: string;
   } | null;
   vehicle: {
@@ -109,14 +109,17 @@ export default function DriverTicketsPage() {
 
   // Filter vehicles based on search term
   useEffect(() => {
+    // First filter out banned vehicles
+    const activeVehicles = vehicles.filter(vehicle => !(vehicle as any).isBanned);
+    
     if (!searchTerm.trim()) {
-      setFilteredVehicles(vehicles);
+      setFilteredVehicles(activeVehicles);
     } else {
-      const filtered = vehicles.filter(vehicle =>
+      const filtered = activeVehicles.filter(vehicle =>
         vehicle.licensePlate.toLowerCase().includes(searchTerm.toLowerCase()) ||
         vehicle.driver?.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         vehicle.driver?.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        vehicle.driver?.cin.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        // Driver CIN removed - no longer supported
         vehicle.destinationName.toLowerCase().includes(searchTerm.toLowerCase())
       );
       setFilteredVehicles(filtered);
@@ -155,27 +158,26 @@ export default function DriverTicketsPage() {
   const loadVehicles = async () => {
     setIsLoadingVehicles(true);
     try {
-      const response = activeTab === 'entry' 
-        ? await api.getVehiclesInQueue()
-        : await api.getVehiclesForExit();
+      // Use the new getVehicles API that returns vehicles with queue status
+      const response = await api.getVehicles();
       
       if (response.success) {
+        const allVehicles = response.data || [];
+        
         if (activeTab === 'entry') {
           // For entry tickets, filter only WAITING and LOADING status vehicles
-          const vehiclesByDestination = (response.data as any)?.vehiclesByDestination || {};
-          const allVehicles: Vehicle[] = [];
-          Object.values(vehiclesByDestination).forEach((destinationVehicles: any) => {
-            const filteredVehicles = destinationVehicles.filter((vehicle: any) => 
-              vehicle.status === 'WAITING' || vehicle.status === 'LOADING'
-            );
-            allVehicles.push(...filteredVehicles);
-          });
-          setVehicles(allVehicles);
+          const filteredVehicles = allVehicles.filter((vehicle: any) => 
+            vehicle.queueEntries && vehicle.queueEntries.some((entry: any) => 
+              entry.status === 'WAITING' || entry.status === 'LOADING'
+            )
+          );
+          setVehicles(filteredVehicles);
         } else {
           // For exit tickets, filter only READY status vehicles
-          const allVehicles = (response.data as any)?.vehicles || [];
           const filteredVehicles = allVehicles.filter((vehicle: any) => 
-            vehicle.status === 'READY'
+            vehicle.queueEntries && vehicle.queueEntries.some((entry: any) => 
+              entry.status === 'READY'
+            )
           );
           setVehicles(filteredVehicles);
         }
@@ -190,57 +192,51 @@ export default function DriverTicketsPage() {
     }
   };
 
-  const searchByCIN = async () => {
+  // CIN search removed - no longer supported without driver table
+  const searchByLicensePlate = async () => {
     if (!cinSearch.trim()) {
-      toast.error('Veuillez saisir un CIN');
+      toast.error('Veuillez saisir une plaque d\'immatriculation');
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await api.searchVehicleByCIN(cinSearch.trim());
+      // Search vehicles by license plate instead of CIN
+      const response = await api.getVehicles();
       
       if (response.success) {
-        const data = response.data as any;
-        if (data.queueEntry || data.recentTrip) {
-          // Apply status filter based on active tab
-          const shouldShow = activeTab === 'entry' 
-            ? (data.queueEntry?.status === 'WAITING' || data.queueEntry?.status === 'LOADING')
-            : (data.queueEntry?.status === 'READY');
+        const allVehicles = response.data || [];
+        const searchTerm = cinSearch.trim().toLowerCase();
+        
+        const filteredVehicles = allVehicles.filter((vehicle: any) => 
+          vehicle.licensePlate.toLowerCase().includes(searchTerm) &&
+          vehicle.queueEntries && vehicle.queueEntries.some((entry: any) => {
+            const shouldShow = activeTab === 'entry' 
+              ? (entry.status === 'WAITING' || entry.status === 'LOADING')
+              : (entry.status === 'READY');
+            return shouldShow;
+          })
+        );
 
-          if (shouldShow) {
-            // Create a vehicle object from the search result
-            const vehicle: Vehicle = {
-              id: data.queueEntry?.id || data.recentTrip?.id || 'search-result',
-              licensePlate: data.vehicle.licensePlate,
-              queuePosition: data.queueEntry?.queuePosition,
-              status: data.queueEntry?.status,
-              destinationName: data.queueEntry?.destinationName || data.recentTrip?.destinationName,
-              destinationId: data.queueEntry?.destinationId || data.recentTrip?.destinationId,
-              enteredAt: data.queueEntry?.enteredAt,
-              startTime: data.recentTrip?.startTime,
-              seatsBooked: data.recentTrip?.seatsBooked,
-              source: data.queueEntry ? 'queue' : 'trip',
-              driver: data.driver,
-              vehicle: data.vehicle
-            };
-            
-            setVehicles([vehicle]);
-            setFilteredVehicles([vehicle]);
-            toast.success('Véhicule trouvé!');
-          } else {
-            const requiredStatus = activeTab === 'entry' ? 'EN ATTENTE ou EN CHARGEMENT' : 'PRÊT';
-            toast.error(`Ce véhicule n'a pas le statut requis (${requiredStatus}) pour ce type de ticket`);
-          }
+        if (filteredVehicles.length > 0) {
+          setVehicles(filteredVehicles);
+          setFilteredVehicles(filteredVehicles);
+          toast.success(`${filteredVehicles.length} véhicule(s) trouvé(s)!`);
         } else {
-          toast.error('Aucune entrée de file ou voyage récent trouvé pour ce conducteur');
+          setVehicles([]);
+          setFilteredVehicles([]);
+          toast.info('Aucun véhicule trouvé avec cette plaque d\'immatriculation');
         }
       } else {
-        toast.error(response.message || 'Conducteur non trouvé');
+        toast.error(response.message || 'Erreur lors de la recherche');
+        setVehicles([]);
+        setFilteredVehicles([]);
       }
     } catch (error: any) {
-      console.error('Error searching by CIN:', error);
-      toast.error(error.message || 'Échec de la recherche par CIN');
+      console.error('Error searching by license plate:', error);
+      toast.error(error.message || 'Échec de la recherche par plaque d\'immatriculation');
+      setVehicles([]);
+      setFilteredVehicles([]);
     } finally {
       setIsLoading(false);
     }
@@ -1659,17 +1655,17 @@ export default function DriverTicketsPage() {
               </h3>
             </div>
 
-            {/* CIN Search */}
+            {/* License Plate Search */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
               <div className="lg:col-span-2">
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Recherche par CIN du conducteur
+                  Recherche par plaque d'immatriculation
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
                   <Input
                     type="text"
-                    placeholder="Entrez le CIN du conducteur..."
+                    placeholder="Entrez la plaque d'immatriculation..."
                     value={cinSearch}
                     onChange={(e) => setCinSearch(e.target.value)}
                     className="pl-10 border-slate-300 dark:border-slate-600 focus:border-blue-500 dark:focus:border-blue-400"
@@ -1677,7 +1673,7 @@ export default function DriverTicketsPage() {
                 </div>
               </div>
               <Button
-                onClick={searchByCIN}
+                onClick={searchByLicensePlate}
                 disabled={isLoading || !cinSearch.trim()}
                 className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium"
                 size="lg"
@@ -1726,7 +1722,7 @@ export default function DriverTicketsPage() {
                 />
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Recherche par plaque d'immatriculation, nom du conducteur, CIN ou destination
+                Recherche par plaque d'immatriculation ou destination
               </p>
             </div>
           </div>
@@ -1854,7 +1850,7 @@ export default function DriverTicketsPage() {
                           </div>
                           <div>
                             <p className="font-medium text-slate-900 dark:text-slate-100">
-                              CIN: {vehicle.driver.cin}
+                              Véhicule: {vehicle.licensePlate}
                             </p>
                           </div>
                         </div>

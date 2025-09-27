@@ -27,15 +27,6 @@ interface Vehicle {
   isBanned: boolean;
 }
 
-interface DriverRequest {
-  id: string;
-  licensePlate: string;
-  driver: {
-    id: string;
-    cin: string;
-  };
-  status: string;
-}
 
 const SupervisorVehicleManagement: React.FC = () => {
   const { currentStaff } = useAuth();
@@ -43,12 +34,10 @@ const SupervisorVehicleManagement: React.FC = () => {
   const navigate = useNavigate();
   const todayStr = () => { const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; };
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [pendingRequests, setPendingRequests] = useState<DriverRequest[]>([]);
+  const [routes, setRoutes] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingRequests, setIsLoadingRequests] = useState(true);
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [form, setForm] = useState({
-    cin: '',
     licensePlate: '',
     capacity: '8', // Default to 8 seats
     authorizedStationIds: [] as string[],
@@ -56,7 +45,7 @@ const SupervisorVehicleManagement: React.FC = () => {
   });
   const [governorates, setGovernorates] = useState<{ id: string; name: string; nameAr?: string }[]>([]);
   const [delegations, setDelegations] = useState<{ id: string; name: string; nameAr?: string; governorateId: string }[]>([]);
-  const [stations, setStations] = useState<{ id: string; name: string }[]>([]);
+  // Remove separate stations state - we'll use routes data instead
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingMunicipalities, setIsLoadingMunicipalities] = useState(false);
   const [municipalityAPIStatus, setMunicipalityAPIStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
@@ -87,23 +76,23 @@ const SupervisorVehicleManagement: React.FC = () => {
 
   // Function to select all Monastir delegations
   const selectAllMonastirDelegations = () => {
-    const monastirStations = stations.filter(station => 
-      station.name.includes('MONASTIR') || 
-      station.name.includes('SAHLINE') || 
-      station.name.includes('KSIBET EL MEDIOUNI') || 
-      station.name.includes('JEMMAL') || 
-      station.name.includes('BENI HASSEN') || 
-      station.name.includes('SAYADA LAMTA BOU HAJAR') || 
-      station.name.includes('TEBOULBA') || 
-      station.name.includes('KSAR HELAL') || 
-      station.name.includes('BEMBLA') || 
-      station.name.includes('MOKNINE') || 
-      station.name.includes('ZERAMDINE') || 
-      station.name.includes('OUERDANINE') || 
-      station.name.includes('BEKALTA')
+    const monastirStations = routes.filter(route => 
+      route.stationName.includes('MONASTIR') || 
+      route.stationName.includes('SAHLINE') || 
+      route.stationName.includes('KSIBET EL MEDIOUNI') || 
+      route.stationName.includes('JEMMAL') || 
+      route.stationName.includes('BENI HASSEN') || 
+      route.stationName.includes('SAYADA LAMTA BOU HAJAR') || 
+      route.stationName.includes('TEBOULBA') || 
+      route.stationName.includes('KSAR HELAL') || 
+      route.stationName.includes('BEMBLA') || 
+      route.stationName.includes('MOKNINE') || 
+      route.stationName.includes('ZERAMDINE') || 
+      route.stationName.includes('OUERDANINE') || 
+      route.stationName.includes('BEKALTA')
     );
     
-    const stationIds = monastirStations.map(station => station.id);
+    const stationIds = monastirStations.map(route => route.stationId);
     setForm(prev => ({
       ...prev,
       authorizedStationIds: stationIds
@@ -145,9 +134,9 @@ const SupervisorVehicleManagement: React.FC = () => {
   };
 
   // Filter stations based on search term
-  const filteredStations = stations.filter(station =>
-    station.name.toLowerCase().includes(stationSearchTerm.toLowerCase())
-  );
+  const filteredStations = routes.filter(route =>
+    route.stationName.toLowerCase().includes(stationSearchTerm.toLowerCase())
+  ).map(route => ({ id: route.stationId, name: route.stationName }));
 
   // Function to select default destination
   const selectDefaultDestination = (stationId: string) => {
@@ -166,9 +155,9 @@ const SupervisorVehicleManagement: React.FC = () => {
   };
 
   // Filter authorized stations for destination selection
-  const authorizedStations = stations.filter(station => 
-    form.authorizedStationIds.includes(station.id)
-  );
+  const authorizedStations = routes.filter(route =>
+    form.authorizedStationIds.includes(route.stationId)
+  ).map(route => ({ id: route.stationId, name: route.stationName }));
 
   // Filter authorized stations based on destination search term
   const filteredDestinations = authorizedStations.filter(station =>
@@ -183,26 +172,37 @@ const SupervisorVehicleManagement: React.FC = () => {
   // Fetch vehicles
   const fetchVehicles = async () => {
     setIsLoading(true);
-    const res = await api.get<Vehicle[]>('/api/vehicles');
-    setVehicles(res.data || []);
+    const res = await api.get<any>('/api/vehicles');
+    // Handle nested response structure from server
+    const vehiclesData = res.data?.data || res.data;
+    // Filter out banned vehicles
+    const activeVehicles = Array.isArray(vehiclesData) 
+      ? vehiclesData.filter((vehicle: any) => !vehicle.isBanned)
+      : [];
+    setVehicles(activeVehicles);
     setIsLoading(false);
   };
 
-  // Fetch pending requests
-  const fetchPendingRequests = async () => {
-    setIsLoadingRequests(true);
-    const res = await api.get<DriverRequest[]>('/api/vehicles/pending');
-    setPendingRequests(res.data || []);
-    setIsLoadingRequests(false);
+  // Fetch routes for station selection
+  const fetchRoutes = async () => {
+    try {
+      const res = await api.getAllRoutes();
+      if (res.success) {
+        const routesData = res.data?.data || res.data;
+        setRoutes(Array.isArray(routesData) ? routesData : []);
+      }
+    } catch (error) {
+      console.error('Error loading routes:', error);
+    }
   };
+
 
   // Polling for real-time updates
   useEffect(() => {
     fetchVehicles();
-    fetchPendingRequests();
+    fetchRoutes();
     const interval = setInterval(() => {
       fetchVehicles();
-      fetchPendingRequests();
     }, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -234,19 +234,6 @@ const SupervisorVehicleManagement: React.FC = () => {
       }
     };
 
-    const fetchStations = async () => {
-      const res = await api.get('/api/vehicles/stations');
-      const data: any = res.data;
-      if (res.success && data && Array.isArray(data)) {
-        setStations(data);
-      } else if (res.success && data && Array.isArray((data as any)?.data)) {
-        setStations((data as any).data);
-      } else if (Array.isArray(res)) {
-        setStations(res as any);
-      } else {
-        setStations([]);
-      }
-    };
 
     const fetchStationConfig = async () => {
       const res = await api.getStationConfig();
@@ -257,20 +244,19 @@ const SupervisorVehicleManagement: React.FC = () => {
     };
 
     initializeMunicipalityData();
-    fetchStations();
     fetchStationConfig();
   }, []);
 
   // Auto-select current station in authorized stations when form opens
   useEffect(() => {
-    if (showRequestForm && stations.length > 0 && stationConfig?.id) {
+    if (showRequestForm && routes.length > 0 && stationConfig?.id) {
         setForm(f => ({ 
           ...f, 
         authorizedStationIds: [stationConfig.id]
       }));
       console.log(`🎯 Auto-selected current station: ${stationConfig.stationName}`);
     }
-  }, [showRequestForm, stations, stationConfig]);
+  }, [showRequestForm, routes, stationConfig]);
 
   // Handle governorate change for new station creation
   useEffect(() => {
@@ -301,28 +287,7 @@ const SupervisorVehicleManagement: React.FC = () => {
   }, [showCreateStation, newStation.governorateId, governorates]);
 
   // Approve request
-  const handleApprove = async (id: string) => {
-    const res = await api.post<{ success: boolean; message?: string }>(`/api/vehicles/${id}/approve`);
-    if (res.success) {
-      addNotification({ type: 'success', title: 'Approuvé', message: 'Demande de conducteur approuvée.' });
-      fetchVehicles();
-      fetchPendingRequests();
-    } else {
-      addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec de l\'approbation.' });
-    }
-  };
 
-  // Deny request
-  const handleDeny = async (id: string) => {
-    const res = await api.post<{ success: boolean; message?: string }>(`/api/vehicles/${id}/deny`);
-    if (res.success) {
-      addNotification({ type: 'success', title: 'Refusé', message: 'Demande de conducteur refusée.' });
-      fetchVehicles();
-      fetchPendingRequests();
-    } else {
-      addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du refus.' });
-    }
-  };
 
   // Handle form input
   const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -354,7 +319,7 @@ const SupervisorVehicleManagement: React.FC = () => {
     }
   };
 
-  // Submit new driver request and auto-approve
+  // Submit new vehicle creation
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (form.licensePlate && !tunisianPlateRegex.test(form.licensePlate.trim())) {
@@ -362,78 +327,56 @@ const SupervisorVehicleManagement: React.FC = () => {
       return;
     }
     setIsSubmitting(true);
-    // Build request payload
-    const payload = {
-      cin: form.cin,
-      licensePlate: form.licensePlate,
-      capacity: form.capacity ? Number(form.capacity) : 8,
-      authorizedStationIds: form.authorizedStationIds,
-    };
-    const res = await api.post<{ id: string } | undefined>('/api/vehicles/request', payload);
-    if (res.success && res.data && res.data.id) {
-      // Defensive check: ensure token is present before auto-approve
-      if (!(api as any).token) {
-        addNotification({ type: 'error', title: 'Erreur de session', message: 'Vous n\'êtes pas authentifié. Veuillez vous reconnecter.' });
-        setIsSubmitting(false);
-        return;
+    
+    try {
+      // Create vehicle
+      const vehiclePayload = {
+        licensePlate: form.licensePlate,
+        capacity: form.capacity ? Number(form.capacity) : 8,
+      };
+      
+      const vehicleRes = await api.createVehicle(vehiclePayload);
+      
+      if (vehicleRes.success && vehicleRes.data && vehicleRes.data.id) {
+        const vehicleId = vehicleRes.data.id;
+        
+        // Add authorized stations if any are selected
+        if (form.authorizedStationIds && form.authorizedStationIds.length > 0) {
+          for (const stationId of form.authorizedStationIds) {
+            // Find station name from routes
+            const station = routes.find(r => r.stationId === stationId);
+            if (station) {
+              await api.authorizeVehicleStation(vehicleId, stationId, station.stationName);
+            }
+          }
+        }
+        
+        setShowRequestForm(false);
+        setForm({
+          licensePlate: '', 
+          capacity: '8', 
+          authorizedStationIds: [], 
+          defaultDestinationId: ''
+        });
+        addNotification({ type: 'success', title: 'Véhicule créé', message: 'Le véhicule a été créé avec succès.' });
+        fetchVehicles();
+      } else {
+        addNotification({ type: 'error', title: 'Erreur', message: vehicleRes.message || 'Échec de la création du véhicule.' });
       }
-      // Auto-approve
-      await handleApprove(res.data.id);
-      setShowRequestForm(false);
-      setForm({
-        cin: '', 
-        licensePlate: '', 
-        capacity: '8', 
-        authorizedStationIds: [], 
-        defaultDestinationId: ''
-      });
-      addNotification({ type: 'success', title: 'Créé & Approuvé', message: 'Demande de conducteur créée et approuvée.' });
-      // Refresh vehicles and pending requests immediately
-      fetchVehicles();
-      fetchPendingRequests();
-    } else {
-      addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec de la création de la demande.' });
+    } catch (error: any) {
+      addNotification({ type: 'error', title: 'Erreur', message: error.message || 'Une erreur est survenue.' });
     }
+    
     setIsSubmitting(false);
   };
 
   // Fetch vehicle details by ID (optional: if you want to fetch fresh data)
   const fetchVehicleDetails = async (id: string) => {
     setIsVehicleDetailsLoading(true);
-    const res = await api.get<Vehicle>(`/api/vehicles/${id}`);
-    if (res.success && res.data) {
-      setVehicleDetails(res.data);
-      // Fetch today's income via exit passes
-      try {
-        const lp = res.data?.licensePlate;
-        if (lp) {
-          const today = todayStr();
-          const incomeRes = await api.getDriverIncome(lp, today);
-          if (incomeRes.success && incomeRes.data) {
-            const incomeEl = document.getElementById('driver-income-today');
-            const listEl = document.getElementById('driver-income-list');
-            const totalIncome = incomeRes.data?.totals?.totalIncome || 0;
-            if (incomeEl) incomeEl.textContent = formatTND(totalIncome);
-            if (listEl) {
-              listEl.innerHTML = '';
-              const items = Array.isArray(incomeRes.data.items) ? incomeRes.data.items : [];
-              items.forEach((it: any) => {
-                const div = document.createElement('div');
-                div.className = 'flex justify-between border-b py-1';
-                const when = it.exitTime ? new Date(it.exitTime).toLocaleTimeString() : '';
-                div.innerHTML = `<span>${it.destinationName || '—'} • ${when}</span><span class="font-semibold">${(Number(it.amount || 0)).toFixed(3)} TND</span>`;
-                listEl.appendChild(div);
-              });
-              if (items.length === 0) {
-                const div = document.createElement('div');
-                div.className = 'text-muted-foreground';
-                div.textContent = 'Aucune sortie aujourd\'hui';
-                listEl.appendChild(div);
-              }
-            }
-          }
-        }
-      } catch {}
+    // Use already loaded vehicle data instead of making API call
+    const vehicle = vehicles.find(v => v.id === id);
+    if (vehicle) {
+      setVehicleDetails(vehicle);
     } else {
       setVehicleDetails(null);
     }
@@ -451,12 +394,9 @@ const SupervisorVehicleManagement: React.FC = () => {
         addNotification({ type: 'success', title: 'Station Créée', message: 'Nouvelle station créée avec succès.' });
         setShowCreateStation(false);
         setNewStation({ name: '', governorateId: '', delegationId: '', address: '' });
-        // Refresh stations and select the new one
-        const stationsRes = await api.get('/api/vehicles/stations');
-        if (stationsRes.success && stationsRes.data && Array.isArray(stationsRes.data)) {
-          setStations(stationsRes.data);
-          setForm(f => ({ ...f, authorizedStationIds: [(res.data as any).id] }));
-        }
+        // Refresh routes and select the new one
+        fetchRoutes();
+        setForm(f => ({ ...f, authorizedStationIds: [(res.data as any).id] }));
       } else {
         setCreateStationError(res.message || 'Échec de la création de la station.');
       }
@@ -485,7 +425,7 @@ const SupervisorVehicleManagement: React.FC = () => {
           <Car className="h-6 w-6" /> Gestion des véhicules
         </h1>
         <Button onClick={() => {
-          if (stationConfig && governorates.length > 0 && delegations.length > 0 && stations.length > 0) {
+          if (stationConfig && governorates.length > 0 && delegations.length > 0 && routes.length > 0) {
             // Find governorate and delegation IDs by name
             const gov = governorates.find(g => g.name === stationConfig.governorate);
             const del = delegations.find(d => d.name === stationConfig.delegation);
@@ -542,7 +482,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                   <tr key={v.id} className="border-b hover:bg-muted cursor-pointer" onClick={async () => { setSelectedVehicle(v); setIsVehicleModalOpen(true); fetchVehicleDetails(v.id); }}>
                     <td className="py-2 px-3 font-medium">{v.licensePlate}</td>
                     <td className="py-2 px-3">{v.capacity} places</td>
-                    <td className="py-2 px-3">{v.driver ? v.driver.cin : '-'}</td>
+                    <td className="py-2 px-3">{v.licensePlate || '-'}</td>
                     <td className="py-2 px-3">
                       <Badge variant={v.isActive ? 'default' : 'secondary'}>
                         {v.isActive ? 'Actif' : 'Inactif'}
@@ -559,110 +499,18 @@ const SupervisorVehicleManagement: React.FC = () => {
         </div>
       </Card>
 
-      {/* Pending Requests Table */}
-      <Card className="p-4 mb-8">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <UserPlus className="h-5 w-5" /> Demandes de conducteur en attente
-          </h2>
-          <Button variant="outline" size="sm" onClick={fetchPendingRequests} disabled={isLoadingRequests}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoadingRequests ? 'animate-spin' : ''}`} /> Rafraîchir
-          </Button>
-        </div>
-        <div className="overflow-x-auto">
-          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <th className="text-left py-2 px-3">Plaque d'immatriculation</th>
-                  <th className="text-left py-2 px-3">CIN du conducteur</th>
-                  <th className="text-left py-2 px-3">Statut</th>
-                  <th className="text-left py-2 px-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingRequests.map(r => (
-                  <tr key={r.id} className="border-b hover:bg-muted">
-                    <td className="py-2 px-3 font-medium">{r.licensePlate}</td>
-                    <td className="py-2 px-3">{r.driver ? r.driver.cin : '-'}</td>
-                    <td className="py-2 px-3">
-                      <Badge variant={r.status === 'PENDING' ? 'secondary' : 'default'}>{r.status}</Badge>
-                    </td>
-                    <td className="py-2 px-3 flex gap-2">
-                      <Button size="sm" variant="default" onClick={() => handleApprove(r.id)}><Check className="h-4 w-4" /></Button>
-                      <Button size="sm" variant="destructive" onClick={() => handleDeny(r.id)}><X className="h-4 w-4" /></Button>
-                    </td>
-                  </tr>
-                ))}
-                {pendingRequests.length === 0 && (
-                  <tr><td colSpan={4} className="text-center py-4 text-muted-foreground">Aucune demande en attente.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </Card>
 
-      {/* New Driver Request Form Dialog */}
+      {/* New Vehicle Form Dialog */}
       <Dialog open={showRequestForm} onOpenChange={setShowRequestForm}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
-              <UserPlus className="h-5 w-5" />
-              Nouvelle demande de conducteur et véhicule
+              <Car className="h-5 w-5" />
+              Nouveau véhicule
             </DialogTitle>
-            <div className="flex items-center gap-2 mt-2">
-              {municipalityAPIStatus === 'checking' && (
-                <div className="flex items-center gap-1 text-yellow-600">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span className="text-xs">Vérification des données...</span>
-                </div>
-              )}
-              {municipalityAPIStatus === 'available' && (
-                <div className="flex items-center gap-1 text-green-600">
-                  <CheckCircle2 className="h-3 w-3" />
-                  <span className="text-xs">API des municipalités tunisiennes active</span>
-                </div>
-              )}
-              {municipalityAPIStatus === 'unavailable' && (
-                <div className="flex items-center gap-1 text-orange-600">
-                  <AlertCircle className="h-3 w-3" />
-                  <span className="text-xs">Utilisation des données locales</span>
-                </div>
-              )}
-            </div>
           </DialogHeader>
           
           <form onSubmit={handleSubmitRequest} className="space-y-6">
-            {/* Driver Information Section */}
-            <div className="bg-blue-50 dark:bg-blue-950 rounded-lg p-4">
-              <h3 className="flex items-center gap-2 font-medium mb-4 text-blue-800 dark:text-blue-200">
-                <Users className="h-4 w-4" />
-                Informations du conducteur
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1 flex items-center gap-1">
-                    <Hash className="h-3 w-3" />
-                    CIN *
-                  </label>
-                  <Input 
-                    name="cin" 
-                    value={form.cin} 
-                    onChange={handleFormChange} 
-                    required 
-                    placeholder="Ex: 12345678"
-                    maxLength={8}
-                  />
-                </div>
-                <div className="flex items-end">
-                  <div className="text-sm text-muted-foreground">
-                    <CheckCircle2 className="h-4 w-4 inline mr-1" />
-                    Origine: Monastir (automatique)
-                </div>
-                </div>
-              </div>
-            </div>
 
             {/* Vehicle Information Section */}
             <div className="bg-purple-50 dark:bg-purple-950 rounded-lg p-4">
@@ -769,7 +617,7 @@ const SupervisorVehicleManagement: React.FC = () => {
 
                   {/* Station Selection Boxes */}
                   <div className="border rounded-lg p-4 min-h-[200px] max-h-[300px] overflow-y-auto bg-gray-50 dark:bg-gray-800">
-                    {stations.length === 0 ? (
+                    {routes.length === 0 ? (
                       <div className="text-center text-gray-500 py-8">
                         <Building className="h-8 w-8 mx-auto mb-2 opacity-50" />
                         Aucune station disponible
@@ -836,7 +684,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                       </div>
                       <div className="text-xs text-blue-600 dark:text-blue-300 mt-1">
                         {form.authorizedStationIds.map(id => {
-                          const station = stations.find(s => s.id === id);
+                          const station = routes.find(r => r.stationId === id);
                           return station?.name;
                         }).join(', ')}
                       </div>
@@ -948,7 +796,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                             <span className="font-medium">Destination par défaut sélectionnée</span>
                           </div>
                           <div className="text-xs text-green-600 dark:text-green-300 mt-1">
-                            {stations.find(s => s.id === form.defaultDestinationId)?.name}
+                            {routes.find(r => r.stationId === form.defaultDestinationId)?.stationName}
                           </div>
                         </div>
                       )}
@@ -1067,7 +915,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                   <div className="font-semibold text-zinc-700 dark:text-zinc-200 mb-1">Conducteur</div>
                   {vehicleDetails.driver ? (
                     <div className="grid grid-cols-2 gap-2">
-                      <div><span className="text-xs text-muted-foreground">CIN</span><br /><span className="font-mono">{vehicleDetails.driver.cin}</span></div>
+                      <div><span className="text-xs text-muted-foreground">Plaque</span><br /><span className="font-mono">{vehicleDetails.licensePlate}</span></div>
                       <div><span className="text-xs text-muted-foreground">Statut du compte</span><br />{vehicleDetails.driver.accountStatus}</div>
                     </div>
                   ) : (

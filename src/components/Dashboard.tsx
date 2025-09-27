@@ -12,7 +12,7 @@ const Dashboard: React.FC = () => {
     isLoading,
     error,
     refreshData,
-    isWebSocketConnected,
+    isSocketConnected,
     isRealTimeEnabled,
     toggleRealTime,
   } = useDashboard();
@@ -42,7 +42,7 @@ const Dashboard: React.FC = () => {
         <h1 className="text-3xl font-bold">Dashboard</h1>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            {isWebSocketConnected ? (
+            {isSocketConnected ? (
               <div className="flex items-center gap-1 text-green-500">
                 <SignalHigh className="h-5 w-5" />
                 <Activity className="h-4 w-4 animate-pulse" />
@@ -141,7 +141,7 @@ const Dashboard: React.FC = () => {
           {/* Queues Section */}
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Active Queues</h2>
-            {isWebSocketConnected && (
+            {isSocketConnected && (
               <Badge variant="outline" className="bg-green-50 text-green-700 flex items-center gap-1">
                 <Activity className="h-3 w-3 animate-pulse" />
                 <span>Live</span>
@@ -172,9 +172,7 @@ const Dashboard: React.FC = () => {
                               {queue.availableSeats} seats
                             </Badge>
                           </div>
-                          <div className="text-sm text-muted-foreground">
-                            CIN: {queue.vehicle.driver.cin} - {formatCurrency(queue.basePrice)}
-                          </div>
+                        
                           <div className="text-xs text-muted-foreground">
                             Position: {queue.queuePosition}
                           </div>
@@ -190,7 +188,7 @@ const Dashboard: React.FC = () => {
           {/* Recent Bookings */}
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Recent Bookings</h2>
-            {isWebSocketConnected && (
+            {isSocketConnected && (
               <Badge variant="outline" className="bg-green-50 text-green-700 flex items-center gap-1">
                 <Activity className="h-3 w-3 animate-pulse" />
                 <span>Live</span>
@@ -249,7 +247,7 @@ const Dashboard: React.FC = () => {
 
           <div className="mt-4 text-right">
             <p className="text-xs text-muted-foreground flex items-center justify-end gap-1">
-              {isWebSocketConnected && <Activity className="h-3 w-3 text-green-500 animate-pulse" />}
+              {isSocketConnected && <Activity className="h-3 w-3 text-green-500 animate-pulse" />}
               Last updated: {new Date(dashboardData.timestamp).toLocaleString()}
             </p>
           </div>

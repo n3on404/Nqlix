@@ -42,8 +42,9 @@ export default function Layout() {
   const selectedClass = "text-primary bg-primary/10";
   const defaultClass = "w-5 h-5";
 
-  // Check if user is supervisor
+  // Check if user is supervisor or admin
   const isSupervisor = currentStaff?.role === 'SUPERVISOR';
+  const isAdmin = currentStaff?.role === 'ADMIN';
 
   // Toggle sidebar
   const toggleSidebar = () => {
@@ -66,7 +67,14 @@ export default function Layout() {
     { path: "/station-config", icon: Settings, label: "Configuration" },
   ];
 
-  const navItems = (isSupervisorMode && isSupervisor) ? supervisorNavItems : regularNavItems;
+  const adminNavItems = [
+    ...supervisorNavItems, // Admin gets all supervisor screens
+    // Additional admin-only features can be added here in the future
+  ];
+
+  const navItems = (isSupervisorMode && (isSupervisor || isAdmin)) 
+    ? (isAdmin ? adminNavItems : supervisorNavItems) 
+    : regularNavItems;
 
   const handleLogout = () => {
     logout();
@@ -274,6 +282,9 @@ export default function Layout() {
       
       {/* Keyboard Shortcuts Help */}
       <KeyboardShortcutsHelp />
+      
+      {/*<SocketMonitor />*/}
+      
     </div>
   );
 }

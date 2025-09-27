@@ -3,7 +3,6 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use reqwest::Client;
 use std::time::Duration;
-use std::env;
 use std::fs;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -291,7 +290,7 @@ impl PrinterService {
         // Try to get staff from local node API
         // First, we need to get the current staff from the session
         // Since we can't access localStorage directly from Rust, we'll try to get it from the API
-        let base_url = "http://127.0.0.1:3001"; // Default local node URL
+        let base_url = "http://192.168.192.100:3001"; // Default local node URL
         
         // Try to get current staff from the API
         let response = client
@@ -365,6 +364,118 @@ impl PrinterService {
         }
     }
 
+    pub async fn test_connection_manual(&self, ip: &str, port: u16) -> Result<PrinterStatus, String> {
+        // Create a temporary printer config for testing
+        let test_printer = PrinterConfig {
+            id: "test_printer".to_string(),
+            name: "Test Printer".to_string(),
+            ip: ip.to_string(),
+            port,
+            width: 48,
+            timeout: 5000,
+            model: "TM-T20X".to_string(),
+            enabled: true,
+            is_default: false,
+        };
+        
+        // Create a compact test ticket script
+        let script_content = format!(
+            r#"
+const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+
+async function printTestTicket() {{
+    try {{
+        const printer = new ThermalPrinter({{
+            type: PrinterTypes.EPSON,
+            width: {},
+            interface: 'tcp://{}:{}',
+            characterSet: CharacterSet.PC852_LATIN2,
+            removeSpecialCharacters: false,
+            lineCharacter: "=",
+            breakLine: BreakLine.WORD,
+            options: {{
+                timeout: {},
+                connectionTimeout: 10000
+            }}
+        }});
+
+        console.log('🖨️ [NODE DEBUG] Testing printer connection...');
+        const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
+        if (!isConnected) {{
+            console.error('🖨️ [NODE DEBUG] Printer connection failed');
+            throw new Error('Printer not connected');
+        }}
+        console.log('🖨️ [NODE DEBUG] Printer connection successful');
+
+        // Simple test ticket
+        printer.alignCenter();
+        printer.bold(true);
+        printer.println("TEST IMPRIMANTE");
+        printer.bold(false);
+        printer.drawLine();
+        
+        printer.alignLeft();
+        printer.println("IP: {}");
+        printer.println("Port: {}");
+        printer.println("Status: OK");
+        
+        printer.cut();
+        await printer.execute();
+        
+    }} catch (error) {{
+        console.error('Test failed:', error.message);
+        process.exit(1);
+    }}
+}}
+
+printTestTicket();
+"#,
+            test_printer.width,
+            test_printer.ip,
+            test_printer.port,
+            test_printer.timeout,
+            test_printer.ip,
+            test_printer.port
+        );
+
+        // Write script to temporary file
+        let script_path = format!("temp_test_{}.cjs", uuid::Uuid::new_v4());
+        std::fs::write(&script_path, script_content)
+            .map_err(|e| format!("Failed to write test script: {}", e))?;
+
+        // Execute the script
+        let output = Command::new("node")
+            .arg(&script_path)
+            .output()
+            .map_err(|e| format!("Failed to execute test script: {}", e))?;
+
+        // Clean up temporary file
+        let _ = std::fs::remove_file(&script_path);
+
+        match output.status.success() {
+            true => Ok(PrinterStatus {
+                connected: true,
+                error: None,
+            }),
+            false => Ok(PrinterStatus {
+                connected: false,
+                error: Some(format!(
+                    "Test failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )),
+            }),
+        }
+    }
+
+    pub fn update_config_manual(&self, ip: &str, port: u16, enabled: bool) -> Result<(), String> {
+        let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        config.ip = ip.to_string();
+        config.port = port;
+        config.enabled = enabled;
+        Ok(())
+    }
+
     pub async fn execute_print_job(&self, job: PrintJob) -> Result<String, String> {
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
@@ -376,7 +487,7 @@ impl PrinterService {
         let script_content = self.create_print_script(printer, &job)?;
         
         // Write script to temporary file
-        let script_path = format!("temp_print_{}.js", uuid::Uuid::new_v4());
+        let script_path = format!("temp_print_{}.cjs", uuid::Uuid::new_v4());
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write script: {}", e))?;
 
@@ -564,14 +675,19 @@ async function printQR() {{
             lineCharacter: "=",
             breakLine: BreakLine.WORD,
             options: {{
-                timeout: {}
+                timeout: {},
+                connectionTimeout: 10000
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Testing printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
+            console.error('🖨️ [NODE DEBUG] Printer connection failed');
             throw new Error('Printer not connected');
         }}
+        console.log('🖨️ [NODE DEBUG] Printer connection successful');
 
         printer.alignCenter();
         printer.printQR("{}", {{
@@ -599,7 +715,7 @@ printQR();
             data.replace('"', r#"\""#)
         );
 
-        let script_path = format!("temp_qr_{}.js", uuid::Uuid::new_v4());
+        let script_path = format!("temp_qr_{}.cjs", uuid::Uuid::new_v4());
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write QR script: {}", e))?;
 
@@ -639,14 +755,19 @@ async function printWithLogo() {{
             lineCharacter: "=",
             breakLine: BreakLine.WORD,
             options: {{
-                timeout: {}
+                timeout: {},
+                connectionTimeout: 10000
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Testing printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
+            console.error('🖨️ [NODE DEBUG] Printer connection failed');
             throw new Error('Printer not connected');
         }}
+        console.log('🖨️ [NODE DEBUG] Printer connection successful');
 
         // Print logo centered at the top if path is provided
         if ("{}") {{
@@ -691,7 +812,7 @@ printWithLogo();
             content.replace('"', r#"\""#)
         );
 
-        let script_path = format!("temp_logo_{}.js", uuid::Uuid::new_v4());
+        let script_path = format!("temp_logo_{}.cjs", uuid::Uuid::new_v4());
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write logo script: {}", e))?;
 
@@ -731,14 +852,19 @@ async function printStandardTicket() {{
             lineCharacter: "=",
             breakLine: BreakLine.WORD,
             options: {{
-                timeout: {}
+                timeout: {},
+                connectionTimeout: 10000
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Testing printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
+            console.error('🖨️ [NODE DEBUG] Printer connection failed');
             throw new Error('Printer not connected');
         }}
+        console.log('🖨️ [NODE DEBUG] Printer connection successful');
 
         // Print logo centered at the top
         printer.alignCenter();
@@ -785,7 +911,7 @@ printStandardTicket();
             content.replace('"', r#"\""#)
         );
 
-        let script_path = format!("temp_standard_{}.js", uuid::Uuid::new_v4());
+        let script_path = format!("temp_standard_{}.cjs", uuid::Uuid::new_v4());
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write standard ticket script: {}", e))?;
 
@@ -852,37 +978,41 @@ async function printBookingTicket() {{
             lineCharacter: "=",
             breakLine: BreakLine.WORD,
             options: {{
-                timeout: {}
+                timeout: {},
+                connectionTimeout: 10000
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Testing printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
+            console.error('🖨️ [NODE DEBUG] Printer connection failed');
             throw new Error('Printer not connected');
         }}
+        console.log('🖨️ [NODE DEBUG] Printer connection successful');
 
-        // Print logo centered at the top
+        // Compact header: Logo centered above company name
+        console.log('🖨️ [NODE DEBUG] Printing compact header...');
         printer.alignCenter();
         try {{
             await printer.printImage("./icons/ste_260.png");
         }} catch (logoError) {{
             console.log('Logo not found, continuing without logo');
         }}
-
-        // Company header
+        
         printer.alignCenter();
         printer.bold(true);
         printer.setTextNormal();
         printer.println("STE Dhraiff Services Transport");
         printer.bold(false);
-        printer.drawLine();
         
-        // Ticket type header
+        // Compact ticket type
         printer.alignCenter();
         printer.bold(true);
-        printer.println("TICKET DE RÉSERVATION");
+        printer.setTextNormal();
+        printer.println("RÉSERVATION");
         printer.bold(false);
-        printer.drawLine();
         
         // Content
         const bookingContent = `{}`;
@@ -896,11 +1026,9 @@ async function printBookingTicket() {{
         printer.alignLeft();
         printer.println(bookingContent);
         
-        // Footer
-        printer.drawLine();
+        // Minimal footer
         printer.alignCenter();
         printer.println("Date: " + new Date().toLocaleString('fr-FR'));
-        printer.println("Merci de votre confiance!");
         
         // Staff information in bottom right corner
         printer.alignRight();
@@ -992,9 +1120,23 @@ printBookingTicket();
     }
 
     pub async fn print_talon(&self, talon_data: String, _staff_name: Option<String>) -> Result<String, String> {
+        println!("🖨️ [RUST DEBUG] Starting talon print...");
+        println!("🖨️ [RUST DEBUG] Talon data received: {}", talon_data);
+        println!("🖨️ [RUST DEBUG] Staff name: {:?}", _staff_name);
+        
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
+        println!("🖨️ [RUST DEBUG] Printer config: IP={}, Port={}, Width={}, Timeout={}", 
+                 printer.ip, printer.port, printer.width, printer.timeout);
         
+        // Properly escape the talon data for JavaScript
+        let escaped_talon_data = talon_data
+            .replace('\\', r"\\")
+            .replace('"', r#"\""#)
+            .replace('\n', r"\n")
+            .replace('\r', r"\r")
+            .replace('\t', r"\t");
+
         let script_content = format!(
             r#"
 const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
@@ -1010,18 +1152,23 @@ async function printTalon() {{
             lineCharacter: "=",
             breakLine: BreakLine.WORD,
             options: {{
-                timeout: {}
+                timeout: {},
+                connectionTimeout: 10000
             }}
         }});
 
+        console.log('🖨️ [NODE DEBUG] Testing printer connection...');
         const isConnected = await printer.isPrinterConnected();
+        console.log('🖨️ [NODE DEBUG] Printer connected:', isConnected);
         if (!isConnected) {{
+            console.error('🖨️ [NODE DEBUG] Printer connection failed');
             throw new Error('Printer not connected');
         }}
+        console.log('🖨️ [NODE DEBUG] Printer connection successful');
 
         // Talon content
         printer.alignLeft();
-        printer.println("{}");
+        printer.println(`{}`);
 
         // Cut the paper to separate the talon
         printer.cut();
@@ -1041,13 +1188,16 @@ printTalon();
             printer.ip,
             printer.port,
             printer.timeout,
-            talon_data.replace('"', r#"\""#)
+            escaped_talon_data
         );
 
-        let script_path = format!("temp_talon_{}.js", uuid::Uuid::new_v4());
+        let script_path = format!("temp_talon_{}.cjs", uuid::Uuid::new_v4());
+        println!("🖨️ [RUST DEBUG] Writing talon script to: {}", script_path);
+        
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write talon script: {}", e))?;
 
+        println!("🖨️ [RUST DEBUG] Executing Node.js talon script...");
         let output = Command::new("node")
             .arg(&script_path)
             .output()
@@ -1055,9 +1205,16 @@ printTalon();
 
         let _ = std::fs::remove_file(&script_path);
 
+        println!("🖨️ [RUST DEBUG] Talon script execution completed");
+        println!("🖨️ [RUST DEBUG] Exit status: {:?}", output.status);
+        println!("🖨️ [RUST DEBUG] Stdout: {}", String::from_utf8_lossy(&output.stdout));
+        println!("🖨️ [RUST DEBUG] Stderr: {}", String::from_utf8_lossy(&output.stderr));
+
         if output.status.success() {
+            println!("✅ Talon printed successfully");
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
+            println!("❌ Talon print failed!");
             Err(format!(
                 "Talon print failed: {}",
                 String::from_utf8_lossy(&output.stderr)
@@ -1479,66 +1636,47 @@ async function printDayPassTicket() {{
             throw new Error('Printer not connected');
         }}
 
-        // Print logo centered at the top
-        console.log('🖨️ [NODE DEBUG] Printing logo...');
+        // Compact header: Logo centered above company name
+        console.log('🖨️ [NODE DEBUG] Printing compact header...');
         printer.alignCenter();
         try {{
             await printer.printImage("./icons/ste_260.png");
-            console.log('🖨️ [NODE DEBUG] Logo printed successfully');
         }} catch (logoError) {{
-            console.log('🖨️ [NODE DEBUG] Logo not found, continuing without logo:', logoError.message);
+            console.log('Logo not found, continuing without logo');
         }}
-
-        // Company header
-        console.log('🖨️ [NODE DEBUG] Printing company header...');
+        
         printer.alignCenter();
         printer.bold(true);
         printer.setTextNormal();
         printer.println("STE Dhraiff Services Transport");
         printer.bold(false);
-        printer.drawLine();
         
-        // Ticket type header
-        console.log('🖨️ [NODE DEBUG] Printing ticket type header...');
+        // Compact ticket type
         printer.alignCenter();
         printer.bold(true);
-        printer.setTextDoubleHeight();
+        printer.setTextNormal();
         printer.println("PASS JOURNALIER");
         printer.bold(false);
-        printer.drawLine();
         
-        // Content
-        const dayPassContent = `{}`;
-        console.log('🖨️ [NODE DEBUG] Printing day pass content:', dayPassContent);
+        // Content - Parse JSON and format properly
+        const dayPassData = JSON.parse(`{}`);
+        console.log('🖨️ [NODE DEBUG] Printing day pass content:', dayPassData);
+        
         printer.alignLeft();
-        printer.println(dayPassContent);
+        printer.println("Plaque: " + dayPassData.licensePlate);
+        printer.println("Montant: " + dayPassData.amount + " TND");
+        printer.println("Date d'achat: " + dayPassData.purchaseDate);
+        printer.println("Valide pour: " + dayPassData.validFor);
+        printer.println("Destination: " + dayPassData.destinationName);
         
-        // Footer
-        console.log('🖨️ [NODE DEBUG] Printing footer...');
-        printer.drawLine();
+        // Minimal footer
         printer.alignCenter();
         printer.println("Date: " + new Date().toLocaleString('fr-FR'));
-        printer.println("Valide pour la journée");
-        printer.println("Merci de votre confiance!");
         
         // Staff information in bottom right corner
-        console.log('🖨️ [NODE DEBUG] Printing staff footer...');
         printer.alignRight();
         printer.println("{}");
 
-        // Barcode at bottom
-        console.log('🖨️ [NODE DEBUG] Extracting day pass number for barcode...');
-        const dayPassNumMatch = dayPassContent.match(/N°\s*Pass:\s*([\w-]+)/);
-        const dayPassNumber = dayPassNumMatch ? dayPassNumMatch[1] : null;
-        console.log('🖨️ [NODE DEBUG] Day pass number found:', dayPassNumber);
-        if (dayPassNumber) {{
-            console.log('🖨️ [NODE DEBUG] Printing barcode...');
-            printer.alignCenter();
-            printer.code128(dayPassNumber);
-            printer.println(dayPassNumber);
-        }} else {{
-            console.log('🖨️ [NODE DEBUG] No day pass number found, skipping barcode');
-        }}
         printer.cut();
         
         console.log('🖨️ [NODE DEBUG] Executing print job...');
@@ -1642,50 +1780,67 @@ async function printExitPassTicket() {{
             throw new Error('Printer not connected');
         }}
 
-        // Print logo centered at the top
-        console.log('🖨️ [NODE DEBUG] Printing logo...');
+        // Compact header: Logo centered above company name
+        console.log('🖨️ [NODE DEBUG] Printing compact header...');
         printer.alignCenter();
         try {{
             await printer.printImage("./icons/ste_260.png");
-            console.log('🖨️ [NODE DEBUG] Logo printed successfully');
         }} catch (logoError) {{
-            console.log('🖨️ [NODE DEBUG] Logo not found, continuing without logo:', logoError.message);
+            console.log('Logo not found, continuing without logo');
         }}
-
-        // Company header
-        console.log('🖨️ [NODE DEBUG] Printing company header...');
+        
         printer.alignCenter();
         printer.bold(true);
         printer.setTextNormal();
         printer.println("STE Dhraiff Services Transport");
         printer.bold(false);
-        printer.drawLine();
         
-        // Ticket type header
-        console.log('🖨️ [NODE DEBUG] Printing ticket type header...');
+        // Compact ticket type
         printer.alignCenter();
         printer.bold(true);
-        printer.setTextDoubleHeight();
+        printer.setTextNormal();
         printer.println("PASS DE SORTIE");
         printer.bold(false);
-        printer.drawLine();
         
-        // Content
-        const exitPassContent = `{}`;
-        console.log('🖨️ [NODE DEBUG] Printing exit pass content:', exitPassContent);
+        // Content - Parse JSON and format properly
+        const exitPassData = JSON.parse(`{}`);
+        console.log('🖨️ [NODE DEBUG] Exit pass data:', exitPassData);
+        
         printer.alignLeft();
-        printer.println(exitPassContent);
         
-        // Footer
-        console.log('🖨️ [NODE DEBUG] Printing footer...');
-        printer.drawLine();
+        // Current vehicle info
+        printer.println("VÉHICULE ACTUEL:");
+        printer.println("Plaque: " + (exitPassData.licensePlate || 'N/A'));
+        printer.println("Capacité: " + (exitPassData.vehicleCapacity || 8) + " places");
+        printer.println("Heure de sortie: " + new Date(exitPassData.exitTime || new Date()).toLocaleString('fr-FR'));
+        printer.println("");
+        
+        // Previous vehicle info (if exists)
+        if (exitPassData.previousVehicle) {{
+            printer.println("VÉHICULE PRÉCÉDENT:");
+            printer.println("Plaque: " + exitPassData.previousVehicle.licensePlate);
+            printer.println("Heure de sortie: " + new Date(exitPassData.previousVehicle.exitTime).toLocaleString('fr-FR'));
+        }} else {{
+            printer.println("VÉHICULE PRÉCÉDENT:");
+            printer.println("Aucun véhicule précédent aujourd'hui");
+        }}
+        printer.println("");
+        
+        // Destination and pricing
+        printer.println("DESTINATION:");
+        printer.println("Station: " + (exitPassData.stationName || 'N/A'));
+        printer.println("");
+        
+        printer.println("TARIFICATION:");
+        printer.println("Prix par place: " + (exitPassData.basePrice || 0).toFixed(2) + " TND");
+        printer.println("Capacité véhicule: " + (exitPassData.vehicleCapacity || 8) + " places");
+        printer.println("TOTAL À RECEVOIR: " + (exitPassData.totalPrice || 0).toFixed(2) + " TND");
+        
+        // Minimal footer
         printer.alignCenter();
         printer.println("Date: " + new Date().toLocaleString('fr-FR'));
-        printer.println("Véhicule autorisé à partir");
-        printer.println("Merci de votre confiance!");
         
         // Staff information in bottom right corner
-        console.log('🖨️ [NODE DEBUG] Printing staff footer...');
         printer.alignRight();
         printer.println("{}");
 

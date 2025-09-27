@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { useEnhancedMqtt } from './EnhancedMqttProvider';
 import api from '../lib/api';
+import { dbClient } from '../services/dbClient';
 import { useAuth } from './AuthProvider';
 import { useNotifications } from './NotificationProvider';
+import { useMQTT } from '../lib/useMQTT';
 
 interface QueueItem {
   id: string;
@@ -11,6 +12,10 @@ interface QueueItem {
   availableSeats: number;
   basePrice: number;
   estimatedDeparture: string | null;
+  // Extended fields used by UI
+  licensePlate?: string;
+  totalSeats?: number;
+  status?: string;
   vehicle: {
     licensePlate: string;
     driver: {
@@ -46,6 +51,7 @@ interface QueueContextType {
   enterQueue: (licensePlate: string) => Promise<any>;
   exitQueue: (licensePlate: string) => Promise<any>;
   updateVehicleStatus: (licensePlate: string, status: string) => Promise<any>;
+  beginOptimisticSuppression: (opts: { licensePlate: string; durationMs?: number }) => void;
 }
 
 const QueueContext = createContext<QueueContextType>({
@@ -61,6 +67,7 @@ const QueueContext = createContext<QueueContextType>({
   enterQueue: async () => ({}),
   exitQueue: async () => ({}),
   updateVehicleStatus: async () => ({}),
+  beginOptimisticSuppression: () => {},
 });
 
 export const useQueue = () => {
@@ -81,10 +88,10 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const { mqttClient, isConnected: mqttConnected, isAuthenticated: mqttAuthenticated } = useEnhancedMqtt();
   const [lastManualRefresh, setLastManualRefresh] = useState<number>(0);
   const { isAuthenticated } = useAuth();
   const { addNotification } = useNotifications();
+  const [suppressedPlates, setSuppressedPlates] = useState<Record<string, number>>({});
   
   // Memoize refreshQueues to prevent unnecessary re-renders
   const refreshQueues = useCallback(async () => {
@@ -93,72 +100,51 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     setIsLoading(true);
     setError(null);
 
-        try {
-      console.log('🔄 Manual queue refresh requested...');
+    try {
+      console.log('🔄 Manual queue refresh requested (DB)...');
       const refreshTime = Date.now();
       setLastManualRefresh(refreshTime);
 
-      // Always use REST API for manual refresh to ensure fresh data
-      const availableQueuesResponse = await api.getAvailableQueues();
+      // Load summaries directly from DB via Tauri
+      const summaries = await dbClient.getQueueSummaries();
+      const normalizedSummaries = summaries.map((s: any) => ({
+        ...s,
+        destinationName: (s.destinationName || '').toUpperCase(),
+      }));
+      setQueueSummaries(normalizedSummaries);
 
-      if (availableQueuesResponse.success && availableQueuesResponse.data) {
-        // Normalize queueSummaries
-        const normalizedSummaries = availableQueuesResponse.data.map((summary: any) => ({
-          ...summary,
-          destinationName: summary.destinationName?.toUpperCase() || summary.destinationName
-        }));
-        setQueueSummaries(normalizedSummaries);
-        console.log('✅ Queue summaries updated:', normalizedSummaries.length, 'destinations');
-
-        // Fetch detailed queue data for each destination
-        const queueDetails: Record<string, any[]> = {};
-        for (const summary of normalizedSummaries) {
-          if (summary.totalVehicles > 0) {
-            try {
-              const detailResponse = await api.getQueueByDestination(summary.destinationId);
-              if (detailResponse.success && detailResponse.data) {
-                queueDetails[summary.destinationName] = detailResponse.data.map((item: any) => ({
-                  ...item,
-                  destinationName: item.destinationName?.toUpperCase() || summary.destinationName
-                })).sort((a: any, b: any) => a.queuePosition - b.queuePosition); // Ensure proper sorting
-              } else {
-                queueDetails[summary.destinationName] = [];
-                console.log(`⚠️ No queue details for ${summary.destinationName}`);
-              }
-            } catch (error) {
-              console.error(`❌ Error fetching queue for ${summary.destinationName}:`, error);
-              queueDetails[summary.destinationName] = [];
-            }
-          } else {
+      // Fetch details for destinations with vehicles
+      const queueDetails: Record<string, QueueItem[]> = {};
+      for (const summary of normalizedSummaries) {
+        if ((summary.totalVehicles || 0) > 0) {
+          try {
+            const items = await dbClient.getQueueByDestination(summary.destinationId);
+            queueDetails[summary.destinationName] = (items || [])
+              .map((it) => ({
+                id: it.id,
+                destinationName: (it.destinationName || summary.destinationName).toUpperCase(),
+                queuePosition: it.queuePosition,
+                availableSeats: it.availableSeats,
+                basePrice: it.basePrice,
+                estimatedDeparture: null,
+                licensePlate: it.licensePlate,
+                totalSeats: it.totalSeats,
+                status: it.status,
+                vehicle: {
+                  licensePlate: it.licensePlate,
+                  driver: { cin: '' },
+                },
+              }))
+              .sort((a, b) => a.queuePosition - b.queuePosition);
+          } catch (e) {
+            console.error(`❌ Error fetching queue for ${summary.destinationName}:`, e);
             queueDetails[summary.destinationName] = [];
           }
-        }
-        console.log('✅ Queue details updated:', Object.keys(queueDetails).length, 'destinations');
-        setQueues(queueDetails);
-
-        // Show success feedback
-        if (addNotification) {
-          addNotification({
-            type: 'success',
-            title: 'Données actualisées',
-            message: `${normalizedSummaries.length} destinations mises à jour`,
-            duration: 3000
-          });
-        }
-      } else {
-        const errorMsg = availableQueuesResponse.message || 'Failed to fetch queue data';
-        setError(errorMsg);
-        console.error('❌ Failed to fetch queue data:', errorMsg);
-
-        if (addNotification) {
-          addNotification({
-            type: 'error',
-            title: 'Erreur de mise à jour',
-            message: errorMsg,
-            duration: 5000
-          });
+        } else {
+          queueDetails[summary.destinationName] = [];
         }
       }
+      setQueues(queueDetails);
     } catch (error: any) {
       const errorMsg = error.message || 'An error occurred while fetching queue data';
       setError(errorMsg);
@@ -177,58 +163,36 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     }
   }, [isAuthenticated, addNotification]);
   
-  // Initialize MQTT connection and set up event handlers
+  // MQTT integration for real-time updates
+  const { isConnected: mqttConnected, subscribe, unsubscribe } = useMQTT();
+
+  // Normalize destination names consistently
+  const normalizeDestinationName = (name: string) => (name || '').replace(/^STATION /i, '').toUpperCase().trim();
+
+  // Removed local optimistic updates
+
+  // Start temporary suppression for a vehicle to ignore incoming updates that may cause flicker
+  const beginOptimisticSuppression = useCallback((opts: { licensePlate: string; durationMs?: number }) => {
+    const plate = (opts.licensePlate || '').toUpperCase().trim();
+    const duration = Math.max(500, opts.durationMs ?? 2500);
+    const expiry = Date.now() + duration;
+    setSuppressedPlates(prev => ({ ...prev, [plate]: expiry }));
+  }, []);
+
+  // Periodically prune expired suppressions
   useEffect(() => {
-    if (!isAuthenticated || !mqttConnected) {
-      console.log('👤 Not authenticated or MQTT not connected, skipping queue updates setup');
-      return;
-    }
-    
-    console.log('🔌 Setting up MQTT connection for queue updates...');
-    
-    // Set connection state based on MQTT status
-    setIsConnected(mqttConnected && mqttAuthenticated);
-    
-    // Subscribe to queue updates via MQTT
-    if (mqttClient) {
-      mqttClient.subscribeToUpdates(['queue_update', 'vehicle_queue_updated', 'seat_availability_changed'])
-        .then(() => {
-          console.log('✅ Subscribed to MQTT queue updates');
-          setIsConnected(true);
-        })
-        .catch((err: any) => console.error('❌ Failed to subscribe to queue updates:', err));
-      
-      // Listen for queue data updates
-      const handleQueueUpdate = (data: any) => {
-        console.log('� Received MQTT queue data:', data);
-        
-        // Check if we recently had a manual refresh - if so, be more conservative with MQTT updates
-        const now = Date.now();
-        const timeSinceRefresh = now - lastManualRefresh;
-        
-        if (timeSinceRefresh < 2000) { // 2 seconds
-          console.log('🔄 Skipping MQTT queue data due to recent manual refresh');
-          return;
+    const t = setInterval(() => {
+      const now = Date.now();
+      setSuppressedPlates(prev => {
+        const next: Record<string, number> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (v > now) next[k] = v;
         }
-        
-        // Process queue data from MQTT
-        if (data && data.queues) {
-          console.log('📋 Processing queue data from MQTT');
-          setQueues(data.queues);
-          setIsLoading(false);
-          setLastManualRefresh(now);
-        }
-      };
-      
-      mqttClient.on('queue_update', handleQueueUpdate);
-      mqttClient.on('vehicle_queue_updated', handleQueueUpdate);
-      
-      return () => {
-        mqttClient.off('queue_update', handleQueueUpdate);
-        mqttClient.off('vehicle_queue_updated', handleQueueUpdate);
-      };
-    }
-  }, [isAuthenticated, mqttConnected, mqttAuthenticated, mqttClient]);
+        return next;
+      });
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
   
   // Initial data load when authenticated
   useEffect(() => {
@@ -238,82 +202,131 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     }
   }, [isAuthenticated, refreshQueues]);
 
-  // Fallback refresh when WebSocket is not connected
+  // MQTT event handlers for real-time updates
   useEffect(() => {
-    if (!isAuthenticated || isConnected) return;
+    if (!mqttConnected) return;
+    setIsConnected(true);
+
+    const handleQueueUpdate = (data: any) => {
+      try {
+        if (!data || !data.vehicle || !data.vehicle.destinationName) {
+          refreshQueues();
+          return;
+        }
+
+        // Always refresh to get server-truth
+        refreshQueues();
+      } catch (e) {
+        console.warn('⚠️ Incremental queue update failed, falling back to refresh:', e);
+        refreshQueues();
+      }
+    };
     
-    console.log('⏰ WebSocket not connected, setting up fallback refresh');
+    const handleVehicleAddedToQueue = (data: any, topic: string) => {
+      console.log('🚗 QueueProvider: Vehicle added to queue:', data);
+      refreshQueues(); // Refresh all queue data
+    };
+    
+    const handleVehicleRemovedFromQueue = (data: any, topic: string) => {
+      console.log('🚗 QueueProvider: Vehicle removed from queue:', data);
+      refreshQueues(); // Refresh all queue data
+    };
+    
+    const handleVehicleTransferred = (data: any, topic: string) => {
+      console.log('🔄 QueueProvider: Vehicle transferred:', data);
+      refreshQueues(); // Refresh all queue data
+    };
+    
+    // Subscribe to MQTT topics
+    // Seat availability updates: adjust summaries only
+    const handleSeatAvailability = (data: any) => {
+      if (!data || !data.destinationId) return;
+      setQueueSummaries(prev => prev.map(s =>
+        s.destinationId === data.destinationId
+          ? { ...s, // keep counts; this topic doesn't include vehicles count
+              destinationName: normalizeDestinationName(data.destinationName || s.destinationName)
+            }
+          : s
+      ));
+    };
+
+    // Destinations list update: replace summaries where possible
+    const handleDestinationsUpdate = (data: any) => {
+      if (!data || !Array.isArray(data.destinations)) return;
+      const mapped = data.destinations.map((d: any) => ({
+        destinationId: d.destinationId,
+        destinationName: normalizeDestinationName(d.destinationName),
+        totalVehicles: d.vehicleCount || 0,
+        waitingVehicles: 0,
+        loadingVehicles: 0,
+        readyVehicles: 0,
+      }));
+      setQueueSummaries(mapped);
+    };
+
+    subscribe('transport/station/+/queue', handleQueueUpdate);
+    subscribe('transport/route/+/seats', handleSeatAvailability);
+    subscribe('transport/destinations/update', handleDestinationsUpdate);
+    
+    return () => {
+      // Clean up MQTT subscriptions
+      unsubscribe('transport/station/+/queue', handleQueueUpdate);
+      unsubscribe('transport/route/+/seats', handleSeatAvailability);
+      unsubscribe('transport/destinations/update', handleDestinationsUpdate);
+    };
+  }, [mqttConnected, subscribe, unsubscribe, refreshQueues, suppressedPlates]);
+
+  // Mirror MQTT connectivity to context flag
+  useEffect(() => {
+    setIsConnected(!!mqttConnected);
+  }, [mqttConnected]);
+
+  // Fallback refresh when MQTT is not connected
+  useEffect(() => {
+    if (!isAuthenticated || mqttConnected) return;
+    
+    console.log('⏰ MQTT not connected, setting up fallback refresh');
     const intervalId = setInterval(() => {
       refreshQueues();
-    }, 30000); // Refresh every 30 seconds when WebSocket is not available
+    }, 30000); // Refresh every 30 seconds when MQTT is not available
     
     return () => clearInterval(intervalId);
-  }, [isAuthenticated, isConnected, refreshQueues]);
+  }, [isAuthenticated, mqttConnected, refreshQueues]);
   
   const enterQueue = async (licensePlate: string) => {
     try {
-      const response = await api.post('/api/queue/enter', { licensePlate });
-      if (response.success) {
-        const data = response.data as any;
-        
-        // Provide specific feedback for queue moves
-        if (data?.movedFromQueue && data?.previousDestination) {
-          addNotification({
-            type: 'info',
-            title: 'Véhicule déplacé',
-            message: `${licensePlate} déplacé de ${data.previousDestination} vers une nouvelle destination`,
-            duration: 5000
-          });
-        } else if (data?.queueEntry) {
-          addNotification({
-            type: 'success',
-            title: 'Véhicule ajouté',
-            message: `${licensePlate} ajouté à la file pour ${data.queueEntry.destinationName}`,
-            duration: 4000
-          });
-        }
-        
-        // Don't refresh immediately if MQTT is connected (it will update automatically)
-        if (!isConnected) {
-          refreshQueues();
-        }
-      }
-      return response;
+      // Without a destination, just refresh; UI flow uses destination-specific entry
+      await refreshQueues();
+      return { success: true } as any;
     } catch (error) {
       console.error('Error entering queue:', error);
-      return { success: false, message: 'Failed to enter queue' };
+      return { success: false, message: 'Failed to enter queue' } as any;
     }
   };
   
   const exitQueue = async (licensePlate: string) => {
     try {
-      const response = await api.post('/api/queue/exit', { licensePlate });
-      if (response.success) {
-        // Don't refresh immediately if MQTT is connected
-        if (!isConnected) {
-          refreshQueues();
-        }
+      await dbClient.exitQueue(licensePlate);
+      if (!isConnected) {
+        refreshQueues();
       }
-      return response;
+      return { success: true } as any;
     } catch (error) {
       console.error('Error exiting queue:', error);
-      return { success: false, message: 'Failed to exit queue' };
+      return { success: false, message: 'Failed to exit queue' } as any;
     }
   };
   
   const updateVehicleStatus = async (licensePlate: string, status: string) => {
     try {
-      const response = await api.put('/queue/status', { licensePlate, status });
-      if (response.success) {
-        // Don't refresh immediately if MQTT is connected
-        if (!isConnected) {
-          refreshQueues();
-        }
+      await dbClient.updateVehicleStatus(licensePlate, status);
+      if (!isConnected) {
+        refreshQueues();
       }
-      return response;
+      return { success: true } as any;
     } catch (error) {
       console.error('Error updating vehicle status:', error);
-      return { success: false, message: 'Failed to update vehicle status' };
+      return { success: false, message: 'Failed to update vehicle status' } as any;
     }
   };
   
@@ -327,24 +340,33 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     console.log(`🔍 Fetching detailed queue data for destination ID: ${destinationId}`);
 
     try {
-      const response = await api.getQueueByDestination(destinationId);
-      console.log(`📡 Response for ${destinationId}:`, response);
+      const items = await dbClient.getQueueByDestination(destinationId);
+      // Find the destination name from the summaries
+      const summary = queueSummaries.find(s => s.destinationId === destinationId);
 
-      if (response.success && response.data) {
-        // Find the destination name from the summaries
-        const summary = queueSummaries.find(s => s.destinationId === destinationId);
-
-        if (summary) {
-          setQueues(prev => ({
-            ...prev,
-            [summary.destinationName]: response.data
-          }));
-          console.log(`✅ Fetched queue data for ${summary.destinationName}: ${response.data.length} vehicles`);
-        } else {
-          console.error(`❌ Could not find summary for destination ID ${destinationId}`);
-        }
+      if (summary) {
+        const mapped: QueueItem[] = (items || []).map((it) => ({
+          id: it.id,
+          destinationName: (it.destinationName || summary.destinationName).toUpperCase(),
+          queuePosition: it.queuePosition,
+          availableSeats: it.availableSeats,
+          basePrice: it.basePrice,
+          estimatedDeparture: null,
+          licensePlate: it.licensePlate,
+          totalSeats: it.totalSeats,
+          status: it.status,
+          vehicle: {
+            licensePlate: it.licensePlate,
+            driver: { cin: '' },
+          },
+        }));
+        setQueues(prev => ({
+          ...prev,
+          [summary.destinationName]: mapped,
+        }));
+        console.log(`✅ Fetched queue data for ${summary.destinationName}: ${items.length} vehicles`);
       } else {
-        console.error(`❌ Failed to fetch queue for destination ${destinationId}:`, response.message);
+        console.error(`❌ Could not find summary for destination ID ${destinationId}`);
       }
     } catch (error) {
       console.error(`❌ Error fetching queue for destination ${destinationId}:`, error);
@@ -366,6 +388,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
         enterQueue,
         exitQueue,
         updateVehicleStatus,
+        beginOptimisticSuppression,
       }}
     >
       {children}

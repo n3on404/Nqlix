@@ -4,10 +4,8 @@ import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { 
-  MapPin, 
   Clock, 
   Save, 
-  Building,
   Settings,
   Loader2,
   Globe,
@@ -199,14 +197,21 @@ export default function StationConfiguration() {
     try {
       setIsSaving(true);
       
+      if (!originalConfig) {
+        toast.error('Configuration originale non trouvée');
+        return;
+      }
+      
+      // Only send the fields that are being edited (operating hours and service fee)
+      // Keep the existing station information from the original config
       const response = await api.updateStationConfig({
-        name: config.name,
-        governorate: config.governorate,
-        delegation: config.delegation,
-        address: config.address,
+        name: originalConfig.name,
+        governorate: originalConfig.governorate,
+        delegation: originalConfig.delegation,
+        address: originalConfig.address,
         operatingHours: config.operatingHours,
         serviceFee: config.serviceFee,
-        isOperational: config.isOperational
+        isOperational: originalConfig.isOperational
       });
       
       if (response.success) {
@@ -243,14 +248,9 @@ export default function StationConfiguration() {
   const hasChanges = () => {
     if (!originalConfig) return false;
     return (
-      config.name !== originalConfig.name ||
-      config.governorate !== originalConfig.governorate ||
-      config.delegation !== originalConfig.delegation ||
-      config.address !== originalConfig.address ||
       config.operatingHours.openingTime !== originalConfig.operatingHours.openingTime ||
       config.operatingHours.closingTime !== originalConfig.operatingHours.closingTime ||
-      config.serviceFee !== originalConfig.serviceFee ||
-      config.isOperational !== originalConfig.isOperational
+      config.serviceFee !== originalConfig.serviceFee
     );
   };
 
@@ -314,15 +314,16 @@ export default function StationConfiguration() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Station Information Card */}
+      <div className="grid grid-cols-1 gap-6">
+
+        {/* Operating Hours Card */}
         <Card className="p-6">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center">
-                <Building className="h-5 w-5 text-white" />
+              <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center">
+                <Clock className="h-5 w-5 text-white" />
               </div>
-              <h2 className="text-xl font-semibold">Information de la station</h2>
+              <h2 className="text-xl font-semibold">Heures d'ouverture</h2>
             </div>
             {!isEditing && (
               <Button onClick={handleEdit} variant="outline" size="sm">
@@ -330,170 +331,6 @@ export default function StationConfiguration() {
                 Modifier
               </Button>
             )}
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Nom de la station</label>
-              {isEditing ? (
-                <Input
-                  value={config.name}
-                  onChange={(e) => setConfig(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="Entrez le nom de la station"
-                />
-              ) : (
-                <div className="flex items-center space-x-2 p-3 bg-muted rounded-lg">
-                  <MapPin className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{config.name}</span>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2 flex items-center gap-2">
-                <Globe className="h-4 w-4" />
-                Gouvernorat
-                {isEditing && (
-                  <div className="ml-auto">
-                    {municipalityAPIStatus === 'checking' && (
-                      <div className="flex items-center gap-1 text-yellow-600">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        <span className="text-xs">Vérification...</span>
-                      </div>
-                    )}
-                    {municipalityAPIStatus === 'available' && (
-                      <div className="flex items-center gap-1 text-green-600">
-                        <CheckCircle2 className="h-3 w-3" />
-                        <span className="text-xs">API active</span>
-                      </div>
-                    )}
-                    {municipalityAPIStatus === 'unavailable' && (
-                      <div className="flex items-center gap-1 text-orange-600">
-                        <AlertCircle className="h-3 w-3" />
-                        <span className="text-xs">Données locales</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </label>
-              {isEditing ? (
-                <Select
-                  value={config.governorate}
-                  onChange={(e) => handleGovernorateChange(e.target.value)}
-                  options={governorates.map(g => ({ 
-                    value: g.name, 
-                    label: `${g.name}${g.nameAr ? ` (${g.nameAr})` : ''}` 
-                  }))}
-                  placeholder={isLoadingLocations ? "Chargement..." : "Sélectionnez le gouvernorat"}
-                  disabled={isLoadingLocations || governorates.length === 0}
-                />
-              ) : (
-                <div className="p-3 bg-muted rounded-lg">
-                  <span className="font-medium">{config.governorate}</span>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2 flex items-center gap-2">
-                <MapPin className="h-4 w-4" />
-                Délégation
-                {isEditing && isLoadingLocations && (
-                  <div className="ml-auto">
-                    <div className="flex items-center gap-1 text-blue-600">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      <span className="text-xs">Chargement...</span>
-                    </div>
-                  </div>
-                )}
-              </label>
-              {isEditing ? (
-                <Select
-                  value={config.delegation}
-                  onChange={(e) => setConfig(prev => ({ ...prev, delegation: e.target.value }))}
-                  options={delegations.map(d => ({ 
-                    value: d.name, 
-                    label: `${d.name}${d.nameAr ? ` (${d.nameAr})` : ''}` 
-                  }))}
-                  placeholder={
-                    !config.governorate ? "Sélectionnez d'abord le gouvernorat" :
-                    isLoadingLocations ? "Chargement des délégations..." : 
-                    delegations.length === 0 ? "Aucune délégation disponible" :
-                    "Sélectionnez la délégation"
-                  }
-                  disabled={!config.governorate || delegations.length === 0 || isLoadingLocations}
-                />
-              ) : (
-                <div className="p-3 bg-muted rounded-lg">
-                  <span className="font-medium">{config.delegation}</span>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Adresse (Optionnel)</label>
-              {isEditing ? (
-                <Input
-                  value={config.address || ''}
-                  onChange={(e) => setConfig(prev => ({ ...prev, address: e.target.value }))}
-                  placeholder="Entrez l'adresse"
-                />
-              ) : (
-                <div className="p-3 bg-muted rounded-lg">
-                  <span className="text-sm text-muted-foreground">
-                    {config.address || 'Aucune adresse spécifiée'}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Statut opérationnel</label>
-              {isEditing ? (
-                <div className="flex items-center space-x-3">
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="radio"
-                      name="operational"
-                      checked={config.isOperational}
-                      onChange={() => setConfig(prev => ({ ...prev, isOperational: true }))}
-                      className="text-primary focus:ring-primary"
-                    />
-                    <span className="text-sm">Opérationnel</span>
-                  </label>
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="radio"
-                      name="operational"
-                      checked={!config.isOperational}
-                      onChange={() => setConfig(prev => ({ ...prev, isOperational: false }))}
-                      className="text-primary focus:ring-primary"
-                    />
-                    <span className="text-sm">Fermé</span>
-                  </label>
-                </div>
-              ) : (
-                <div className="p-3 bg-muted rounded-lg">
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    config.isOperational 
-                      ? 'bg-green-100 text-green-700' 
-                      : 'bg-red-100 text-red-700'
-                  }`}>
-                    {config.isOperational ? 'Opérationnel' : 'Fermé'}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </Card>
-
-        {/* Operating Hours Card */}
-        <Card className="p-6">
-          <div className="flex items-center space-x-3 mb-6">
-            <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center">
-              <Clock className="h-5 w-5 text-white" />
-            </div>
-            <h2 className="text-xl font-semibold">Heures d'ouverture</h2>
           </div>
 
           <div className="space-y-4">

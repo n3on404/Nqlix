@@ -15,11 +15,10 @@ import {
   Car,
   User,
   Calendar,
-  DollarSign,
   AlertTriangle,
   Printer
 } from 'lucide-react';
-import api from '../lib/api';
+import { dbClient } from '../services/dbClient';
 import { thermalPrinter } from '../services/thermalPrinterService';
 
 interface Driver {
@@ -45,23 +44,35 @@ interface DayPass {
   validUntil: string;
   isActive: boolean;
   isExpired: boolean;
-  driver: {
+  driver?: {
     cin: string;
   };
-  vehicle: {
+  vehicle?: {
     licensePlate: string;
     capacity: number;
   };
-  createdByStaff: {
-    firstName: string;
-    lastName: string;
+  createdByStaff?: {
+    firstName?: string;
+    lastName?: string;
   };
+  createdBy?: string;
+}
+
+interface ExitPass {
+  id: string;
+  vehicleId: string;
+  licensePlate: string;
+  destinationId: string;
+  destinationName: string;
+  currentExitTime: string;
+  createdAt: string;
 }
 
 export default function DayPassPage() {
   const { currentStaff } = useAuth();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [dayPasses, setDayPasses] = useState<DayPass[]>([]);
+  const [exitPasses, setExitPasses] = useState<ExitPass[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -69,62 +80,49 @@ export default function DayPassPage() {
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Fetch drivers without day pass
+  // Fetch drivers without day pass (direct DB)
   const fetchDriversWithoutDayPass = async () => {
     try {
-      console.log('🔍 Fetching drivers without day pass...');
-      let response = await api.get('/api/day-pass/drivers-without-pass');
-      
-      console.log('📊 Drivers response:', response);
-      
-      // Check if the response indicates a route not found error or authentication error
-      if (!response.success && (response.code === 'ROUTE_NOT_FOUND' || response.code === 'INVALID_TOKEN' || response.code === 'UNAUTHORIZED')) {
-        console.log('⚠️ Authenticated endpoint failed, trying public test endpoint...');
-        // Fallback to public test endpoint
-        response = await api.get('/api/public/test-drivers-without-day-pass', false);
-        console.log('📊 Public endpoint response:', response);
-      }
-      
-      if (response.success) {
-        setDrivers(response.data as Driver[]);
-        console.log('✅ Drivers loaded:', response.data);
-      } else {
-        console.error('❌ API Error:', response.message);
-        setError(response.message || 'Erreur lors du chargement des chauffeurs');
-      }
+      const data = await dbClient.getQueuedWithoutDayPass();
+      setDrivers(data as Driver[]);
     } catch (error) {
-      console.error('❌ Error fetching drivers:', error);
       setError('Erreur lors du chargement des chauffeurs');
     }
   };
 
-  // Fetch today's day passes
+  // Fetch today's day passes (direct DB) - only latest per vehicle
   const fetchTodayDayPasses = async () => {
     try {
-      console.log('🔍 Fetching today\'s day passes...');
-      let response = await api.get('/api/day-pass/today');
+      const data = await dbClient.getTodayDayPasses();
+      const allDayPasses = Array.isArray(data) ? data as DayPass[] : [];
       
-      console.log('📊 Day passes response:', response);
+      // Group by vehicle and keep only the latest (first since ordered by purchase_date DESC)
+      const latestDayPassesByVehicle = new Map<string, DayPass>();
       
-      // Check if the response indicates a route not found error or authentication error
-      if (!response.success && (response.code === 'ROUTE_NOT_FOUND' || response.code === 'INVALID_TOKEN' || response.code === 'UNAUTHORIZED')) {
-        console.log('⚠️ Authenticated endpoint failed, skipping day passes fetch...');
-        // For now, just set empty array if authentication fails
-        setDayPasses([]);
-        return;
-      }
+      allDayPasses.forEach(dayPass => {
+        const licensePlate = dayPass.licensePlate;
+        if (!latestDayPassesByVehicle.has(licensePlate)) {
+          latestDayPassesByVehicle.set(licensePlate, dayPass);
+        }
+      });
       
-      if (response.success) {
-        setDayPasses(response.data as DayPass[]);
-        console.log('✅ Day passes loaded:', response.data);
-      } else {
-        console.error('❌ API Error:', response.message);
-        setError(response.message || 'Erreur lors du chargement des passes journaliers');
-      }
+      // Convert map values to array
+      const latestDayPasses = Array.from(latestDayPassesByVehicle.values());
+      setDayPasses(latestDayPasses);
     } catch (error) {
-      console.error('❌ Error fetching day passes:', error);
       setError('Erreur lors du chargement des passes journaliers');
+    }
+  };
+
+  // Fetch today's exit passes (direct DB)
+  const fetchTodayExitPasses = async () => {
+    try {
+      const data = await dbClient.getTodayExitPasses();
+      setExitPasses(Array.isArray(data) ? data as ExitPass[] : []);
+    } catch (error) {
+      setError('Erreur lors du chargement des tickets de sortie');
     }
   };
 
@@ -139,13 +137,8 @@ export default function DayPassPage() {
     setError(null);
 
     try {
-      const response = await api.post('/api/day-pass/purchase', {
-        driverId: driver.id,
-        vehicleId: driver.vehicle.id,
-        licensePlate: driver.vehicle.licensePlate
-      });
-
-      if (response.success) {
+      // For now, purchase remains via printing workflow integrated in queue enter; here we only print
+      {
         setSuccess(`Pass journalier acheté avec succès pour ${driver.vehicle.licensePlate}`);
         setShowPurchaseModal(false);
         setSelectedDriver(null);
@@ -154,7 +147,6 @@ export default function DayPassPage() {
         try {
           const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
             licensePlate: driver.vehicle.licensePlate,
-            driverName: `CIN: ${driver.cin}`,
             amount: 2 // Fixed price for day pass
           });
           
@@ -170,10 +162,9 @@ export default function DayPassPage() {
         // Refresh data
         await Promise.all([
           fetchDriversWithoutDayPass(),
-          fetchTodayDayPasses()
+          fetchTodayDayPasses(),
+          fetchTodayExitPasses()
         ]);
-      } else {
-        setError(response.message || 'Erreur lors de l\'achat du pass journalier');
       }
     } catch (error) {
       console.error('Error purchasing day pass:', error);
@@ -189,7 +180,8 @@ export default function DayPassPage() {
       setIsLoading(true);
       await Promise.all([
         fetchDriversWithoutDayPass(),
-        fetchTodayDayPasses()
+        fetchTodayDayPasses(),
+        fetchTodayExitPasses()
       ]);
       setIsLoading(false);
     };
@@ -199,7 +191,7 @@ export default function DayPassPage() {
 
   // Filter drivers based on search term
   const filteredDrivers = drivers.filter(driver =>
-    driver.cin.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        // Driver CIN removed - no longer supported
     driver.vehicle?.licensePlate.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -233,36 +225,122 @@ export default function DayPassPage() {
   }
 
   return (
-    <div className="min-h-screen bg-muted dark:bg-background p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <Ticket className="h-8 w-8" />
-              Pass Journalier
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-2">
-              Gestion des passes journaliers pour les chauffeurs (2 TND par jour)
-            </p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 p-6">
+      <div className="max-w-7xl mx-auto space-y-8">
+        {/* Modern Header */}
+        <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-8">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="p-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl shadow-lg">
+                <Ticket className="h-8 w-8 text-white" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-slate-800 dark:text-white">
+                  Pass Journalier
+                </h1>
+                <p className="text-slate-600 dark:text-slate-300 mt-1">
+                  Gestion des passes journaliers pour les chauffeurs
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  setIsRefreshing(true);
+                  await Promise.all([
+                    fetchDriversWithoutDayPass(),
+                    fetchTodayDayPasses(),
+                    fetchTodayExitPasses()
+                  ]);
+                  setIsRefreshing(false);
+                }}
+                className="px-6 py-2 border-slate-300 hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-700"
+              >
+                {isRefreshing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Actualisation...
+                  </>
+                ) : (
+                  'Actualiser'
+                )}
+              </Button>
+              <Button
+                onClick={async () => {
+                  try {
+                    await thermalPrinter.reprintLastDayPass();
+                    setSuccess('Le dernier pass journalier a été réimprimé');
+                  } catch (error) {
+                    setError('Impossible de réimprimer le dernier pass journalier');
+                  }
+                }}
+                className="px-6 py-2 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-lg"
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Réimprimer
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Modern Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Chauffeurs sans Pass</p>
+                <p className="text-3xl font-bold text-amber-600 mt-2">{drivers.length}</p>
+                <p className="text-xs text-slate-500 mt-1">En attente</p>
+              </div>
+              <div className="p-3 bg-amber-100 dark:bg-amber-900/20 rounded-xl">
+                <AlertTriangle className="h-6 w-6 text-amber-600" />
+              </div>
+            </div>
           </div>
           
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={async () => {
-                try {
-                  await thermalPrinter.reprintLastDayPass();
-                  setSuccess('Le dernier pass journalier a été réimprimé');
-                } catch (error) {
-                  setError('Impossible de réimprimer le dernier pass journalier');
-                }
-              }}
-              className="text-blue-600 hover:text-blue-700"
-            >
-              <Printer className="h-4 w-4 mr-2" />
-              Réimprimer
-            </Button>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Passes d'Aujourd'hui</p>
+                <p className="text-3xl font-bold text-blue-600 mt-2">{dayPasses.length}</p>
+                <p className="text-xs text-slate-500 mt-1">~ {(dayPasses.length * 2).toFixed(2)} TND</p>
+              </div>
+              <div className="p-3 bg-blue-100 dark:bg-blue-900/20 rounded-xl">
+                <Ticket className="h-6 w-6 text-blue-600" />
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Tickets de Sortie</p>
+                <p className="text-3xl font-bold text-red-600 mt-2">{exitPasses.length}</p>
+                <p className="text-xs text-slate-500 mt-1">Véhicules complets</p>
+              </div>
+              <div className="p-3 bg-red-100 dark:bg-red-900/20 rounded-xl">
+                <Car className="h-6 w-6 text-red-600" />
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Taux d'Activité</p>
+                <p className="text-3xl font-bold text-emerald-600 mt-2">
+                  {dayPasses.length + drivers.length > 0
+                    ? Math.round((dayPasses.length / (dayPasses.length + drivers.length)) * 100)
+                    : 0}%
+                </p>
+                <p className="text-xs text-slate-500 mt-1">Vendus vs en attente</p>
+              </div>
+              <div className="p-3 bg-emerald-100 dark:bg-emerald-900/20 rounded-xl">
+                <CheckCircle className="h-6 w-6 text-emerald-600" />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -297,30 +375,37 @@ export default function DayPassPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Modern Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Drivers Without Day Pass */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-orange-600" />
-                Chauffeurs sans Pass Journalier
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="bg-gradient-to-r from-amber-500 to-orange-500 p-6">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-white/20 rounded-lg">
+                  <AlertTriangle className="h-6 w-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-white">Chauffeurs sans Pass</h3>
+                  <p className="text-amber-100 text-sm">Véhicules en attente</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-6">
               <div className="space-y-4">
                 {/* Search */}
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <Input
                     placeholder="Rechercher par nom, CIN ou plaque..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
+                    className="pl-10 border-slate-300 focus:border-amber-500 focus:ring-amber-500"
                   />
                 </div>
 
                 {/* Drivers List */}
-                <div className="space-y-2 max-h-96 overflow-y-auto">
+                <div className="space-y-3 max-h-80 overflow-y-auto">
                   {filteredDrivers.length === 0 ? (
                     <div className="text-center py-8 text-gray-500">
                       <CheckCircle className="h-12 w-12 mx-auto mb-4 text-green-500" />
@@ -330,16 +415,15 @@ export default function DayPassPage() {
                     filteredDrivers.map((driver) => (
                       <div
                         key={driver.id}
-                        className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg"
+                        className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border hover:shadow-sm transition"
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/20 rounded-full flex items-center justify-center">
-                            <User className="h-5 w-5 text-orange-600" />
+                          <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/20 rounded-full flex items-center justify-center border border-orange-200">
+                            <User className="h-5 w-5 text-orange-700" />
                           </div>
                           <div>
-                            <p className="font-semibold">CIN: {driver.cin}</p>
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                              CIN: {driver.cin}
+                              Véhicule: {driver.vehicle?.licensePlate}
                             </p>
                             {driver.vehicle && (
                               <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -349,6 +433,11 @@ export default function DayPassPage() {
                             )}
                           </div>
                         </div>
+                        <div className="flex items-center gap-3">
+                          <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">Sans Pass</Badge>
+                          {driver.vehicle && (
+                            <span className="text-xs text-muted-foreground">{driver.vehicle.capacity} places</span>
+                          )}
                         <Button
                           onClick={() => {
                             setSelectedDriver(driver);
@@ -361,24 +450,25 @@ export default function DayPassPage() {
                           <Plus className="h-4 w-4 mr-2" />
                           Acheter Pass
                         </Button>
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* Today's Day Passes */}
-          <Card>
-            <CardHeader>
+          <Card className="flex flex-col h-[600px]">
+            <CardHeader className="flex-shrink-0">
               <CardTitle className="flex items-center gap-2">
                 <Calendar className="h-5 w-5 text-blue-600" />
                 Passes Journaliers d'Aujourd'hui
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-96 overflow-y-auto">
+            <CardContent className="flex-1 min-h-0">
+              <div className="space-y-2 h-full overflow-y-auto">
                 {dayPasses.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <Ticket className="h-12 w-12 mx-auto mb-4 text-gray-400" />
@@ -388,7 +478,7 @@ export default function DayPassPage() {
                   dayPasses.map((dayPass) => (
                     <div
                       key={dayPass.id}
-                      className={`p-3 rounded-lg border ${
+                      className={`p-4 rounded-lg border ${
                         dayPass.isExpired
                           ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
                           : dayPass.isActive
@@ -397,26 +487,18 @@ export default function DayPassPage() {
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <p className="font-semibold">
-                            CIN: {dayPass.driver.cin}
-                          </p>
-                          <p className="text-sm text-gray-600 dark:text-gray-400">
-                            <Car className="h-3 w-3 inline mr-1" />
-                            {dayPass.licensePlate}
-                          </p>
-                          <p className="text-sm text-gray-600 dark:text-gray-400">
-                            Acheté par: {dayPass.createdByStaff.firstName} {dayPass.createdByStaff.lastName}
-                          </p>
-                          <p className="text-sm text-gray-600 dark:text-gray-400">
-                            <Clock className="h-3 w-3 inline mr-1" />
-                            {formatTime(dayPass.purchaseDate)}
-                          </p>
+                        <div className="flex items-center gap-3">
+                          <Badge className="bg-white text-gray-900 border">{dayPass.licensePlate}</Badge>
+                          <div className="text-sm text-gray-600 dark:text-gray-400">
+                            Acheté par: {(dayPass.createdByStaff?.firstName || '')} {(dayPass.createdByStaff?.lastName || '')}{(!dayPass.createdByStaff && dayPass.createdBy) ? ` (${dayPass.createdBy})` : ''}
+                            <div className="text-xs mt-1 flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> {formatTime(dayPass.purchaseDate)}
+                            </div>
+                          </div>
                         </div>
                         <div className="flex items-center gap-3">
                           <div className="text-right">
                             <div className="flex items-center gap-2 mb-1">
-                              <DollarSign className="h-4 w-4 text-green-600" />
                               <span className="font-bold text-green-600">{dayPass.price} TND</span>
                             </div>
                             <Badge
@@ -438,19 +520,15 @@ export default function DayPassPage() {
                               Valide jusqu'à {formatTime(dayPass.validUntil)}
                             </p>
                           </div>
-                          
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={async () => {
                               try {
-                                // Format the day pass data for reprinting
                                 const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
                                   licensePlate: dayPass.licensePlate,
-                                  driverName: `CIN: ${dayPass.driver.cin}`,
                                   amount: dayPass.price
                                 });
-                                
                                 const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
                                 await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
                                 setSuccess(`Pass journalier réimprimé pour ${dayPass.licensePlate}`);
@@ -472,46 +550,98 @@ export default function DayPassPage() {
           </Card>
 
           {/* Exit Passes Section */}
-          <Card>
-            <CardHeader>
+          <Card className="flex flex-col h-[600px]">
+            <CardHeader className="flex-shrink-0">
               <CardTitle className="flex items-center gap-2">
                 <Car className="h-5 w-5 text-red-600" />
                 Tickets de Sortie
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-700">
-                  <div className="flex items-center gap-2 mb-2">
-                    <AlertTriangle className="h-4 w-4 text-red-600" />
-                    <span className="font-semibold text-red-800 dark:text-red-200">Véhicules Complets</span>
-                  </div>
-                  <p className="text-sm text-red-600 dark:text-red-300">
-                    Les véhicules avec toutes les places réservées peuvent imprimer leur ticket de sortie.
-                  </p>
+            <CardContent className="flex-1 min-h-0">
+              <div className="space-y-4 h-full flex flex-col">
+                <div className="space-y-2 flex-1 min-h-0 overflow-y-auto">
+                  {exitPasses.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      <Car className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                      <p>Aucun ticket de sortie généré aujourd'hui</p>
+                      <p className="text-sm mt-2">
+                        Les tickets de sortie sont créés automatiquement quand un véhicule devient complet.
+                      </p>
+                    </div>
+                  ) : (
+                    exitPasses.map((exitPass) => (
+                      <div
+                        key={exitPass.id}
+                        className="p-4 rounded-lg border bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <Badge className="bg-white text-gray-900 border">{exitPass.licensePlate}</Badge>
+                            <div className="text-sm text-gray-600 dark:text-gray-400">
+                              <div className="font-medium">{exitPass.destinationName}</div>
+                              <div className="text-xs mt-1 flex items-center gap-1">
+                                <Clock className="h-3 w-3" /> {formatTime(exitPass.currentExitTime)}
+                              </div>
+                              <div className="text-xs mt-1">
+                                Créé: {formatTime(exitPass.createdAt)}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
+                                Véhicule Complet
+                              </Badge>
+                              <p className="text-xs text-gray-500 mt-1">
+                                Sortie: {formatTime(exitPass.currentExitTime)}
+                              </p>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  console.log('🖨️ DEBUG: Reprinting exit pass for:', exitPass.licensePlate);
+                                  
+                                  // Construct exit pass data for reprinting
+                                  const exitPassData = {
+                                    licensePlate: exitPass.licensePlate,
+                                    destinationName: exitPass.destinationName,
+                                    previousLicensePlate: null, // We don't have previous vehicle data in this context
+                                    previousExitTime: null,
+                                    currentExitTime: exitPass.currentExitTime, // Use correct field name
+                                    totalSeats: 8, // Default capacity, could be fetched from vehicle data
+                                    basePricePerSeat: 2.0, // Default price, could be fetched from route data
+                                    totalBasePrice: 16.0 // Default total
+                                  };
+                                  
+                                  console.log('🖨️ DEBUG: Exit pass data for reprint:', exitPassData);
+                                  
+                                  // Format and print the exit pass ticket
+                                  const exitPassTicketData = thermalPrinter.formatExitPassTicketData(exitPassData);
+                                  const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+                                  
+                                  console.log('🖨️ DEBUG: Calling thermal printer...');
+                                  await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+                                  
+                                  setSuccess(`Ticket de sortie réimprimé pour ${exitPass.licensePlate}`);
+                                } catch (error) {
+                                  console.error('❌ Exit pass reprint error:', error);
+                                  setError(`Impossible de réimprimer le ticket de sortie pour ${exitPass.licensePlate}: ${error instanceof Error ? error.message : String(error)}`);
+                                }
+                              }}
+                              className="text-red-600 hover:text-red-700"
+                            >
+                              <Printer className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
 
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  <div className="text-center py-8 text-gray-500">
-                    <Car className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                    <p>Les tickets de sortie sont gérés dans la section Réservation Principale</p>
-                    <p className="text-sm mt-2">
-                      Allez à "Réservation Principale" pour voir les véhicules complets et imprimer les tickets de sortie.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
-                  <h4 className="font-semibold text-blue-800 dark:text-blue-200 mb-2">
-                    Comment ça marche ?
-                  </h4>
-                  <ul className="text-sm text-blue-600 dark:text-blue-300 space-y-1">
-                    <li>• Un véhicule devient complet quand toutes ses places sont réservées</li>
-                    <li>• Le ticket de sortie s'imprime automatiquement</li>
-                    <li>• Une confirmation est requise avant de retirer le véhicule de la file</li>
-                    <li>• Le ticket inclut les informations du véhicule précédent</li>
-                  </ul>
-                </div>
+              
               </div>
             </CardContent>
           </Card>
@@ -526,10 +656,7 @@ export default function DayPassPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
-                  <h3 className="font-semibold mb-2">Chauffeur:</h3>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    CIN: {selectedDriver.cin}
-                  </p>
+                
                   {selectedDriver.vehicle && (
                     <>
                       <h3 className="font-semibold mb-2 mt-3">Véhicule:</h3>

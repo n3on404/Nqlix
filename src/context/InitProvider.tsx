@@ -57,16 +57,13 @@ export const InitProvider: React.FC<InitProviderProps> = ({ children }) => {
     authValid: false,
     printerConnected: false,
     appUpToDate: false,
-    localNodeUrl: getLocalStorage('serverUrl') || '' // Use saved URL or empty string
+    localNodeUrl: 'http://192.168.192.100:3001' // Hardcoded to localhost
   });
 
-  // Initialize API with saved server URL on startup
+  // Initialize API with hardcoded localhost on startup
   useEffect(() => {
-    const savedUrl = getLocalStorage('serverUrl');
-    if (savedUrl) {
-      const baseUrl = savedUrl.replace(/\/api$/, '');
-      api.setConfig({ baseUrl: `${baseUrl}/api` });
-    }
+    // Always use 192.168.192.100:3001 - hardcoded
+    api.setConfig({ baseUrl: 'http://192.168.192.100:3001/api' });
   }, []);
 
   const updateServerUrl = async (url: string): Promise<boolean> => {

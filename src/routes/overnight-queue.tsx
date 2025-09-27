@@ -5,7 +5,6 @@ import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Loader2, Plus, Trash2, Car, Users, MapPin, Clock, AlertCircle, CheckCircle } from 'lucide-react';
 import api from '../lib/api';
-import { getWebSocketClient } from '../lib/websocket';
 import { useAuth } from '../context/AuthProvider';
 
 interface OvernightQueueEntry {
@@ -40,9 +39,14 @@ export default function OvernightQueuePage() {
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
   const [availableVehicles, setAvailableVehicles] = useState<any[]>([]);
   const [isLoadingVehicles, setIsLoadingVehicles] = useState(false);
+  const [showDestinationModal, setShowDestinationModal] = useState(false);
+  const [selectedVehicle, setSelectedVehicle] = useState<string>('');
+  const [selectedVehicleData, setSelectedVehicleData] = useState<any>(null);
+  const [destinations, setDestinations] = useState<any[]>([]);
+  const [selectedDestination, setSelectedDestination] = useState<string>('');
   const { isAuthenticated } = useAuth();
 
-  const wsClient = getWebSocketClient();
+  // Real-time disabled
 
   // Load overnight queues
   const loadOvernightQueues = async () => {
@@ -53,6 +57,7 @@ export default function OvernightQueuePage() {
       const response = await api.getOvernightQueues();
       
       if (response.success && response.data) {
+        // The API returns data grouped by destination, which matches our expected structure
         setQueues(response.data);
       } else {
         setError(response.message || 'Échec du chargement des files de nuit');
@@ -64,33 +69,85 @@ export default function OvernightQueuePage() {
     }
   };
 
+  // Load available destinations for overnight queue
+  const loadDestinations = async () => {
+    try {
+      const response = await api.getAllRoutes();
+      if (response.success && response.data) {
+        // Handle nested response structure
+        const routes = response.data?.data || response.data;
+        // Convert routes to destinations format
+        const destinations = routes.map((route: any) => ({
+          id: route.stationId,
+          name: route.stationName
+        }));
+        setDestinations(destinations);
+      }
+    } catch (error: any) {
+      console.error('Error loading destinations:', error);
+    }
+  };
+
   // Load available vehicles for overnight queue
   const loadAvailableVehicles = async () => {
     try {
       setIsLoadingVehicles(true);
       
       const response = await api.getVehicles();
+      console.log('🔍 Vehicles API response:', response);
       
       if (response.success && response.data) {
-        // Filter vehicles that are active, available, and not in any queue
-        const available = response.data.filter((vehicle: any) => 
+        // Handle nested response structure
+        const vehicles = response.data?.data || response.data;
+        console.log('🔍 Vehicles data:', vehicles);
+        
+        // Filter vehicles that are active, available, not banned, and not in any queue
+        const available = vehicles.filter((vehicle: any) => 
           vehicle.isActive && 
           vehicle.isAvailable && 
-          vehicle.driver?.cin
+          !vehicle.isBanned &&
+          vehicle.licensePlate &&
+          (!vehicle.queueEntries || vehicle.queueEntries.length === 0)
         );
+        console.log('🔍 Available vehicles (not in any queue):', available);
         setAvailableVehicles(available);
+      } else {
+        console.error('🔍 Failed to load vehicles:', response.message);
+        setAvailableVehicles([]);
       }
     } catch (error: any) {
       console.error('Error loading available vehicles:', error);
+      setAvailableVehicles([]);
     } finally {
       setIsLoadingVehicles(false);
     }
   };
 
-  // Add vehicle to overnight queue by CIN
-  const handleAddVehicle = async () => {
-    if (!cin.trim()) {
-      setAddError('Veuillez entrer le CIN du conducteur');
+  // Show destination selection modal
+  const handleVehicleSelection = (licensePlate: string) => {
+    // Find the vehicle data
+    const vehicleData = availableVehicles.find(v => v.licensePlate === licensePlate);
+    if (vehicleData) {
+      setSelectedVehicle(licensePlate);
+      setSelectedVehicleData(vehicleData);
+      
+      // Filter destinations based on vehicle's authorized stations
+      const authorizedDestinations = destinations.filter(dest => 
+        vehicleData.authorizedStations?.some((station: any) => 
+          station.stationId === dest.id || station.stationName === dest.name
+        )
+      );
+      
+      // Update destinations to only show authorized ones
+      setDestinations(authorizedDestinations);
+      setShowDestinationModal(true);
+    }
+  };
+
+  // Add vehicle to overnight queue with selected destination
+  const handleAddVehicleToOvernightQueue = async () => {
+    if (!selectedVehicle || !selectedDestination) {
+      setAddError('Veuillez sélectionner un véhicule et une destination');
       return;
     }
 
@@ -99,11 +156,23 @@ export default function OvernightQueuePage() {
       setAddError(null);
       setAddSuccess(null);
 
-      const response = await api.addVehicleToOvernightQueueByCIN(cin.trim());
+      // Add vehicle to overnight queue with selected destination
+      const response = await api.addVehicleToOvernightQueue({
+        licensePlate: selectedVehicle,
+        destinationId: selectedDestination
+      });
       
       if (response.success) {
         setAddSuccess(response.message || 'Véhicule ajouté avec succès');
         setCin('');
+        setSelectedVehicle('');
+        setSelectedVehicleData(null);
+        setSelectedDestination('');
+        setShowDestinationModal(false);
+        // Reload full destinations list
+        loadDestinations();
+        // Reload available vehicles to remove the added vehicle
+        await loadAvailableVehicles();
         // Reload queues to show the new vehicle
         await loadOvernightQueues();
       } else {
@@ -126,9 +195,11 @@ export default function OvernightQueuePage() {
   // Remove vehicle from overnight queue
   const handleRemoveVehicle = async (licensePlate: string) => {
     try {
-      const response = await api.removeVehicleFromOvernightQueue(licensePlate);
+      const response = await api.removeVehicleFromOvernightQueue({ licensePlate });
       
       if (response.success) {
+        // Reload available vehicles to add the removed vehicle back
+        await loadAvailableVehicles();
         // Reload queues to reflect the removal
         await loadOvernightQueues();
       } else {
@@ -142,52 +213,42 @@ export default function OvernightQueuePage() {
   // Transfer all overnight vehicles to regular queue
   const handleTransferToRegular = async () => {
     try {
-      const response = await api.transferOvernightToRegular();
+      // Get all vehicles in overnight queues and transfer them one by one
+      const allVehicles = Object.values(queues).flat();
+      let successCount = 0;
       
-      if (response.success) {
-        setAddSuccess(response.message || 'Véhicules transférés avec succès');
+      for (const vehicle of allVehicles) {
+        const response = await api.transferOvernightToRegular({ licensePlate: vehicle.licensePlate });
+        if (response.success) {
+          successCount++;
+        }
+      }
+      
+      if (successCount > 0) {
+        setAddSuccess(`${successCount} véhicule(s) transféré(s) avec succès`);
+        // Reload available vehicles to remove transferred vehicles
+        await loadAvailableVehicles();
         // Reload queues to show the transfer
         await loadOvernightQueues();
       } else {
-        setError(response.message || 'Échec du transfert des véhicules');
+        setError('Aucun véhicule transféré');
       }
     } catch (error: any) {
       setError(error.message || 'Une erreur est survenue lors du transfert des véhicules');
     }
   };
 
-  // Setup WebSocket listeners for real-time updates
+  // Initial load and periodic refresh (real-time disabled)
   useEffect(() => {
     if (!isAuthenticated) return;
-
-    const handleOvernightQueueUpdate = (data: any) => {
-      console.log('Received overnight queue update:', data);
-      // Reload queues when we receive an update
-      loadOvernightQueues();
-    };
-
-    const handleQueueUpdate = (data: any) => {
-      console.log('Received queue update:', data);
-      // Reload queues when we receive an update
-      loadOvernightQueues();
-    };
-
-    // Subscribe to overnight queue updates
-    wsClient.subscribe(['overnight_queue', 'queue']).catch(console.error);
-
-    // Listen for updates
-    wsClient.on('overnight_queue_update', handleOvernightQueueUpdate);
-    wsClient.on('queue_update', handleQueueUpdate);
-
-    // Initial load
     loadOvernightQueues();
     loadAvailableVehicles();
-
-    return () => {
-      wsClient.removeListener('overnight_queue_update', handleOvernightQueueUpdate);
-      wsClient.removeListener('queue_update', handleQueueUpdate);
-    };
-  }, [isAuthenticated, wsClient]);
+    loadDestinations();
+    const id = setInterval(() => {
+      loadOvernightQueues();
+    }, 30000);
+    return () => clearInterval(id);
+  }, [isAuthenticated]);
 
   // Clear success message after 3 seconds
   useEffect(() => {
@@ -277,10 +338,10 @@ export default function OvernightQueuePage() {
           <div className="flex gap-4">
             <div className="flex-1">
               <Input 
-                placeholder="Entrez le CIN du conducteur"
+                placeholder="Entrez la plaque d'immatriculation"
                 value={cin}
                 onChange={(e) => setCin(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleAddVehicle()}
+                onKeyPress={(e) => e.key === 'Enter' && cin.trim() && handleVehicleSelection(cin.trim())}
                 disabled={isAddingVehicle}
               />
               {addError && (
@@ -288,7 +349,13 @@ export default function OvernightQueuePage() {
               )}
             </div>
             <Button 
-              onClick={handleAddVehicle} 
+              onClick={() => {
+                if (cin.trim()) {
+                  handleVehicleSelection(cin.trim());
+                } else {
+                  setAddError('Veuillez entrer la plaque d\'immatriculation');
+                }
+              }}
               disabled={isAddingVehicle || !cin.trim()}
             >
               {isAddingVehicle ? (
@@ -326,25 +393,31 @@ export default function OvernightQueuePage() {
                 <div 
                   key={vehicle.id} 
                   className="p-3 border rounded-lg hover:bg-muted/50 cursor-pointer"
-                  onClick={() => setCin(vehicle.driver?.cin || '')}
+                  onClick={() => handleVehicleSelection(vehicle.licensePlate || '')}
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="font-medium">{vehicle.licensePlate}</div>
                       <div className="text-sm text-muted-foreground">
-                        CIN: {vehicle.driver?.cin}
-        </div>
+                        {vehicle.capacity} places
+                      </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-medium">{vehicle.capacity} places</div>
+                      <div className="text-sm font-medium text-blue-600">
+                        Cliquer pour ajouter
+                      </div>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="text-center py-4 text-muted-foreground">
-              Aucun véhicule disponible trouvé
+            <div className="text-center py-8 text-muted-foreground">
+              <Car className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <h3 className="text-lg font-semibold mb-2">Aucun véhicule disponible</h3>
+              <p className="text-sm mb-4">
+                Aucun véhicule n'est disponible pour la file de nuit.
+              </p>
             </div>
           )}
         </CardContent>
@@ -422,7 +495,7 @@ export default function OvernightQueuePage() {
                       <div className="flex items-center gap-4">
                         <div className="text-right">
                           <div className="text-sm font-medium">
-                            CIN: {vehicle.vehicle?.driver?.cin}
+                            Plaque: {vehicle.licensePlate}
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {vehicle.availableSeats}/{vehicle.totalSeats} places
@@ -451,6 +524,86 @@ export default function OvernightQueuePage() {
             </Card>
           ))}
               </div>
+      )}
+
+      {/* Destination Selection Modal */}
+      {showDestinationModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-semibold mb-4">Sélectionner la destination</h3>
+            <p className="text-sm text-muted-foreground mb-2">
+              Véhicule sélectionné: <span className="font-medium">{selectedVehicle}</span>
+            </p>
+            {selectedVehicleData && (
+              <p className="text-xs text-muted-foreground mb-4">
+                Capacité: {selectedVehicleData.capacity} places | 
+                Stations autorisées: {selectedVehicleData.authorizedStations?.length || 0}
+              </p>
+            )}
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">Destination pour la file de nuit</label>
+              {destinations.length > 0 ? (
+                <select
+                  value={selectedDestination}
+                  onChange={(e) => setSelectedDestination(e.target.value)}
+                  className="w-full p-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+                >
+                  <option value="">Sélectionner une destination...</option>
+                  {destinations.map((destination) => (
+                    <option key={destination.id} value={destination.id}>
+                      {destination.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="p-4 border border-yellow-200 bg-yellow-50 dark:bg-yellow-950 dark:border-yellow-800 rounded-md">
+                  <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                    ⚠️ Ce véhicule n'est autorisé pour aucune station. 
+                    Veuillez d'abord autoriser ce véhicule pour des stations dans la gestion des véhicules.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {addError && (
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 rounded-md text-sm">
+                {addError}
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDestinationModal(false);
+                  setSelectedVehicle('');
+                  setSelectedVehicleData(null);
+                  setSelectedDestination('');
+                  setAddError(null);
+                  // Reload full destinations list
+                  loadDestinations();
+                }}
+                disabled={isAddingVehicle}
+              >
+                Annuler
+              </Button>
+              <Button
+                onClick={handleAddVehicleToOvernightQueue}
+                disabled={isAddingVehicle || !selectedDestination || destinations.length === 0}
+              >
+                {isAddingVehicle ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Ajout en cours...
+                  </>
+                ) : (
+                  'Ajouter à la file de nuit'
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

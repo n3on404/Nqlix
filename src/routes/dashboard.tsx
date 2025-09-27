@@ -13,7 +13,8 @@ import {
   Truck, Navigation, Ticket, Zap, Eye, EyeOff, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import api from '../lib/api';
-import { getWebSocketClient, ConnectionState } from '../lib/websocket';
+import { dbClient } from '../services/dbClient';
+// Real-time disabled
 import { SystemStatus } from '../components/SystemStatus';
 
 interface QueueData {
@@ -88,15 +89,16 @@ interface DashboardStats {
 export default function Dashboard() {
   const { currentStaff } = useAuth();
   const { isSupervisorMode } = useSupervisorMode();
-  const { isWebSocketConnected } = useDashboard();
+  const { isSocketConnected } = useDashboard();
   
   const isSupervisor = currentStaff?.role === 'SUPERVISOR';
+  const isAdmin = currentStaff?.role === 'ADMIN';
 
   if (!currentStaff) {
     return <div>Loading...</div>;
   }
 
-  if (isSupervisorMode && isSupervisor) {
+  if (isSupervisorMode && (isSupervisor || isAdmin)) {
     return <SupervisorDashboard />;
   }
 
@@ -116,6 +118,8 @@ function StaffDashboard() {
   const [vehicles, setVehicles] = useState<VehicleData[]>([]);
   const [recentBookings, setRecentBookings] = useState<BookingData[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityData[]>([]);
+  const [todayDayPasses, setTodayDayPasses] = useState<any[]>([]);
+  const [todayExitPasses, setTodayExitPasses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
@@ -127,12 +131,14 @@ function StaffDashboard() {
       setIsLoading(true);
       
       // Fetch all data in parallel
-      const [statsRes, queuesRes, vehiclesRes, bookingsRes, activityRes] = await Promise.all([
+      const [statsRes, queuesRes, vehiclesRes, bookingsRes, activityRes, dayPassesRes, exitPassesRes] = await Promise.all([
         api.getDashboardStats(),
         api.getDashboardQueues(),
         api.getDashboardVehicles(),
         api.getDashboardBookings(),
-        api.getActivityLog(20)
+        api.getActivityLog(20),
+        dbClient.getTodayDayPasses(),
+        dbClient.getTodayExitPasses()
       ]);
 
       if (statsRes.success) {
@@ -154,6 +160,8 @@ function StaffDashboard() {
       if (activityRes.success) {
         setActivityLog(activityRes.data || []);
       }
+      setTodayDayPasses(Array.isArray(dayPassesRes) ? dayPassesRes : []);
+      setTodayExitPasses(Array.isArray(exitPassesRes) ? exitPassesRes : []);
       
       setLastUpdate(new Date());
     } catch (error) {
@@ -168,138 +176,13 @@ function StaffDashboard() {
     }
   }, [addNotification]);
 
-  // WebSocket real-time updates
+  // Real-time disabled: periodic refresh only
   useEffect(() => {
     fetchDashboardData();
-    const wsClient = getWebSocketClient();
-
-    const handleConnect = () => setIsConnected(true);
-    const handleDisconnect = () => setIsConnected(false);
-
-    wsClient.on('connected', handleConnect);
-    wsClient.on('disconnected', handleDisconnect);
-    setIsConnected(wsClient.isConnected());
-
-    // Subscribe to real-time topics
-    wsClient.subscribe(['queues', 'bookings', 'vehicles', 'dashboard']).catch(() => {});
-
-    const queueHandler = (msg: any) => {
-      if (msg?.payload?.queues) {
-        setQueues(msg.payload.queues);
-      }
-      if (msg?.payload?.vehicles) {
-        setVehicles(msg.payload.vehicles);
-      }
-      if (msg?.payload?.statistics) {
-        setStats(msg.payload.statistics);
-      }
-      setLastUpdate(new Date());
-    };
-
-    const bookingHandler = (msg: any) => {
-      if (msg?.payload?.type === 'booking_created') {
-        fetchDashboardData(); // Refresh all data
-        addNotification({
-          type: 'success',
-          title: 'New Booking',
-          message: `New ${msg.payload.bookingType} booking for ${msg.payload.destinationName}`,
-          duration: 4000
-        });
-      }
-    };
-
-    const vehicleHandler = (msg: any) => {
-      if (msg?.payload?.type === 'vehicle_entered') {
-        addNotification({
-          type: 'info',
-          title: 'Vehicle Entered',
-          message: `Vehicle ${msg.payload.licensePlate} entered queue for ${msg.payload.destinationName}`,
-          duration: 4000
-        });
-      }
-    };
-
-    // Payment confirmation handler
-    const paymentHandler = (msg: any) => {
-      if (msg?.payload?.source === 'payment_confirmation') {
-        const paymentData = msg.payload;
-        
-        // Show payment success notification
-        notifyPaymentSuccess({
-          verificationCode: paymentData.verificationCode,
-          totalAmount: paymentData.totalAmount,
-          seatsBooked: paymentData.seatsBooked,
-          vehicleLicensePlate: paymentData.vehicle.licensePlate,
-          destinationName: paymentData.vehicle.destination,
-          paymentReference: paymentData.onlineTicketId || 'N/A'
-        });
-
-        // Refresh dashboard data to show updated seat counts
-        fetchDashboardData();
-      }
-    };
-
-    // Seat availability change handler
-    const seatHandler = (msg: any) => {
-      if (msg?.payload?.type === 'seat_availability_changed') {
-        const seatData = msg.payload;
-        
-        // Find the vehicle in current state to get old seat count
-        const currentVehicle = vehicles.find(v => v.licensePlate === seatData.vehicleLicensePlate);
-        if (currentVehicle) {
-          notifySeatUpdate({
-            vehicleLicensePlate: seatData.vehicleLicensePlate,
-            destinationName: seatData.destinationName,
-            availableSeats: seatData.availableSeats,
-            totalSeats: seatData.totalSeats,
-            oldAvailableSeats: currentVehicle.availableSeats
-          });
-        }
-
-        // Refresh dashboard data
-        fetchDashboardData();
-      }
-    };
-
-    // Vehicle status change handler
-    const vehicleStatusHandler = (msg: any) => {
-      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
-        notifyVehicleReady({
-          licensePlate: msg.payload.licensePlate,
-          destinationName: msg.payload.destinationName,
-          totalSeats: msg.payload.totalSeats
-        });
-
-        // Refresh dashboard data
-        fetchDashboardData();
-      }
-    };
-
-    wsClient.on('queue_update', queueHandler);
-    wsClient.on('booking_update', bookingHandler);
-    wsClient.on('vehicle_update', vehicleHandler);
-    wsClient.on('payment_confirmation', paymentHandler);
-    wsClient.on('seat_availability_changed', seatHandler);
-    wsClient.on('vehicle_status_changed', vehicleStatusHandler);
-
-    // Auto-refresh every 30 seconds if not connected
     const refreshInterval = setInterval(() => {
-      if (!wsClient.isConnected()) {
-        fetchDashboardData();
-      }
+      fetchDashboardData();
     }, 30000);
-
-    return () => {
-      wsClient.removeListener('connected', handleConnect);
-      wsClient.removeListener('disconnected', handleDisconnect);
-      wsClient.removeListener('queue_update', queueHandler);
-      wsClient.removeListener('booking_update', bookingHandler);
-      wsClient.removeListener('vehicle_update', vehicleHandler);
-      wsClient.removeListener('payment_confirmation', paymentHandler);
-      wsClient.removeListener('seat_availability_changed', seatHandler);
-      wsClient.removeListener('vehicle_status_changed', vehicleStatusHandler);
-      clearInterval(refreshInterval);
-    };
+    return () => clearInterval(refreshInterval);
   }, [fetchDashboardData, addNotification]);
 
   const getStatusColor = (status: string) => {
@@ -436,6 +319,34 @@ function StaffDashboard() {
               <p className="text-xs text-purple-600 mt-1">
                 Services en ligne
               </p>
+            </div>
+          </div>
+        </Card>
+
+        {/* Today Day Passes */}
+        <Card className="p-6 bg-gradient-to-br from-sky-50 to-sky-100 border-sky-200">
+          <div className="flex items-center space-x-4">
+            <div className="w-10 h-10 bg-sky-500 rounded-lg flex items-center justify-center">
+              <Ticket className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-sky-600">Passes Journaliers Aujourd'hui</p>
+              <p className="text-2xl font-bold text-sky-700">{todayDayPasses.length}</p>
+              <p className="text-xs text-sky-600 mt-1">~ {((todayDayPasses.length || 0) * 2).toFixed(2)} TND</p>
+            </div>
+          </div>
+        </Card>
+
+        {/* Today Exit Passes */}
+        <Card className="p-6 bg-gradient-to-br from-rose-50 to-rose-100 border-rose-200">
+          <div className="flex items-center space-x-4">
+            <div className="w-10 h-10 bg-rose-500 rounded-lg flex items-center justify-center">
+              <Car className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-rose-600">Tickets de Sortie Aujourd'hui</p>
+              <p className="text-2xl font-bold text-rose-700">{todayExitPasses.length}</p>
+              <p className="text-xs text-rose-600 mt-1">Véhicules prêts à partir</p>
             </div>
           </div>
         </Card>
@@ -609,7 +520,7 @@ function StaffDashboard() {
                       <div className="font-medium">{vehicle.licensePlate}</div>
                       {vehicle.driver && (
                         <div className="text-sm text-muted-foreground">
-                          CIN: {vehicle.driver.cin}
+                          Conducteur: {(vehicle.driver as any)?.firstName || 'N/A'} {(vehicle.driver as any)?.lastName || 'N/A'}
                         </div>
                       )}
                     </td>
@@ -676,137 +587,13 @@ function SupervisorDashboard() {
     }
   };
 
-  // Set up WebSocket for real-time updates
+  // Periodic refresh for supervisor dashboard (real-time disabled)
   useEffect(() => {
-    const wsClient = getWebSocketClient();
-    
-    const handleConnect = () => {
-      setIsConnected(true);
-      console.log('🔌 Enhanced WebSocket connected for supervisor dashboard');
-      
-      // Subscribe to relevant topics
-      wsClient.subscribe(['financial', 'bookings', 'dashboard']).catch(error => {
-        console.error('Failed to subscribe to topics:', error);
-      });
-    };
-    
-    const handleDisconnect = () => {
-      setIsConnected(false);
-      console.log('🔌 Enhanced WebSocket disconnected for supervisor dashboard');
-    };
-
-    const handleStateChange = ({ newState }: { newState: ConnectionState }) => {
-      setIsConnected(newState === ConnectionState.CONNECTED);
-    };
-    
-    const handleFinancialUpdate = (data: any) => {
-      console.log('📊 Received enhanced financial update:', data);
-      setFinancialData(data.financial);
-      setTransactions(data.recentTransactions || []);
-      setLastUpdate(new Date());
-    };
-
-    const handleDashboardUpdate = (data: any) => {
-      console.log('📈 Received enhanced dashboard update:', data);
-      if (data.financial) {
-        setFinancialData(data.financial);
-      }
-      if (data.recentTransactions) {
-        setTransactions(data.recentTransactions);
-      }
-      setLastUpdate(new Date());
-    };
-
-    // Payment confirmation handler for supervisor
-    const handlePaymentConfirmation = (msg: any) => {
-      if (msg?.payload?.source === 'payment_confirmation') {
-        const paymentData = msg.payload;
-        
-        // Show payment success notification
-        notifyPaymentSuccess({
-          verificationCode: paymentData.verificationCode,
-          totalAmount: paymentData.totalAmount,
-          seatsBooked: paymentData.seatsBooked,
-          vehicleLicensePlate: paymentData.vehicle.licensePlate,
-          destinationName: paymentData.vehicle.destination,
-          paymentReference: paymentData.onlineTicketId || 'N/A'
-        });
-
-        // Refresh financial data
-        loadSupervisorData();
-      }
-    };
-
-    // Seat availability change handler for supervisor
-    const handleSeatUpdate = (msg: any) => {
-      if (msg?.payload?.type === 'seat_availability_changed') {
-        const seatData = msg.payload;
-        
-        notifySeatUpdate({
-          vehicleLicensePlate: seatData.vehicleLicensePlate,
-          destinationName: seatData.destinationName,
-          availableSeats: seatData.availableSeats,
-          totalSeats: seatData.totalSeats,
-          oldAvailableSeats: seatData.oldAvailableSeats || 0
-        });
-
-        // Refresh data
-        loadSupervisorData();
-      }
-    };
-
-    // Vehicle status change handler for supervisor
-    const handleVehicleStatusChange = (msg: any) => {
-      if (msg?.payload?.type === 'vehicle_status_changed' && msg.payload.newStatus === 'READY') {
-        notifyVehicleReady({
-          licensePlate: msg.payload.licensePlate,
-          destinationName: msg.payload.destinationName,
-          totalSeats: msg.payload.totalSeats
-        });
-
-        // Refresh data
-        loadSupervisorData();
-      }
-    };
-
-    // Check initial connection state
-    setIsConnected(wsClient.isConnected());
-
-    // Register event listeners
-    wsClient.on('connected', handleConnect);
-    wsClient.on('disconnected', handleDisconnect);
-    wsClient.on('state_changed', handleStateChange);
-    wsClient.on('financial_update', handleFinancialUpdate);
-    wsClient.on('dashboard_update', handleDashboardUpdate);
-    wsClient.on('payment_confirmation', handlePaymentConfirmation);
-    wsClient.on('seat_availability_changed', handleSeatUpdate);
-    wsClient.on('vehicle_status_changed', handleVehicleStatusChange);
-    
-    // Load initial data
     loadSupervisorData();
-
-    // Set up auto-refresh if WebSocket is not connected
-    const refreshInterval = setInterval(() => {
-      const currentlyConnected = wsClient.isConnected();
-      setIsConnected(currentlyConnected);
-      
-      if (!currentlyConnected) {
-        console.log('🔄 WebSocket disconnected, falling back to HTTP polling');
-        loadSupervisorData();
-      }
-    }, 30000); // Refresh every 30 seconds
-
-    return () => {
-      wsClient.removeListener('connected', handleConnect);
-      wsClient.removeListener('disconnected', handleDisconnect);
-      wsClient.removeListener('state_changed', handleStateChange);
-      wsClient.removeListener('financial_update', handleFinancialUpdate);
-      wsClient.removeListener('dashboard_update', handleDashboardUpdate);
-      wsClient.removeListener('payment_confirmation', handlePaymentConfirmation);
-      wsClient.removeListener('seat_availability_changed', handleSeatUpdate);
-      wsClient.removeListener('vehicle_status_changed', handleVehicleStatusChange);
-      clearInterval(refreshInterval);
-    };
+    const id = setInterval(() => {
+      loadSupervisorData();
+    }, 30000);
+    return () => clearInterval(id);
   }, []);
 
   const formatCurrency = (amount: number | undefined | null) => {
