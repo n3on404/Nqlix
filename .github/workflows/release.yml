@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  release:
-    types: [ published ]
-  workflow_dispatch:
 
 jobs:
   create-release:
@@ -16,16 +13,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Debug tag information
-        run: |
-          echo "Git ref: ${{ github.ref }}"
-          echo "Git ref name: ${{ github.ref_name }}"
-          echo "Git ref type: ${{ github.ref_type }}"
-          echo "Event name: ${{ github.event_name }}"
-          git tag --list | tail -10
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -58,27 +45,7 @@ jobs:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
 
       - name: Build Tauri app
-        run: |
-          echo "Starting Tauri build..."
-          echo "Node version: $(node --version)"
-          echo "pnpm version: $(pnpm --version)"
-          echo "Rust version: $(rustc --version)"
-          echo "Cargo version: $(cargo --version)"
-          
-          # Check if secrets are available
-          if [ -z "$TAURI_PRIVATE_KEY" ]; then
-            echo "Warning: TAURI_PRIVATE_KEY is not set"
-          else
-            echo "TAURI_PRIVATE_KEY is set (length: ${#TAURI_PRIVATE_KEY})"
-          fi
-          
-          if [ -z "$TAURI_KEY_PASSWORD" ]; then
-            echo "Warning: TAURI_KEY_PASSWORD is not set"
-          else
-            echo "TAURI_KEY_PASSWORD is set"
-          fi
-          
-          pnpm tauri build
+        run: pnpm tauri build
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}

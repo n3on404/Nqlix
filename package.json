@@ -1,26 +1,19 @@
 {
   "name": "wasla-desktop-app",
   "private": true,
-  "version": "1.11.0",
+  "version": "1.10.2",
   "type": "module",
   "scripts": {
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "dev": "vite",
-    "setup-updater": "node scripts/setup-updater.cjs",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "type-check": "tsc --noEmit"
+    "setup-updater": "node scripts/setup-updater.cjs"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.16",
     "@tauri-apps/api": "^1.5.0",
     "@tauri-apps/cli": "^1.5.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "eslint": "^8.45.0",
-    "eslint-plugin-react": "^7.33.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
     "@tauri-apps/plugin-dialog": "^2.3.0",
     "@tauri-apps/plugin-fs": "^2.1.0",
     "@tauri-apps/plugin-http": "^2.3.0",
