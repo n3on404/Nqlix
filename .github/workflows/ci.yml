@@ -1,31 +1,138 @@
-name: Release
+name: CI/CD Pipeline
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
   release:
     types: [ published ]
   workflow_dispatch:
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
 jobs:
-  create-release:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Lint frontend
+        run: pnpm lint
+
+      - name: Type check frontend
+        run: pnpm type-check
+
+      - name: Lint Rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Format check Rust
+        run: cargo fmt --all -- --check
+
+      - name: Test Rust
+        run: cargo test
+
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            platform: windows
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            platform: macos
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Setup signing key (Windows only)
+        if: matrix.platform == 'windows'
+        run: |
+          $keyPath = "$env:USERPROFILE\.tauri\wasla_desktop_app.key"
+          $keyDir = Split-Path $keyPath -Parent
+          if (-not (Test-Path $keyDir)) {
+            New-Item -ItemType Directory -Path $keyDir -Force
+          }
+          echo "$env:TAURI_PRIVATE_KEY" | Out-File -FilePath $keyPath -Encoding utf8
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+
+      - name: Build Tauri app
+        run: pnpm tauri build
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasla-desktop-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/
+          retention-days: 30
+
+  release:
+    name: Release
     runs-on: windows-latest
+    needs: [test, build]
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Debug tag information
-        run: |
-          echo "Git ref: ${{ github.ref }}"
-          echo "Git ref name: ${{ github.ref_name }}"
-          echo "Git ref type: ${{ github.ref_type }}"
-          echo "Event name: ${{ github.event_name }}"
-          git tag --list | tail -10
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,7 +147,7 @@ jobs:
         with:
           version: 8
 
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: pnpm install
 
       - name: Build frontend
@@ -58,27 +165,7 @@ jobs:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
 
       - name: Build Tauri app
-        run: |
-          echo "Starting Tauri build..."
-          echo "Node version: $(node --version)"
-          echo "pnpm version: $(pnpm --version)"
-          echo "Rust version: $(rustc --version)"
-          echo "Cargo version: $(cargo --version)"
-          
-          # Check if secrets are available
-          if [ -z "$TAURI_PRIVATE_KEY" ]; then
-            echo "Warning: TAURI_PRIVATE_KEY is not set"
-          else
-            echo "TAURI_PRIVATE_KEY is set (length: ${#TAURI_PRIVATE_KEY})"
-          fi
-          
-          if [ -z "$TAURI_KEY_PASSWORD" ]; then
-            echo "Warning: TAURI_KEY_PASSWORD is not set"
-          else
-            echo "TAURI_KEY_PASSWORD is set"
-          fi
-          
-          pnpm tauri build
+        run: pnpm tauri build
         env:
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
