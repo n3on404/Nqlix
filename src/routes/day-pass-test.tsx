@@ -23,7 +23,7 @@ export default function DayPassTest() {
         licensePlate,
         destinationName
       });
-      setResult(testResult);
+      setResult(String(testResult));
     } catch (err: any) {
       setError(err.message || 'Test failed');
     } finally {
@@ -38,7 +38,7 @@ export default function DayPassTest() {
 
     try {
       const status = await invoke('debug_printer_status');
-      setResult(status);
+      setResult(String(status));
     } catch (err: any) {
       setError(err.message || 'Debug failed');
     } finally {
@@ -75,7 +75,7 @@ export default function DayPassTest() {
         licensePlate,
         destinationName
       });
-      setResult(printResult);
+      setResult(String(printResult));
     } catch (err: any) {
       setError(err.message || 'Force print failed');
     } finally {
@@ -93,7 +93,7 @@ export default function DayPassTest() {
         licensePlate,
         destinationName
       });
-      setResult(testResult);
+      setResult(String(testResult));
     } catch (err: any) {
       setError(err.message || 'Test with vehicle failed');
     } finally {
@@ -110,7 +110,7 @@ export default function DayPassTest() {
       const checkResult = await invoke('check_vehicle_day_passes', {
         licensePlate
       });
-      setResult(checkResult);
+      setResult(String(checkResult));
     } catch (err: any) {
       setError(err.message || 'Day pass check failed');
     } finally {
