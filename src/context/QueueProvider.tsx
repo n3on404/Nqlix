@@ -93,6 +93,33 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
   const { addNotification } = useNotifications();
   const [suppressedPlates, setSuppressedPlates] = useState<Record<string, number>>({});
   
+  // Test function to check data availability
+  const testDataAvailability = useCallback(async () => {
+    console.log('🧪 [TEST] Testing data availability...');
+    
+    try {
+      // Test API endpoints
+      const [statsRes, queuesRes, vehiclesRes] = await Promise.all([
+        api.getDashboardStats(),
+        api.getDashboardQueues(),
+        api.getDashboardVehicles()
+      ]);
+      
+      console.log('🧪 [TEST] API Stats:', statsRes);
+      console.log('🧪 [TEST] API Queues:', queuesRes);
+      console.log('🧪 [TEST] API Vehicles:', vehiclesRes);
+      
+      return {
+        stats: statsRes.success ? statsRes.data : null,
+        queues: queuesRes.success ? queuesRes.data : null,
+        vehicles: vehiclesRes.success ? vehiclesRes.data : null
+      };
+    } catch (error) {
+      console.error('🧪 [TEST] API test failed:', error);
+      return null;
+    }
+  }, []);
+
   // Memoize refreshQueues to prevent unnecessary re-renders
   const refreshQueues = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -105,21 +132,82 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
       const refreshTime = Date.now();
       setLastManualRefresh(refreshTime);
 
-      // Load summaries directly from DB via Tauri
-      const summaries = await dbClient.getQueueSummaries();
+      // Test data availability first
+      await testDataAvailability();
+
+      // Check database health first with timeout
+      console.log('🔍 [QUEUE DEBUG] Checking database health...');
+      let dbHealthy = false;
+      
+      try {
+        const dbHealthPromise = dbClient.health();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Database health check timeout')), 5000)
+        );
+        
+        dbHealthy = await Promise.race([dbHealthPromise, timeoutPromise]) as boolean;
+        console.log('🔍 [QUEUE DEBUG] Database health:', dbHealthy);
+      } catch (error) {
+        console.warn('⚠️ [QUEUE DEBUG] Database health check failed or timed out:', error);
+        console.log('🔄 [QUEUE DEBUG] Proceeding without health check...');
+        dbHealthy = true; // Assume healthy and try to fetch data
+      }
+      
+      if (!dbHealthy) {
+        throw new Error('Database connection is not healthy');
+      }
+
+      // Load summaries directly from DB via Tauri with timeout
+      console.log('🔍 [QUEUE DEBUG] Calling dbClient.getQueueSummaries()...');
+      let summaries: any[] = [];
+      
+      try {
+        const summariesPromise = dbClient.getQueueSummaries();
+        const summariesTimeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Queue summaries fetch timeout')), 10000)
+        );
+        
+        summaries = await Promise.race([summariesPromise, summariesTimeoutPromise]) as any[];
+        console.log('🔍 [QUEUE DEBUG] Raw summaries from DB:', summaries);
+        console.log('🔍 [QUEUE DEBUG] Summaries length:', summaries?.length || 0);
+      } catch (error) {
+        console.warn('⚠️ [QUEUE DEBUG] Database fetch failed, trying API fallback:', error);
+        
+        // Fallback to API
+        try {
+          const apiResponse = await api.getDashboardQueues();
+          if (apiResponse.success && apiResponse.data) {
+            summaries = apiResponse.data;
+            console.log('🔄 [QUEUE DEBUG] Using API fallback, summaries:', summaries);
+          } else {
+            console.warn('⚠️ [QUEUE DEBUG] API fallback also failed');
+            summaries = [];
+          }
+        } catch (apiError) {
+          console.error('❌ [QUEUE DEBUG] Both DB and API failed:', apiError);
+          summaries = [];
+        }
+      }
       const normalizedSummaries = summaries.map((s: any) => ({
         ...s,
         destinationName: (s.destinationName || '').toUpperCase(),
       }));
+      console.log('🔍 [QUEUE DEBUG] Normalized summaries:', normalizedSummaries);
       setQueueSummaries(normalizedSummaries);
 
-      // Fetch details for destinations with vehicles
+      // Fetch details for all destinations with vehicles in parallel (only 4 destinations total)
       const queueDetails: Record<string, QueueItem[]> = {};
-      for (const summary of normalizedSummaries) {
-        if ((summary.totalVehicles || 0) > 0) {
-          try {
-            const items = await dbClient.getQueueByDestination(summary.destinationId);
-            queueDetails[summary.destinationName] = (items || [])
+      const destinationsWithVehicles = normalizedSummaries
+        .filter(s => (s.totalVehicles || 0) > 0);
+      
+      console.log('🔍 [QUEUE DEBUG] Destinations with vehicles:', destinationsWithVehicles);
+      
+      const queuePromises = destinationsWithVehicles.map(async (summary) => {
+        try {
+          const items = await dbClient.getQueueByDestination(summary.destinationId);
+          return {
+            destinationName: summary.destinationName,
+            items: (items || [])
               .map((it) => ({
                 id: it.id,
                 destinationName: (it.destinationName || summary.destinationName).toUpperCase(),
@@ -135,20 +223,42 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
                   driver: { cin: '' },
                 },
               }))
-              .sort((a, b) => a.queuePosition - b.queuePosition);
-          } catch (e) {
-            console.error(`❌ Error fetching queue for ${summary.destinationName}:`, e);
-            queueDetails[summary.destinationName] = [];
-          }
-        } else {
+              .sort((a, b) => a.queuePosition - b.queuePosition)
+          };
+        } catch (e) {
+          console.error(`❌ Error fetching queue for ${summary.destinationName}:`, e);
+          return {
+            destinationName: summary.destinationName,
+            items: []
+          };
+        }
+      });
+      
+      // Wait for all queue details to load in parallel
+      const queueResults = await Promise.all(queuePromises);
+      queueResults.forEach(({ destinationName, items }) => {
+        queueDetails[destinationName] = items;
+      });
+      
+      // Initialize empty arrays for destinations without vehicles
+      normalizedSummaries.forEach(summary => {
+        if (!queueDetails[summary.destinationName]) {
           queueDetails[summary.destinationName] = [];
         }
-      }
+      });
+      
+      console.log('🔍 [QUEUE DEBUG] Final queue details:', queueDetails);
+      console.log('🔍 [QUEUE DEBUG] Number of destinations with data:', Object.keys(queueDetails).length);
       setQueues(queueDetails);
     } catch (error: any) {
       const errorMsg = error.message || 'An error occurred while fetching queue data';
       setError(errorMsg);
       console.error('❌ Queue data fetch error:', error);
+      console.error('❌ Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
 
       if (addNotification) {
         addNotification({

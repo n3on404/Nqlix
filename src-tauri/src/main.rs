@@ -31,7 +31,7 @@ static DB_POOL: Lazy<Pool> = Lazy::new(|| {
     // load .env if exists
     let _ = dotenv();
     let db_url = stdenv::var("DATABASE_URL").unwrap_or_else(|_|
-        "postgresql://ivan:Lost2409@192.168.192.100:5433/louaj_node".to_string()
+        "postgresql://ivan:Lost2409@192.168.192.100:5432/louaj_node".to_string()
     );
 
     let mut cfg = deadpool_postgres::Config::new();
@@ -235,17 +235,25 @@ async fn db_enter_queue(license_plate: String, destination_id: String, destinati
         ).await.map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())?;
 
-        // After commit: print logic (non-blocking)
+        // After commit: ALWAYS print day pass ticket when changing destination (non-blocking)
         let lp_clone = license_plate.clone();
         let dest_name_clone = dest_name.clone();
-        println!("🚀 [QUEUE DEBUG] Spawning print task for vehicle: {} to destination: {}", lp_clone, dest_name_clone);
+        println!("🚀 [QUEUE DEBUG] Spawning day pass print task for vehicle: {} to destination: {} (DESTINATION CHANGE)", lp_clone, dest_name_clone);
         tauri::async_runtime::spawn(async move {
             let lp_debug = lp_clone.clone();
-            println!("🎯 [QUEUE DEBUG] Starting print task for vehicle: {} to destination: {}", lp_clone, dest_name_clone);
-            let result = print_entry_or_daypass_if_needed(lp_clone, dest_name_clone, 0.0).await;
+            println!("🎯 [QUEUE DEBUG] Starting day pass print task for vehicle: {} to destination: {} (DESTINATION CHANGE)", lp_clone, dest_name_clone);
+            
+            // Add a small delay to ensure database transaction is fully committed
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            
+            // Always print day pass ticket when changing destination
+            let result = print_entry_or_daypass_if_needed(lp_clone, dest_name_clone, 2.0).await;
             match result {
-                Ok(_) => println!("✅ [QUEUE DEBUG] Print task completed successfully for {}", lp_debug),
-                Err(e) => println!("❌ [QUEUE DEBUG] Print task failed for {}: {}", lp_debug, e),
+                Ok(_) => println!("✅ [QUEUE DEBUG] Day pass print task completed successfully for {} (DESTINATION CHANGE)", lp_debug),
+                Err(e) => {
+                    println!("❌ [QUEUE DEBUG] Day pass print task failed for {} (DESTINATION CHANGE): {}", lp_debug, e);
+                    eprintln!("❌ [DAY PASS ERROR] Failed to print day pass for {} (DESTINATION CHANGE): {}", lp_debug, e);
+                }
             }
         });
         return Ok(qid);
@@ -260,79 +268,180 @@ async fn db_enter_queue(license_plate: String, destination_id: String, destinati
 
     tx.commit().await.map_err(|e| e.to_string())?;
 
-    // After commit: create/print day pass if needed (non-blocking)
+    // After commit: ALWAYS create/print day pass ticket (non-blocking)
     let lp_clone = license_plate.clone();
     let dest_name_clone = dest_name.clone();
+    println!("🚀 [QUEUE DEBUG] Spawning day pass print task for vehicle: {} to destination: {} (NEW ENTRY)", lp_clone, dest_name_clone);
     tauri::async_runtime::spawn(async move {
-        let _ = print_entry_or_daypass_if_needed(lp_clone, dest_name_clone, 2.0).await;
+        let lp_debug = lp_clone.clone();
+        println!("🎯 [QUEUE DEBUG] Starting day pass print task for vehicle: {} to destination: {} (NEW ENTRY)", lp_clone, dest_name_clone);
+        
+        // Add a small delay to ensure database transaction is fully committed
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+        // Always print day pass ticket for new queue entry
+        let result = print_entry_or_daypass_if_needed(lp_clone, dest_name_clone, 2.0).await;
+        match result {
+            Ok(_) => println!("✅ [QUEUE DEBUG] Day pass print task completed successfully for {} (NEW ENTRY)", lp_debug),
+            Err(e) => {
+                println!("❌ [QUEUE DEBUG] Day pass print task failed for {} (NEW ENTRY): {}", lp_debug, e);
+                // Also log to stderr for better visibility
+                eprintln!("❌ [DAY PASS ERROR] Failed to print day pass for {} (NEW ENTRY): {}", lp_debug, e);
+            }
+        }
     });
     Ok(qid)
 }
 
 // Decide printing path depending on day pass status.
 async fn print_entry_or_daypass_if_needed(license_plate: String, destination_name: String, create_day_pass_price: f64) -> Result<(), String> {
-    println!("🔄 [DAY PASS DEBUG] Checking day pass for vehicle: {} to destination: {}", license_plate, destination_name);
+    println!("🔄 [DAY PASS DEBUG] ===== STARTING DAY PASS CHECK =====");
+    println!("🔄 [DAY PASS DEBUG] Vehicle: {}", license_plate);
+    println!("🔄 [DAY PASS DEBUG] Destination: {}", destination_name);
+    println!("🔄 [DAY PASS DEBUG] Create day pass price: {}", create_day_pass_price);
     
     let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
-    // Check if day pass exists today - get the most recent one if multiple exist
+    
+    // Get current Tunisian date for comparison
+    let now_tunisian = chrono::Utc::now().with_timezone(&chrono_tz::Africa::Tunis);
+    let today_date = now_tunisian.date_naive();
+    
+    println!("📅 [DAY PASS DEBUG] Checking for day pass on Tunisian date: {}", today_date.format("%Y-%m-%d"));
+    
+    // Check if day pass exists for TODAY using Tunisian time
     let day_pass_row = client.query_opt(
-        "SELECT id, price FROM day_passes WHERE license_plate = $1 AND is_active = true AND purchase_date::date = CURRENT_DATE ORDER BY purchase_date DESC LIMIT 1",
+        "SELECT id, price, purchase_date FROM day_passes 
+         WHERE license_plate = $1 
+         AND is_active = true 
+         AND (purchase_date AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date 
+         ORDER BY purchase_date DESC LIMIT 1",
         &[&license_plate]
     ).await.map_err(|e| e.to_string())?;
 
+    // Check if day pass exists for today - print reprint if exists, create new if not
+    println!("🔄 [DAY PASS DEBUG] Checking for existing day pass on date: {}", today_date.format("%Y-%m-%d"));
+    
     if let Some(row) = day_pass_row {
         let day_pass_price: f64 = row.get("price");
-        println!("✅ [DAY PASS DEBUG] Found existing day pass for {} with price: {}, reprinting with new destination: {}", license_plate, day_pass_price, destination_name);
+        let purchase_date: chrono::NaiveDateTime = row.get("purchase_date");
+        let purchase_date_utc: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_naive_utc_and_offset(purchase_date, chrono::Utc);
+        let tunisian_time = purchase_date_utc.with_timezone(&chrono_tz::Africa::Tunis);
         
-        // Reprint day pass ticket with new destination
-        let dp_ticket = serde_json::json!({
-            "licensePlate": license_plate,
-            "amount": day_pass_price,
-            "purchaseDate": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            "validFor": chrono::Local::now().format("%Y-%m-%d").to_string(),
-            "destinationName": destination_name,
-        }).to_string();
+        println!("✅ [DAY PASS DEBUG] Found existing day pass for {} with price: {}, purchased at: {} - printing reprint ticket (0 TND)", 
+                 license_plate, day_pass_price, tunisian_time.format("%Y-%m-%d %H:%M:%S"));
         
-        println!("🎫 [DAY PASS DEBUG] Generated day pass ticket data: {}", dp_ticket);
-        
+        // Get current staff information
         let printer = PRINTER_SERVICE.clone();
         let printer_clone = {
             let guard = printer.lock().map_err(|e| e.to_string())?;
             guard.clone()
         };
+        let staff_info = printer_clone.get_current_staff().await.unwrap_or(None);
+        
+        // Print reprint ticket (0 TND) - database query already filtered for today
+        let day_pass_number = format!("DP{}", chrono::Utc::now().timestamp_millis().to_string().chars().rev().take(8).collect::<String>().chars().rev().collect::<String>());
+        let dp_ticket = serde_json::json!({
+            "dayPassNumber": day_pass_number,
+            "licensePlate": license_plate,
+            "driverName": "",
+            "amount": "0.00", // 0 TND for reprint
+            "purchaseDate": tunisian_time.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "validFor": tunisian_time.format("%Y-%m-%d").to_string(),
+            "destinationName": destination_name,
+            "isReprint": true,
+            "staffName": staff_info.as_ref().map(|s| format!("{} {}", s.firstName, s.lastName)).unwrap_or_else(|| "Staff".to_string()),
+            "staffId": staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string())
+        }).to_string();
+        
+        println!("🎫 [DAY PASS DEBUG] Generated reprint day pass ticket data: {}", dp_ticket);
+        println!("🖨️ [DAY PASS DEBUG] ATTEMPTING TO PRINT REPRINT TICKET FOR: {}", license_plate);
+        
+        println!("🖨️ [DAY PASS DEBUG] Printer service obtained, calling print_day_pass_ticket...");
         let print_result = printer_clone.print_day_pass_ticket(dp_ticket, None).await;
         match print_result {
-            Ok(_) => println!("✅ [DAY PASS DEBUG] Day pass ticket printed successfully for {}", license_plate),
-            Err(e) => println!("❌ [DAY PASS DEBUG] Failed to print day pass ticket for {}: {}", license_plate, e),
+            Ok(result) => {
+                println!("✅ [DAY PASS DEBUG] Day pass reprint ticket printed successfully for {}: {}", license_plate, result);
+                println!("✅ [DAY PASS SUCCESS] REPRINT TICKET PRINTED FOR VEHICLE: {}", license_plate);
+            },
+            Err(e) => {
+                println!("❌ [DAY PASS DEBUG] Failed to print day pass reprint ticket for {}: {}", license_plate, e);
+                eprintln!("❌ [DAY PASS PRINT ERROR] Reprint failed for {}: {}", license_plate, e);
+                eprintln!("❌ [DAY PASS FAILURE] REPRINT TICKET FAILED FOR VEHICLE: {}", license_plate);
+            }
         }
+        println!("🔄 [DAY PASS DEBUG] Returning from reprint path for vehicle: {}", license_plate);
         return Ok(());
+    } else {
+        println!("ℹ️ [DAY PASS DEBUG] No existing day pass found for {} on date {} - creating new day pass (2 TND)", license_plate, today_date.format("%Y-%m-%d"));
     }
     
-    println!("ℹ️ [DAY PASS DEBUG] No existing day pass found for {}, creating new one", license_plate);
+    println!("🔄 [DAY PASS DEBUG] Proceeding to create NEW day pass for queue entry (2 TND)");
 
-    // Create day pass and print it
+    // Create new day pass with Tunisian time
     let row = client.query_one("SELECT id FROM vehicles WHERE license_plate = $1", &[&license_plate])
         .await.map_err(|e| e.to_string())?;
     let vehicle_id: String = row.get("id");
-    let price = if create_day_pass_price > 0.0 { create_day_pass_price } else { 2.0 };
-    let _ = client.execute(
-        "INSERT INTO day_passes (id, vehicle_id, license_plate, price, purchase_date, valid_from, valid_until, is_active, is_expired, created_by, created_at, updated_at) VALUES ($1,$2,$3,$4, NOW(), date_trunc('day', NOW()), date_trunc('day', NOW()) + interval '1 day' - interval '1 second', true, false, $5, NOW(), NOW())",
-        &[&uuid::Uuid::new_v4().to_string(), &vehicle_id, &license_plate, &price, &"SYSTEM".to_string()]
-    ).await;
-
-    let dp_ticket = serde_json::json!({
-        "licensePlate": license_plate,
-        "amount": price,
-        "purchaseDate": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        "validFor": chrono::Local::now().format("%Y-%m-%d").to_string(),
-        "destinationName": destination_name,
-    }).to_string();
+    let price = 2.0; // Always 2 TND for new day passes
+    
+    // Get current Tunisian time
+    let now_tunisian = chrono::Utc::now().with_timezone(&chrono_tz::Africa::Tunis);
+    let today_start = now_tunisian.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let today_end = now_tunisian.date_naive().and_hms_opt(23, 59, 59).unwrap();
+    
+    // Convert to UTC for database storage
+    let now_utc = now_tunisian.with_timezone(&chrono::Utc);
+    let today_start_utc = today_start.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
+    let today_end_utc = today_end.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
+    
+    // Get current staff information for new day pass
     let printer = PRINTER_SERVICE.clone();
     let printer_clone = {
         let guard = printer.lock().map_err(|e| e.to_string())?;
         guard.clone()
     };
-    let _ = printer_clone.print_day_pass_ticket(dp_ticket, None).await;
+    let staff_info = printer_clone.get_current_staff().await.unwrap_or(None);
+    
+    // Get staff ID for database insertion
+    let staff_id = staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string());
+    
+    let _ = client.execute(
+        "INSERT INTO day_passes (id, vehicle_id, license_plate, price, purchase_date, valid_from, valid_until, is_active, is_expired, created_by, created_at, updated_at) 
+         VALUES ($1,$2,$3,$4, $5 AT TIME ZONE 'Africa/Tunis', $6 AT TIME ZONE 'Africa/Tunis', $7 AT TIME ZONE 'Africa/Tunis', true, false, $8, $5 AT TIME ZONE 'Africa/Tunis', $5 AT TIME ZONE 'Africa/Tunis')",
+        &[&uuid::Uuid::new_v4().to_string(), &vehicle_id, &license_plate, &price, &now_utc, &today_start_utc, &today_end_utc, &staff_id]
+    ).await;
+    
+    // ALWAYS PRINT: Print new day pass ticket (2 TND for new purchase)
+    let day_pass_number = format!("DP{}", chrono::Utc::now().timestamp_millis().to_string().chars().rev().take(8).collect::<String>().chars().rev().collect::<String>());
+    let dp_ticket = serde_json::json!({
+        "dayPassNumber": day_pass_number,
+        "licensePlate": license_plate,
+        "driverName": "",
+        "amount": price.to_string(),
+        "purchaseDate": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
+        "validFor": now_tunisian.format("%Y-%m-%d").to_string(),
+        "destinationName": destination_name,
+        "isReprint": false,
+        "staffName": staff_info.as_ref().map(|s| format!("{} {}", s.firstName, s.lastName)).unwrap_or_else(|| "Staff".to_string()),
+        "staffId": staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string())
+    }).to_string();
+    
+    println!("🎫 [DAY PASS DEBUG] Generated new day pass ticket data: {}", dp_ticket);
+    println!("🖨️ [DAY PASS DEBUG] ATTEMPTING TO PRINT NEW DAY PASS TICKET FOR: {}", license_plate);
+    
+    println!("🖨️ [DAY PASS DEBUG] Printer service obtained, calling print_day_pass_ticket...");
+    let print_result = printer_clone.print_day_pass_ticket(dp_ticket, None).await;
+    match print_result {
+        Ok(result) => {
+            println!("✅ [DAY PASS DEBUG] New day pass ticket printed successfully for {}: {}", license_plate, result);
+            println!("✅ [DAY PASS SUCCESS] NEW DAY PASS TICKET PRINTED FOR VEHICLE: {}", license_plate);
+        },
+        Err(e) => {
+            println!("❌ [DAY PASS DEBUG] Failed to print new day pass ticket for {}: {}", license_plate, e);
+            eprintln!("❌ [DAY PASS PRINT ERROR] New day pass print failed for {}: {}", license_plate, e);
+            eprintln!("❌ [DAY PASS FAILURE] NEW DAY PASS TICKET FAILED FOR VEHICLE: {}", license_plate);
+        }
+    }
+    println!("🔄 [DAY PASS DEBUG] Returning from new day pass path for vehicle: {}", license_plate);
     Ok(())
 }
 
@@ -559,16 +668,16 @@ async fn db_get_available_booking_destinations(governorate: Option<String>, dele
         "#
     );
     let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-    let mut idx = 1;
+    let mut _idx = 1;
     if let Some(g) = &governorate {
-        sql.push_str(&format!(" AND r.governorate = ${}", idx));
+        sql.push_str(&format!(" AND r.governorate = ${}", _idx));
         params.push(g);
-        idx += 1;
+        _idx += 1;
     }
     if let Some(d) = &delegation {
-        sql.push_str(&format!(" AND r.delegation = ${}", idx));
+        sql.push_str(&format!(" AND r.delegation = ${}", _idx));
         params.push(d);
-        idx += 1;
+        _idx += 1;
     }
     sql.push_str(" GROUP BY q.destination_id ORDER BY destinationName");
     let rows = client.query(&sql, &params).await.map_err(|e| e.to_string())?;
@@ -642,14 +751,14 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
     // First, try to find a single vehicle that can accommodate all requested seats
     let mut single_vehicle_booking = None;
     for r in queue_rows.iter() {
-        let qid: String = r.get("id");
-        let avail: i32 = r.get("available_seats");
+        let _qid: String = r.get("id");
+        let _avail: i32 = r.get("available_seats");
         let queue_position: i32 = r.get("queue_position");
         
-        println!("🎫 [BOOKING DEBUG] Checking vehicle at position {}: {} available seats", queue_position, avail);
+        println!("🎫 [BOOKING DEBUG] Checking vehicle at position {}: {} available seats", queue_position, _avail);
         
-        if avail >= seats_requested {
-            println!("🎫 [BOOKING DEBUG] Found vehicle at position {} with enough seats ({} >= {})", queue_position, avail, seats_requested);
+        if _avail >= seats_requested {
+            println!("🎫 [BOOKING DEBUG] Found vehicle at position {} with enough seats ({} >= {})", queue_position, _avail, seats_requested);
             single_vehicle_booking = Some(r);
             break;
         }
@@ -658,7 +767,7 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
     // If we found a single vehicle that can handle all seats, book from it
     if let Some(r) = single_vehicle_booking {
         let qid: String = r.get("id");
-        let avail: i32 = r.get("available_seats");
+        let _avail: i32 = r.get("available_seats");
         let base_price: f64 = r.get("base_price");
         let license_plate: String = r.get("license_plate");
         let queue_position: i32 = r.get("queue_position");
@@ -1796,6 +1905,463 @@ async fn db_move_vehicle_to_front(queue_id: String, destination_id: String) -> R
     Ok("Vehicle moved to front successfully".to_string())
 }
 
+// =============== ENHANCED QUEUE MANAGEMENT COMMANDS ===============
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VehicleDto {
+    id: String,
+    licensePlate: String,
+    capacity: i32,
+    isActive: bool,
+    isAvailable: bool,
+    isBanned: bool,
+    defaultDestinationId: Option<String>,
+    defaultDestinationName: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DestinationDto {
+    stationId: String,
+    stationName: String,
+    basePrice: f64,
+    governorate: Option<String>,
+    delegation: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VehicleQueueStatusDto {
+    id: String,
+    vehicleId: String,
+    licensePlate: String,
+    destinationId: String,
+    destinationName: String,
+    queuePosition: i32,
+    status: String,
+    availableSeats: i32,
+    totalSeats: i32,
+    basePrice: f64,
+    enteredAt: String,
+}
+
+#[tauri::command]
+async fn db_get_all_vehicles() -> Result<Vec<VehicleDto>, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let sql = r#"
+        SELECT id, license_plate, capacity, is_active, is_available, is_banned,
+               default_destination_id, default_destination_name
+        FROM vehicles
+        WHERE is_active = true
+        ORDER BY license_plate
+    "#;
+    let rows = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
+    let vehicles = rows.into_iter().map(|r| VehicleDto {
+        id: r.get("id"),
+        licensePlate: r.get("license_plate"),
+        capacity: r.get("capacity"),
+        isActive: r.get("is_active"),
+        isAvailable: r.get("is_available"),
+        isBanned: r.get("is_banned"),
+        defaultDestinationId: r.get("default_destination_id"),
+        defaultDestinationName: r.get("default_destination_name"),
+    }).collect();
+    Ok(vehicles)
+}
+
+#[tauri::command]
+async fn db_get_available_destinations() -> Result<Vec<DestinationDto>, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let sql = r#"
+        SELECT station_id, station_name, base_price, governorate, delegation
+        FROM routes
+        WHERE is_active = true
+        ORDER BY station_name
+    "#;
+    let rows = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
+    let destinations = rows.into_iter().map(|r| DestinationDto {
+        stationId: r.get("station_id"),
+        stationName: r.get("station_name"),
+        basePrice: r.get("base_price"),
+        governorate: r.get("governorate"),
+        delegation: r.get("delegation"),
+    }).collect();
+    Ok(destinations)
+}
+
+#[tauri::command]
+async fn db_add_vehicle_to_queue(license_plate: String, destination_id: String, destination_name: Option<String>) -> Result<String, String> {
+    let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
+
+    // Find vehicle by license plate
+    let veh_row_opt = tx.query_opt("SELECT id, capacity, is_active FROM vehicles WHERE license_plate = $1", &[&license_plate])
+        .await.map_err(|e| e.to_string())?;
+    if veh_row_opt.is_none() {
+        return Err(format!("Véhicule introuvable: {}", license_plate));
+    }
+    let veh_row = veh_row_opt.unwrap();
+    let vehicle_id: String = veh_row.get("id");
+    let total_seats: i32 = veh_row.get::<_, i32>("capacity");
+    let is_active: bool = veh_row.get::<_, bool>("is_active");
+    if !is_active {
+        return Err(format!("Véhicule inactif: {}", license_plate));
+    }
+
+    // Check if vehicle is already in queue
+    let existing_queue = tx.query_opt(
+        "SELECT id, destination_name FROM vehicle_queue WHERE vehicle_id = $1",
+        &[&vehicle_id]
+    ).await.map_err(|e| e.to_string())?;
+    
+    if existing_queue.is_some() {
+        return Err(format!("Véhicule {} est déjà dans une file d'attente", license_plate));
+    }
+
+    // Get next position for this destination
+    let pos_row = tx.query_one("SELECT COALESCE(MAX(queue_position), 0)+1 AS next_pos FROM vehicle_queue WHERE destination_id = $1", &[&destination_id])
+        .await.map_err(|e| e.to_string())?;
+    let next_pos: i32 = pos_row.get("next_pos");
+
+    // Get base price and destination name
+    let price_row = tx.query_opt("SELECT base_price, station_name FROM routes WHERE station_id = $1", &[&destination_id])
+        .await.map_err(|e| e.to_string())?;
+    let mut base_price: f64 = 0.0;
+    let mut resolved_name: Option<String> = None;
+    if let Some(r) = price_row {
+        base_price = r.get::<_, f64>("base_price");
+        let n: String = r.get("station_name");
+        if !n.is_empty() { resolved_name = Some(n); }
+    }
+    if resolved_name.is_none() {
+        if let Some(n) = &destination_name { resolved_name = Some(n.clone()); }
+    }
+    let dest_name = resolved_name.unwrap_or_else(|| destination_id.clone());
+
+    // Insert new queue entry
+    let qid = uuid::Uuid::new_v4().to_string();
+    tx.execute(
+        "INSERT INTO vehicle_queue (id, vehicle_id, destination_id, destination_name, queue_position, status, entered_at, available_seats, total_seats, base_price) VALUES ($1,$2,$3,$4,$5,'WAITING',NOW(),$6,$7,$8)",
+        &[&qid, &vehicle_id, &destination_id, &dest_name, &next_pos, &(total_seats as i32), &(total_seats as i32), &base_price]
+    ).await.map_err(|e| format!("Insertion dans la file échouée: {}", e))?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    // Print day pass ticket in background (non-blocking)
+    let lp_clone = license_plate.clone();
+    let dest_name_clone = dest_name.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = print_entry_or_daypass_if_needed(lp_clone, dest_name_clone, 2.0).await;
+    });
+
+    Ok(format!("Véhicule {} ajouté à la file d'attente pour {}", license_plate, dest_name))
+}
+
+#[tauri::command]
+async fn db_remove_vehicle_from_queue(license_plate: String) -> Result<String, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let sql = r#"DELETE FROM vehicle_queue WHERE vehicle_id = (SELECT id FROM vehicles WHERE license_plate = $1)"#;
+    let res = client.execute(sql, &[&license_plate]).await.map_err(|e| e.to_string())?;
+    if res == 0 {
+        return Err(format!("Aucune entrée de file trouvée pour le véhicule {}", license_plate));
+    }
+    Ok(format!("Véhicule {} retiré de la file d'attente", license_plate))
+}
+
+#[tauri::command]
+async fn db_update_queue_position(queue_id: String, new_position: i32) -> Result<String, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let sql = r#"UPDATE vehicle_queue SET queue_position = $1 WHERE id = $2"#;
+    let res = client.execute(sql, &[&new_position, &queue_id]).await.map_err(|e| e.to_string())?;
+    if res == 0 {
+        return Err("Entrée de file non trouvée".to_string());
+    }
+    Ok("Position mise à jour avec succès".to_string())
+}
+
+#[tauri::command]
+async fn db_get_vehicle_queue_status(license_plate: String) -> Result<Option<VehicleQueueStatusDto>, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let sql = r#"
+        SELECT q.id, q.vehicle_id, v.license_plate, q.destination_id, q.destination_name,
+               q.queue_position, q.status, q.available_seats, q.total_seats, q.base_price,
+               q.entered_at
+        FROM vehicle_queue q
+        JOIN vehicles v ON q.vehicle_id = v.id
+        WHERE v.license_plate = $1
+    "#;
+    let row_opt = client.query_opt(sql, &[&license_plate]).await.map_err(|e| e.to_string())?;
+    
+    if let Some(row) = row_opt {
+        let status = VehicleQueueStatusDto {
+            id: row.get("id"),
+            vehicleId: row.get("vehicle_id"),
+            licensePlate: row.get("license_plate"),
+            destinationId: row.get("destination_id"),
+            destinationName: row.get("destination_name"),
+            queuePosition: row.get("queue_position"),
+            status: row.get("status"),
+            availableSeats: row.get("available_seats"),
+            totalSeats: row.get("total_seats"),
+            basePrice: row.get("base_price"),
+            enteredAt: format!("{}", row.get::<_, chrono::DateTime<chrono::FixedOffset>>("entered_at")),
+        };
+        Ok(Some(status))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+async fn db_purchase_day_pass(license_plate: String, vehicle_id: String, price: f64, created_by: Option<String>) -> Result<String, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    
+    // Check if day pass already exists for today using Tunisian time
+    let existing_day_pass = client.query_opt(
+        "SELECT id FROM day_passes WHERE license_plate = $1 AND is_active = true AND (purchase_date AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date",
+        &[&license_plate]
+    ).await.map_err(|e| e.to_string())?;
+    
+    if existing_day_pass.is_some() {
+        return Err("Un pass journalier valide existe déjà pour ce véhicule aujourd'hui".to_string());
+    }
+    
+    // Create day pass with Tunisian time
+    let day_pass_id = uuid::Uuid::new_v4().to_string();
+    let staff_id = created_by.unwrap_or_else(|| "SYSTEM".to_string());
+    
+    // Get current Tunisian time
+    let now_tunisian = chrono::Utc::now().with_timezone(&chrono_tz::Africa::Tunis);
+    let today_start = now_tunisian.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let today_end = now_tunisian.date_naive().and_hms_opt(23, 59, 59).unwrap();
+    
+    // Convert to UTC for database storage
+    let now_utc = now_tunisian.with_timezone(&chrono::Utc);
+    let today_start_utc = today_start.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
+    let today_end_utc = today_end.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
+    
+    client.execute(
+        "INSERT INTO day_passes (id, vehicle_id, license_plate, price, purchase_date, valid_from, valid_until, is_active, is_expired, created_by, created_at, updated_at) 
+         VALUES ($1,$2,$3,$4, $5 AT TIME ZONE 'Africa/Tunis', $6 AT TIME ZONE 'Africa/Tunis', $7 AT TIME ZONE 'Africa/Tunis', true, false, $8, $5 AT TIME ZONE 'Africa/Tunis', $5 AT TIME ZONE 'Africa/Tunis')",
+        &[&day_pass_id, &vehicle_id, &license_plate, &price, &now_utc, &today_start_utc, &today_end_utc, &staff_id]
+    ).await.map_err(|e| e.to_string())?;
+    
+    // Print day pass ticket
+    let day_pass_number = format!("DP{}", chrono::Utc::now().timestamp_millis().to_string().chars().rev().take(8).collect::<String>().chars().rev().collect::<String>());
+    let dp_ticket = serde_json::json!({
+        "dayPassNumber": day_pass_number,
+        "licensePlate": license_plate,
+        "driverName": "",
+        "amount": price.to_string(),
+        "purchaseDate": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
+        "validFor": now_tunisian.format("%Y-%m-%d").to_string(),
+        "destinationName": "Toutes destinations",
+        "isReprint": false
+    }).to_string();
+    
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let guard = printer.lock().map_err(|e| e.to_string())?;
+        guard.clone()
+    };
+    
+    // Print in background (non-blocking)
+    tauri::async_runtime::spawn(async move {
+        let _ = printer_clone.print_day_pass_ticket(dp_ticket, None).await;
+    });
+    
+    Ok(format!("Pass journalier acheté avec succès pour {} ({} TND)", license_plate, price))
+}
+
+#[tauri::command]
+async fn db_get_day_pass_price() -> Result<f64, String> {
+    // For now, return a fixed price. In the future, this could be configurable
+    Ok(2.0)
+}
+
+#[tauri::command]
+async fn test_day_pass_printing(license_plate: String, destination_name: String) -> Result<String, String> {
+    println!("🧪 [TEST DEBUG] Testing day pass printing for vehicle: {} to destination: {}", license_plate, destination_name);
+    
+    let result = print_entry_or_daypass_if_needed(license_plate.clone(), destination_name.clone(), 2.0).await;
+    match result {
+        Ok(_) => {
+            println!("✅ [TEST DEBUG] Day pass printing test completed successfully for {}", license_plate);
+            Ok(format!("Day pass printing test completed successfully for {}", license_plate))
+        },
+        Err(e) => {
+            println!("❌ [TEST DEBUG] Day pass printing test failed for {}: {}", license_plate, e);
+            Err(format!("Day pass printing test failed for {}: {}", license_plate, e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn force_print_day_pass_ticket(license_plate: String, destination_name: String) -> Result<String, String> {
+    println!("🖨️ [FORCE PRINT] Force printing day pass ticket for vehicle: {} to destination: {}", license_plate, destination_name);
+    
+    let result = print_entry_or_daypass_if_needed(license_plate.clone(), destination_name.clone(), 2.0).await;
+    match result {
+        Ok(_) => {
+            println!("✅ [FORCE PRINT] Day pass ticket force printed successfully for {}", license_plate);
+            Ok(format!("Day pass ticket force printed successfully for {}", license_plate))
+        },
+        Err(e) => {
+            println!("❌ [FORCE PRINT] Day pass ticket force print failed for {}: {}", license_plate, e);
+            Err(format!("Day pass ticket force print failed for {}: {}", license_plate, e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn test_day_pass_printing_with_vehicle(license_plate: String, destination_name: String) -> Result<String, String> {
+    println!("🧪 [TEST VEHICLE] Testing day pass printing for vehicle: {} to destination: {}", license_plate, destination_name);
+    
+    // First check if vehicle exists
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let vehicle_check = client.query_opt(
+        "SELECT id, license_plate FROM vehicles WHERE license_plate = $1",
+        &[&license_plate]
+    ).await.map_err(|e| e.to_string())?;
+    
+    if vehicle_check.is_none() {
+        return Err(format!("Vehicle {} not found in database", license_plate));
+    }
+    
+    println!("✅ [TEST VEHICLE] Vehicle {} found in database, proceeding with day pass test", license_plate);
+    
+    // Test the day pass printing
+    let result = print_entry_or_daypass_if_needed(license_plate.clone(), destination_name.clone(), 2.0).await;
+    match result {
+        Ok(_) => {
+            println!("✅ [TEST VEHICLE] Day pass printing test completed successfully for {}", license_plate);
+            Ok(format!("Day pass printing test completed successfully for vehicle: {}", license_plate))
+        },
+        Err(e) => {
+            println!("❌ [TEST VEHICLE] Day pass printing test failed for {}: {}", license_plate, e);
+            Err(format!("Day pass printing test failed for vehicle {}: {}", license_plate, e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn check_vehicle_day_passes(license_plate: String) -> Result<String, String> {
+    println!("🔍 [DAY PASS CHECK] Checking day passes for vehicle: {}", license_plate);
+    
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    
+    // Get current Tunisian date
+    let now_tunisian = chrono::Utc::now().with_timezone(&chrono_tz::Africa::Tunis);
+    let today_date = now_tunisian.date_naive();
+    
+    println!("📅 [DAY PASS CHECK] Current Tunisian date: {}", today_date.format("%Y-%m-%d"));
+    
+    // Check all day passes for this vehicle
+    let all_day_passes = client.query(
+        "SELECT id, price, purchase_date, is_active, 
+                (purchase_date AT TIME ZONE 'Africa/Tunis')::date as tunisian_date
+         FROM day_passes 
+         WHERE license_plate = $1 
+         ORDER BY purchase_date DESC",
+        &[&license_plate]
+    ).await.map_err(|e| e.to_string())?;
+    
+    println!("📊 [DAY PASS CHECK] Found {} day pass records for vehicle {}", all_day_passes.len(), license_plate);
+    
+    let mut result = format!("Day Pass Check for Vehicle: {}\n", license_plate);
+    result.push_str(&format!("Current Tunisian Date: {}\n\n", today_date.format("%Y-%m-%d")));
+    
+    for (i, row) in all_day_passes.iter().enumerate() {
+        let day_pass_id: String = row.get("id");
+        let price: f64 = row.get("price");
+        let purchase_date: chrono::NaiveDateTime = row.get("purchase_date");
+        let is_active: bool = row.get("is_active");
+        let tunisian_date: chrono::NaiveDate = row.get("tunisian_date");
+        
+        let purchase_date_utc: chrono::DateTime<chrono::Utc> = chrono::DateTime::from_naive_utc_and_offset(purchase_date, chrono::Utc);
+        let tunisian_time = purchase_date_utc.with_timezone(&chrono_tz::Africa::Tunis);
+        
+        let is_today = tunisian_date == today_date;
+        let status = if is_today && is_active { "✅ TODAY & ACTIVE" } 
+                    else if is_today && !is_active { "⚠️ TODAY & INACTIVE" }
+                    else if is_active { "✅ ACTIVE (other day)" }
+                    else { "❌ INACTIVE" };
+        
+        result.push_str(&format!(
+            "Record {}: ID={}, Price={} TND, Date={}, Tunisian Date={}, Active={}, Status={}\n",
+            i + 1, day_pass_id, price, tunisian_time.format("%Y-%m-%d %H:%M:%S"), 
+            tunisian_date.format("%Y-%m-%d"), is_active, status
+        ));
+    }
+    
+    // Check specifically for today's day pass
+    let today_day_pass = client.query_opt(
+        "SELECT id, price, purchase_date FROM day_passes 
+         WHERE license_plate = $1 
+         AND is_active = true 
+         AND (purchase_date AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date 
+         ORDER BY purchase_date DESC LIMIT 1",
+        &[&license_plate]
+    ).await.map_err(|e| e.to_string())?;
+    
+    if let Some(row) = today_day_pass {
+        let day_pass_price: f64 = row.get("price");
+        result.push_str(&format!("\n🎯 RESULT: Vehicle HAS a day pass for today (Price: {} TND) - Will print 0 TND reprint ticket", day_pass_price));
+    } else {
+        result.push_str(&format!("\n🎯 RESULT: Vehicle has NO day pass for today - Will print 2 TND new day pass ticket"));
+    }
+    
+    println!("{}", result);
+    Ok(result)
+}
+
+#[tauri::command]
+async fn debug_printer_status() -> Result<String, String> {
+    // Get current printer config and env snapshot first
+    let (current_printer, env_snapshot) = {
+        let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+        let current_printer = printer.get_current_printer()?;
+        let env_snapshot = printer.debug_env_snapshot();
+        (current_printer, env_snapshot)
+    };
+    
+    let mut debug_info = String::new();
+    debug_info.push_str("=== PRINTER DEBUG INFO ===\n");
+    
+    if let Some(config) = current_printer {
+        debug_info.push_str(&format!("Current Printer: {} ({}:{})\n", config.name, config.ip, config.port));
+        debug_info.push_str(&format!("Width: {}, Timeout: {}ms, Model: {}\n", config.width, config.timeout, config.model));
+        debug_info.push_str(&format!("Enabled: {}, Default: {}\n", config.enabled, config.is_default));
+    } else {
+        debug_info.push_str("No current printer configured\n");
+    }
+    
+    debug_info.push_str("\n=== ENVIRONMENT VARIABLES ===\n");
+    for (key, value) in env_snapshot.iter() {
+        debug_info.push_str(&format!("{}: {}\n", key, value));
+    }
+    
+    // Test printer connection
+    debug_info.push_str("\n=== PRINTER CONNECTION TEST ===\n");
+    let printer_clone = {
+        let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+        printer.clone()
+    };
+    let connection_result = printer_clone.test_connection().await;
+    match connection_result {
+        Ok(status) => {
+            debug_info.push_str(&format!("Connection Status: {}\n", if status.connected { "CONNECTED" } else { "DISCONNECTED" }));
+            if let Some(error) = status.error {
+                debug_info.push_str(&format!("Error: {}\n", error));
+            }
+        },
+        Err(e) => {
+            debug_info.push_str(&format!("Connection Test Failed: {}\n", e));
+        }
+    }
+    
+    println!("🔍 [PRINTER DEBUG] {}", debug_info);
+    Ok(debug_info)
+}
+
 #[tauri::command]
 async fn print_talon(talon_data: String, staff_name: Option<String>) -> Result<String, String> {
     let printer = PRINTER_SERVICE.clone();
@@ -2400,7 +2966,20 @@ fn main() {
             db_get_queued_without_day_pass,
             db_end_trip_with_partial_capacity,
             db_update_queue_positions,
-            db_move_vehicle_to_front
+            db_move_vehicle_to_front,
+            db_get_all_vehicles,
+            db_add_vehicle_to_queue,
+            db_remove_vehicle_from_queue,
+            db_update_queue_position,
+            db_get_vehicle_queue_status,
+            db_get_available_destinations,
+            db_purchase_day_pass,
+            db_get_day_pass_price,
+            test_day_pass_printing,
+            force_print_day_pass_ticket,
+            test_day_pass_printing_with_vehicle,
+            check_vehicle_day_passes,
+            debug_printer_status
         ])
         .setup(|app| {
             let app_handle = app.handle();

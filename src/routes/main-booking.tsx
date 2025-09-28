@@ -522,31 +522,49 @@ export default function MainBooking() {
   // Fetch available destinations from API (only destinations with available seats)
   const fetchDestinations = async () => {
     setIsLoading(true);
-    const filters: { governorate?: string; delegation?: string } = {};
-    if (selectedGovernment) {
-      filters.governorate = selectedGovernment;
-    }
-    if (selectedDelegation) {
-      filters.delegation = selectedDelegation;
-    }
     
-    const response = await dbClient.getAvailableBookingDestinations(filters);
-    const availableDestinations: Destination[] = (response || [])
-      .filter((d: any) => (d.totalAvailableSeats || 0) > 0)
-      .map((d: any) => ({
-        destinationId: d.destinationId,
-        destinationName: d.destinationName,
-        totalAvailableSeats: d.totalAvailableSeats,
-        vehicleCount: d.vehicleCount,
-        governorate: d.governorate,
-        governorateAr: d.governorateAr,
-        delegation: d.delegation,
-        delegationAr: d.delegationAr,
-      }));
-      setDestinations(availableDestinations);
-      setLastUpdateTime(new Date());
-      console.log(`📍 Fetched ${availableDestinations.length} available destinations`);
-    setIsLoading(false);
+    try {
+      // Check database health first
+      const dbHealthy = await dbClient.health();
+      console.log('🔍 [MAIN BOOKING DEBUG] Database health:', dbHealthy);
+      
+      if (!dbHealthy) {
+        throw new Error('Database connection is not healthy');
+      }
+      
+      const filters: { governorate?: string; delegation?: string } = {};
+      if (selectedGovernment) {
+        filters.governorate = selectedGovernment;
+      }
+      if (selectedDelegation) {
+        filters.delegation = selectedDelegation;
+      }
+      
+      console.log('🔍 [MAIN BOOKING DEBUG] Fetching destinations with filters:', filters);
+      const response = await dbClient.getAvailableBookingDestinations(filters);
+      console.log('🔍 [MAIN BOOKING DEBUG] Raw destinations response:', response);
+      
+      const availableDestinations: Destination[] = (response || [])
+        .filter((d: any) => (d.totalAvailableSeats || 0) > 0)
+        .map((d: any) => ({
+          destinationId: d.destinationId,
+          destinationName: d.destinationName,
+          totalAvailableSeats: d.totalAvailableSeats,
+          vehicleCount: d.vehicleCount,
+          governorate: d.governorate,
+          governorateAr: d.governorateAr,
+          delegation: d.delegation,
+          delegationAr: d.delegationAr,
+        }));
+        setDestinations(availableDestinations);
+        setLastUpdateTime(new Date());
+        console.log(`📍 Fetched ${availableDestinations.length} available destinations`);
+    } catch (error: any) {
+      console.error('❌ [MAIN BOOKING DEBUG] Error fetching destinations:', error);
+      setDestinations([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Fetch routes for pricing

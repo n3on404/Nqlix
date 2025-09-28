@@ -1664,10 +1664,15 @@ async function printDayPassTicket() {{
         
         printer.alignLeft();
         printer.println("Plaque: " + dayPassData.licensePlate);
+        
+    
         printer.println("Montant: " + dayPassData.amount + " TND");
+        
+        
         printer.println("Date d'achat: " + dayPassData.purchaseDate);
         printer.println("Valide pour: " + dayPassData.validFor);
         printer.println("Destination: " + dayPassData.destinationName);
+
         
         // Minimal footer
         printer.alignCenter();

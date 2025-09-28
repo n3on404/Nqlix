@@ -721,36 +721,25 @@ Date: ${paymentData.date}
    */
   formatDayPassTicketData(dayPassData: any): string {
     console.log('📝 formatDayPassTicketData called with data:', dayPassData);
-    let ticketContent = '';
     
     // Generate a unique day pass number
     const dayPassNumber = `DP${Date.now().toString().slice(-8)}`;
-    ticketContent += `N° Pass: ${dayPassNumber}\n`;
-    
-    // Vehicle information
-    if (dayPassData.licensePlate) {
-      ticketContent += `Véhicule: ${dayPassData.licensePlate}\n`;
-    }
-    
-    // Driver information
-    if (dayPassData.driverName) {
-      ticketContent += `Conducteur: ${dayPassData.driverName}\n`;
-    }
-    
-    // Purchase amount
-    if (dayPassData.amount) {
-      ticketContent += `Montant: ${dayPassData.amount.toFixed(2)} TND\n`;
-    }
     
     // Purchase date and time
     const purchaseDate = new Date();
-    ticketContent += `Date d'achat: ${purchaseDate.toLocaleString('fr-FR')}\n`;
     
-    // Validity information
-    ticketContent += `Valide pour: ${purchaseDate.toLocaleDateString('fr-FR')}\n`;
-    ticketContent += `Type: Pass Journalier\n`;
+    // Return JSON object as string for the printer
+    const ticketData = {
+      dayPassNumber: dayPassNumber,
+      licensePlate: dayPassData.licensePlate || '',
+      driverName: dayPassData.driverName || '',
+      amount: dayPassData.amount ? dayPassData.amount.toFixed(2) : '0.00',
+      purchaseDate: purchaseDate.toLocaleString('fr-FR'),
+      validFor: purchaseDate.toLocaleDateString('fr-FR'),
+      destinationName: dayPassData.destinationName || 'Toutes destinations'
+    };
     
-    return ticketContent;
+    return JSON.stringify(ticketData);
   }
 
   /**
@@ -758,42 +747,31 @@ Date: ${paymentData.date}
    */
   formatExitPassTicketData(exitPassData: any): string {
     console.log('📝 formatExitPassTicketData called with data:', exitPassData);
-    let ticketContent = '';
     
     // Generate a unique exit pass number
     const exitPassNumber = `EXIT${Date.now().toString().slice(-8)}`;
-    ticketContent += `N° Sortie: ${exitPassNumber}\n`;
-    
-    // Current vehicle info
-    ticketContent += `Véhicule: ${exitPassData.licensePlate}\n`;
-    ticketContent += `Destination: ${exitPassData.destinationName}\n`;
     
     const currentExitDate = new Date(exitPassData.currentExitTime);
-    if (!isNaN(currentExitDate.getTime())) {
-      ticketContent += `Sorti à: ${currentExitDate.toLocaleString('fr-FR')}\n`;
-    } else {
-      ticketContent += `Sorti à: ${exitPassData.currentExitTime}\n`; // Fallback to raw string
-    }
-    ticketContent += `\n`;
+    const exitTime = !isNaN(currentExitDate.getTime()) 
+      ? currentExitDate.toLocaleString('fr-FR')
+      : exitPassData.currentExitTime || new Date().toLocaleString('fr-FR');
     
-    // Previous vehicle info (if any)
-    if (exitPassData.previousLicensePlate && exitPassData.previousExitTime) {
-      ticketContent += `Véhicule précédent: ${exitPassData.previousLicensePlate}\n`;
-      ticketContent += `Sorti à: ${new Date(exitPassData.previousExitTime).toLocaleString('fr-FR')}\n`;
-      ticketContent += `\n`;
-    } else {
-      ticketContent += `Véhicule précédent: N/A\n`;
-      ticketContent += `Sorti à: N/A\n`;
-      ticketContent += `\n`;
-    }
+    // Return JSON object as string for the printer
+    const ticketData = {
+      exitPassNumber: exitPassNumber,
+      licensePlate: exitPassData.licensePlate || '',
+      destinationName: exitPassData.destinationName || '',
+      exitTime: exitTime,
+      vehicleCapacity: exitPassData.vehicleCapacity || 8,
+      previousVehicle: exitPassData.previousLicensePlate || null,
+      previousExitTime: exitPassData.previousExitTime ? new Date(exitPassData.previousExitTime).toLocaleString('fr-FR') : null,
+      basePricePerSeat: exitPassData.basePricePerSeat || 0,
+      totalSeats: exitPassData.totalSeats || 8,
+      totalBasePrice: exitPassData.totalBasePrice || 0
+    };
     
-    // Pricing info
-    ticketContent += `Prix par place: ${exitPassData.basePricePerSeat.toFixed(3)} TND\n`;
-    ticketContent += `Total places: ${exitPassData.totalSeats}\n`;
-    ticketContent += `Prix total: ${exitPassData.totalBasePrice.toFixed(3)} TND\n`;
-    
-    console.log('📄 Formatted exit pass ticket content:', ticketContent);
-    return ticketContent;
+    console.log('📄 Formatted exit pass ticket data:', ticketData);
+    return JSON.stringify(ticketData);
   }
 
   /**

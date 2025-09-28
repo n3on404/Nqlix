@@ -123,7 +123,7 @@ export default function Layout() {
         )}
 
         {/* Supervisor Mode Toggle */}
-        {isSupervisor && (
+        {(isSupervisor || isAdmin) && (
           <div className="mb-2">
             <Button
               variant={isSupervisorMode ? "default" : "outline"}

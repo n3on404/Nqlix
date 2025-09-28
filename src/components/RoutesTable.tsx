@@ -42,11 +42,8 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState({
-    stationId: '',
-    stationName: '',
-    basePrice: '',
-    governorate: '',
-    delegation: ''
+    delegation: '',
+    basePrice: ''
   });
   
   // Pagination state
@@ -157,11 +154,11 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
   // Create new route
   const createRoute = async () => {
     try {
-      if (!createForm.stationId || !createForm.stationName || !createForm.basePrice || !createForm.governorate || !createForm.delegation) {
+      if (!createForm.delegation || !createForm.basePrice) {
         addNotification({
           type: 'error',
           title: 'Missing information',
-          message: 'All fields are required'
+          message: 'Délégation and prix are required'
         });
         return;
       }
@@ -176,12 +173,17 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
         return;
       }
 
+      // Generate station ID from delegation name
+      const stationId = `station-${createForm.delegation.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')}`;
+      const stationName = createForm.delegation.toUpperCase();
+      const governorate = 'Monastir';
+
       setIsCreating(true);
       const response = await api.createRoute({
-        stationId: createForm.stationId,
-        stationName: createForm.stationName,
+        stationId: stationId,
+        stationName: stationName,
         basePrice: basePrice,
-        governorate: createForm.governorate,
+        governorate: governorate,
         delegation: createForm.delegation
       });
 
@@ -194,11 +196,8 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
         
         // Reset form and close dialog
         setCreateForm({
-          stationId: '',
-          stationName: '',
-          basePrice: '',
-          governorate: '',
-          delegation: ''
+          delegation: '',
+          basePrice: ''
         });
         setIsCreateDialogOpen(false);
         
@@ -293,9 +292,17 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
     setCurrentPage(page);
   };
 
-  // Load routes on component mount
+  // Load routes on component mount and set up auto-refresh
   useEffect(() => {
     loadRoutes();
+    
+    // Set up auto-refresh every 30 seconds
+    const interval = setInterval(() => {
+      loadRoutes();
+    }, 30000);
+    
+    // Cleanup interval on component unmount
+    return () => clearInterval(interval);
   }, []);
 
   if (isLoading) {
@@ -596,60 +603,21 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
           
           <div className="space-y-4">
             <div>
-              <label htmlFor="station-id" className="text-sm font-medium">
-                Station ID *
-              </label>
-              <Input
-                id="station-id"
-                value={createForm.stationId}
-                onChange={(e) => setCreateForm(prev => ({ ...prev, stationId: e.target.value }))}
-                placeholder="e.g., station-new-delegation"
-                className="mt-1"
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="station-name" className="text-sm font-medium">
-                Station Name *
-              </label>
-              <Input
-                id="station-name"
-                value={createForm.stationName}
-                onChange={(e) => setCreateForm(prev => ({ ...prev, stationName: e.target.value }))}
-                placeholder="e.g., NEW DELEGATION"
-                className="mt-1"
-              />
-            </div>
-            
-            <div>
-              <label htmlFor="governorate" className="text-sm font-medium">
-                Governorate *
-              </label>
-              <Input
-                id="governorate"
-                value={createForm.governorate}
-                onChange={(e) => setCreateForm(prev => ({ ...prev, governorate: e.target.value }))}
-                placeholder="e.g., Monastir"
-                className="mt-1"
-              />
-            </div>
-            
-            <div>
               <label htmlFor="delegation" className="text-sm font-medium">
-                Delegation *
+                Délégation *
               </label>
               <Input
                 id="delegation"
                 value={createForm.delegation}
                 onChange={(e) => setCreateForm(prev => ({ ...prev, delegation: e.target.value }))}
-                placeholder="e.g., New Delegation"
+                placeholder="e.g., Nouvelle Délégation"
                 className="mt-1"
               />
             </div>
             
             <div>
               <label htmlFor="base-price" className="text-sm font-medium">
-                Base Price (TND) *
+                Prix de Base (TND) *
               </label>
               <Input
                 id="base-price"
@@ -663,17 +631,23 @@ export const RoutesTable: React.FC<RoutesTableProps> = ({ className = '' }) => {
               />
             </div>
             
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-sm text-muted-foreground">
+                <strong>Gouvernorat:</strong> Monastir (automatique)
+              </p>
+              <p className="text-sm text-muted-foreground">
+                <strong>Nom de la station:</strong> Sera défini automatiquement comme la délégation
+              </p>
+            </div>
+            
             <div className="flex justify-end gap-2 pt-4">
               <Button
                 variant="outline"
                 onClick={() => {
                   setIsCreateDialogOpen(false);
                   setCreateForm({
-                    stationId: '',
-                    stationName: '',
-                    basePrice: '',
-                    governorate: '',
-                    delegation: ''
+                    delegation: '',
+                    basePrice: ''
                   });
                 }}
               >

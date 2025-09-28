@@ -54,7 +54,7 @@ const SupervisorVehicleManagement: React.FC = () => {
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
   const [isVehicleDetailsLoading, setIsVehicleDetailsLoading] = useState(false);
   const [stationConfig, setStationConfig] = useState<any>(null);
-  const tunisianPlateRegex = /^\d{2,3} ?TUN ?\d{4}$/i;
+  const tunisianPlateRegex = /^\d{2,3} ?TUN ?\d{1,4}$/i;
   const [licensePlateError, setLicensePlateError] = useState<string | null>(null);
   const [showCreateStation, setShowCreateStation] = useState(false);
   const [stationSearchTerm, setStationSearchTerm] = useState('');
@@ -164,8 +164,8 @@ const SupervisorVehicleManagement: React.FC = () => {
     station.name.toLowerCase().includes(destinationSearchTerm.toLowerCase())
   );
 
-  // Only supervisors can access
-  if (currentStaff?.role !== 'SUPERVISOR') {
+  // Only supervisors and admins can access
+  if (currentStaff?.role !== 'SUPERVISOR' && currentStaff?.role !== 'ADMIN') {
     return <div className="p-8 text-center text-lg">Accès refusé. Réservé au superviseur.</div>;
   }
 
@@ -203,6 +203,7 @@ const SupervisorVehicleManagement: React.FC = () => {
     fetchRoutes();
     const interval = setInterval(() => {
       fetchVehicles();
+      fetchRoutes();
     }, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -311,7 +312,7 @@ const SupervisorVehicleManagement: React.FC = () => {
       setForm({ ...form, [name]: type === 'number' ? Number(value) : value });
       if (name === 'licensePlate') {
         if (value && !tunisianPlateRegex.test(value.trim())) {
-          setLicensePlateError('Format: 123 TUN 4567 (2-3 digits, TUN, 4 digits)');
+          setLicensePlateError('Format: 123 TUN 4567 (2-3 digits, TUN, 1-4 digits)');
         } else {
           setLicensePlateError(null);
         }
@@ -323,7 +324,7 @@ const SupervisorVehicleManagement: React.FC = () => {
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (form.licensePlate && !tunisianPlateRegex.test(form.licensePlate.trim())) {
-      setLicensePlateError('Format: 123 TUN 4567 (2-3 digits, TUN, 4 digits)');
+      setLicensePlateError('Format: 123 TUN 4567 (2-3 digits, TUN, 1-4 digits)');
       return;
     }
     setIsSubmitting(true);
@@ -359,7 +360,9 @@ const SupervisorVehicleManagement: React.FC = () => {
           defaultDestinationId: ''
         });
         addNotification({ type: 'success', title: 'Véhicule créé', message: 'Le véhicule a été créé avec succès.' });
-        fetchVehicles();
+        // Immediately refresh both vehicles and routes
+        await fetchVehicles();
+        await fetchRoutes();
       } else {
         addNotification({ type: 'error', title: 'Erreur', message: vehicleRes.message || 'Échec de la création du véhicule.' });
       }
@@ -411,7 +414,9 @@ const SupervisorVehicleManagement: React.FC = () => {
     const res = await api.banVehicle(vehicleId);
     if (res.success) {
       addNotification({ type: 'success', title: 'Véhicule banni', message: 'Le véhicule a été banni avec succès.' });
-      fetchVehicles();
+      // Immediately refresh both vehicles and routes
+      await fetchVehicles();
+      await fetchRoutes();
       setIsVehicleModalOpen(false);
     } else {
       addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du bannissement du véhicule.' });
@@ -531,7 +536,7 @@ const SupervisorVehicleManagement: React.FC = () => {
                     className={licensePlateError ? "border-red-500" : ""}
                   />
                   <div className="text-xs text-muted-foreground mt-1">
-                    Format: 2-3 chiffres, TUN, 4 chiffres
+                    Format: 2-3 chiffres, TUN, 1-4 chiffres
                   </div>
                   {licensePlateError && (
                     <div className="text-xs text-red-500 mt-1 flex items-center gap-1">

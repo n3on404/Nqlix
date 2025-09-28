@@ -12,6 +12,7 @@ import { thermalPrinter } from "../services/thermalPrinterService";
 import { invoke } from "@tauri-apps/api/tauri";
 import { getLocalStorage, setLocalStorage } from "../lib/storage";
 import { useMQTT } from "../lib/useMQTT";
+import { SERVER_CONFIG } from "../config/server";
 
 export default function Settings() {
   const { setTheme, theme: currentTheme } = useSettingsContext();
@@ -337,7 +338,7 @@ export default function Settings() {
               <div className="text-sm space-y-1">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Broker:</span>
-                  <span className="font-mono">ws://localhost:8083</span>
+                  <span className="font-mono">{SERVER_CONFIG.MQTT.BROKER_URL}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Client ID:</span>

@@ -178,12 +178,28 @@ export default function DayPassPage() {
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
-      await Promise.all([
-        fetchDriversWithoutDayPass(),
-        fetchTodayDayPasses(),
-        fetchTodayExitPasses()
-      ]);
-      setIsLoading(false);
+      setError(null);
+      
+      try {
+        // Check database health first
+        const dbHealthy = await dbClient.health();
+        console.log('🔍 [DAY PASS DEBUG] Database health:', dbHealthy);
+        
+        if (!dbHealthy) {
+          throw new Error('Database connection is not healthy');
+        }
+        
+        await Promise.all([
+          fetchDriversWithoutDayPass(),
+          fetchTodayDayPasses(),
+          fetchTodayExitPasses()
+        ]);
+      } catch (error: any) {
+        console.error('❌ [DAY PASS DEBUG] Error loading data:', error);
+        setError(`Erreur lors du chargement des données: ${error.message}`);
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     loadData();

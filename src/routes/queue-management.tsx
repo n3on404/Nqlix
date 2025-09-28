@@ -559,21 +559,20 @@ export default function QueueManagement() {
     }
   }, [selectedDestination, queueSummaries, fetchQueueForDestination]);
 
-  // Fetch vehicles when modal opens
+  // Fetch vehicles when modal opens - using direct database access
   useEffect(() => {
     if (showAddVehicleModal) {
       setVehiclesLoading(true);
       setVehiclesError(null);
-      api.getVehicles().then(async res => {
-        console.log('🚗 [VEHICLE DEBUG] API response:', res);
-        if (res.success && res.data) {
-          // Handle nested response structure
-          const vehiclesData = res.data?.data || res.data;
-          console.log('🚗 [VEHICLE DEBUG] Vehicles data:', vehiclesData);
+      
+      const fetchVehiclesFromDB = async () => {
+        try {
+          console.log('🚗 [VEHICLE DEBUG] Fetching vehicles from database...');
+          const vehiclesData = await dbClient.getAllVehicles();
+          console.log('🚗 [VEHICLE DEBUG] Vehicles data from DB:', vehiclesData);
           
-          // Ensure vehiclesData is an array
           if (Array.isArray(vehiclesData)) {
-            // Batch check day pass for faster resolution and show per-card loading until resolved
+            // Batch check day pass for faster resolution
             const plates = vehiclesData.map((v: any) => v.licensePlate).filter(Boolean);
             // Set initial list with loading state
             setVehicles(vehiclesData.map((v: any) => ({ ...v, dayPassValid: undefined })));
@@ -591,8 +590,7 @@ export default function QueueManagement() {
                     const has = await dbClient.hasDayPassToday(vehicle.licensePlate);
                     return { ...vehicle, dayPassValid: has };
                   } catch {
-                    const has = await checkDayPassStatus(vehicle.licensePlate);
-                    return { ...vehicle, dayPassValid: has };
+                    return { ...vehicle, dayPassValid: false };
                   }
                 })
               );
@@ -602,16 +600,15 @@ export default function QueueManagement() {
             console.error('🚗 [VEHICLE DEBUG] Vehicles data is not an array:', vehiclesData);
             setVehiclesError("Format de données de véhicules invalide");
           }
-        } else {
-          console.error('🚗 [VEHICLE DEBUG] API call failed:', res);
-          setVehiclesError(res.message || "Échec de la récupération des véhicules");
+        } catch (error: any) {
+          console.error('🚗 [VEHICLE DEBUG] Database call error:', error);
+          setVehiclesError("Échec de la récupération des véhicules depuis la base de données");
+        } finally {
+          setVehiclesLoading(false);
         }
-        setVehiclesLoading(false);
-      }).catch(err => {
-        console.error('🚗 [VEHICLE DEBUG] API call error:', err);
-        setVehiclesError("Échec de la récupération des véhicules");
-        setVehiclesLoading(false);
-      });
+      };
+      
+      fetchVehiclesFromDB();
     }
   }, [showAddVehicleModal]);
 
@@ -634,20 +631,21 @@ export default function QueueManagement() {
     }
   }, [selectedVehicle]);
 
-  // Fetch all routes on mount
+  // Fetch all routes on mount - using direct database access
   useEffect(() => {
-    api.get("/api/routes").then(res => {
-      if (res.success && Array.isArray(res.data)) {
-        console.log('📍 Routes loaded:', res.data);
-        setRoutes(res.data);
-      } else {
-        console.warn('⚠️ Failed to load routes:', res);
+    const fetchRoutesFromDB = async () => {
+      try {
+        console.log('📍 Fetching routes from database...');
+        const routesData = await dbClient.getAvailableDestinations();
+        console.log('📍 Routes loaded from DB:', routesData);
+        setRoutes(routesData);
+      } catch (error) {
+        console.error('❌ Error loading routes from database:', error);
         setRoutes([]);
       }
-    }).catch(error => {
-      console.error('❌ Error loading routes:', error);
-      setRoutes([]);
-    });
+    };
+    
+    fetchRoutesFromDB();
   }, []);
 
   // Fetch governments for filtering
@@ -704,7 +702,7 @@ export default function QueueManagement() {
     }
   };
 
-  // Purchase day pass for vehicle
+  // Purchase day pass for vehicle using direct database access
   const purchaseDayPass = async (licensePlate: string) => {
     console.log('🎫 [DAY PASS DEBUG] Starting day pass purchase for:', licensePlate);
     setDayPassLoading(true);
@@ -713,12 +711,9 @@ export default function QueueManagement() {
     try {
       // Find the selected vehicle to get vehicleId
       const vehicle = selectedVehicle;
-      // Debug: Log vehicle data for day pass purchase
       console.log('🎫 [DAY PASS DEBUG] Vehicle data for day pass purchase:', {
         vehicle,
-        hasId: !!vehicle?.id,
-        hasDriver: !!vehicle?.driver,
-        hasDriverId: !!vehicle?.driver?.id
+        hasId: !!vehicle?.id
       });
       
       if (!vehicle) {
@@ -732,103 +727,66 @@ export default function QueueManagement() {
         setDayPassError('ID du véhicule manquant');
         return { success: false, message: 'ID du véhicule manquant' };
       }
-      
-      // Driver ID no longer required (driver table removed)
 
-      console.log('🎫 [DAY PASS DEBUG] Making API call to purchase day pass...');
-      const response = await api.post('/api/day-pass/purchase', {
-        licensePlate,
-        vehicleId: vehicle.id,
-        paymentMethod: 'cash' // Default to cash payment
-      });
-      console.log('🎫 [DAY PASS DEBUG] API response:', response);
+      console.log('🎫 [DAY PASS DEBUG] Making database call to purchase day pass...');
+      const staffId = currentStaff?.id || undefined;
+      const result = await dbClient.purchaseDayPass(licensePlate, vehicle.id, dayPassPrice, staffId);
+      console.log('🎫 [DAY PASS DEBUG] Database response:', result);
       
-      if (response.success) {
-        console.log('✅ [DAY PASS DEBUG] Day pass purchase successful');
-        addNotification({
-          type: 'success',
-          title: 'Pass journalier acheté',
-          message: `Pass journalier acheté avec succès pour ${licensePlate}`,
-          duration: 4000
-        });
-        // Immediately reflect day pass in UI based on notification
-        try {
-          // Mark selected vehicle as having valid day pass
-          setSelectedVehicle((prev: any) => prev && prev.licensePlate === licensePlate ? { ...prev, dayPassValid: true } : prev);
-          // Update vehicles list badge immediately
-          setVehicles((prev: any[]) => prev.map((v: any) => v.licensePlate === licensePlate ? { ...v, dayPassValid: true } : v));
-        } catch {}
-        // Trigger focused data refreshes to ensure server truth
-        try {
-          // Refresh destinations available for this vehicle (often unlocked by day pass)
-          await fetchVehicleDestinations(licensePlate);
-        } catch {}
-        // Also refresh queue summaries in background
-        try { debouncedRefreshQueues(); } catch {}
-        
-        // Print day pass ticket
-        try {
-          console.log('🎫 [DAY PASS DEBUG] Formatting day pass ticket data...');
-          const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
-            licensePlate: licensePlate,
-            driverName: vehicle.driver ? `${vehicle.driver.firstName} ${vehicle.driver.lastName}` : 'N/A',
-            amount: dayPassPrice
-          });
-          console.log('🎫 [DAY PASS DEBUG] Day pass ticket data:', dayPassTicketData);
-          
-          console.log('🖨️ [DAY PASS DEBUG] Printing day pass ticket for:', licensePlate);
-          const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
-          console.log('🎫 [DAY PASS DEBUG] Staff name for printing:', staffName);
-          await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
-          console.log('✅ [DAY PASS DEBUG] Day pass ticket printed successfully');
-        } catch (printError) {
-          console.error('❌ [DAY PASS DEBUG] Failed to print day pass ticket:', printError);
-          // Don't fail the purchase if printing fails
-        }
-        
-        console.log('✅ [DAY PASS DEBUG] Day pass purchase completed successfully');
-        return { success: true };
-      } else {
-        console.log('❌ [DAY PASS DEBUG] Day pass purchase failed:', response.message);
-        // Check if the error is because driver already has a valid day pass
-        if (response.message && response.message.includes('déjà un pass journalier valide')) {
-          console.log('ℹ️ [DAY PASS DEBUG] Driver already has valid day pass');
-          addNotification({
-            type: 'info',
-            title: 'Pass journalier déjà valide',
-            message: `Le conducteur a déjà un pass journalier valide pour aujourd'hui`,
-            duration: 4000
-          });
-          return { success: true }; // Treat as success since day pass is valid
-        } else {
-          setDayPassError(response.message || 'Erreur lors de l\'achat du pass journalier');
-          return { success: false, message: response.message };
-        }
-      }
+      console.log('✅ [DAY PASS DEBUG] Day pass purchase successful');
+      addNotification({
+        type: 'success',
+        title: 'Pass journalier acheté',
+        message: result,
+        duration: 4000
+      });
+      
+      // Update UI state
+      setSelectedVehicle((prev: any) => prev && prev.licensePlate === licensePlate ? { ...prev, dayPassValid: true } : prev);
+      setVehicles((prev: any[]) => prev.map((v: any) => v.licensePlate === licensePlate ? { ...v, dayPassValid: true } : v));
+      
+      // Refresh destinations available for this vehicle
+      try {
+        await fetchVehicleDestinations(licensePlate);
+      } catch {}
+      
+      // Refresh queue summaries in background
+      try { debouncedRefreshQueues(); } catch {}
+      
+      console.log('✅ [DAY PASS DEBUG] Day pass purchase completed successfully');
+      return { success: true };
     } catch (error: any) {
       console.error('❌ [DAY PASS DEBUG] Error purchasing day pass:', error);
       const errorMessage = error.message || 'Erreur lors de l\'achat du pass journalier';
-      setDayPassError(errorMessage);
-      return { success: false, message: errorMessage };
+      
+      // Check if the error is because day pass already exists
+      if (errorMessage.includes('déjà un pass journalier valide')) {
+        console.log('ℹ️ [DAY PASS DEBUG] Day pass already exists');
+        addNotification({
+          type: 'info',
+          title: 'Pass journalier déjà valide',
+          message: `Le véhicule a déjà un pass journalier valide pour aujourd'hui`,
+          duration: 4000
+        });
+        return { success: true }; // Treat as success since day pass is valid
+      } else {
+        setDayPassError(errorMessage);
+        return { success: false, message: errorMessage };
+      }
     } finally {
       console.log('🎫 [DAY PASS DEBUG] Day pass purchase process completed');
       setDayPassLoading(false);
     }
   };
 
-  // Get day pass price
+  // Get day pass price using direct database access
   const getDayPassPrice = async () => {
     try {
-      const response = await api.get('/api/day-pass/price');
-      if (response.success && (response.data as any)?.price) {
-        setDayPassPrice((response.data as any).price);
-      } else {
-        // If price endpoint doesn't exist, use a default price
-        setDayPassPrice(50); // Default day pass price
-      }
+      const price = await dbClient.getDayPassPrice();
+      setDayPassPrice(price);
     } catch (error) {
       console.error('Error fetching day pass price:', error);
-      setDayPassPrice(50); // Default day pass price
+      setDayPassPrice(2.0); // Default day pass price
     }
   };
 
@@ -843,112 +801,79 @@ export default function QueueManagement() {
       return;
     }
     
-    // Check day pass status first
-    console.log('🚗 [QUEUE DEBUG] Checking day pass status for:', selectedVehicle.licensePlate);
-    // Use Tauri day-pass check (Africa/Tunis timezone aware)
-    let hasDayPass = false;
+    setActionLoading(selectedVehicle.licensePlate);
+    setAddVehicleError(null);
+    
     try {
-      hasDayPass = await dbClient.hasDayPassToday(selectedVehicle.licensePlate);
-    } catch (e) {
-      // fallback to API if Tauri check fails
-      hasDayPass = await checkDayPassStatus(selectedVehicle.licensePlate);
-    }
-    console.log('🚗 [QUEUE DEBUG] Day pass status:', hasDayPass);
-    
-    if (!hasDayPass) {
-      // Automatically purchase day pass and print ticket
-      console.log('🚗 [QUEUE DEBUG] Vehicle has no day pass, automatically purchasing...');
-      setActionLoading(selectedVehicle.licensePlate);
-      setAddVehicleError(null);
+      // Check day pass status and handle day pass purchase in parallel with queue entry
+      console.log('🚗 [QUEUE DEBUG] Checking day pass status for:', selectedVehicle.licensePlate);
       
-      try {
-        // Get day pass price first
-        console.log('🚗 [QUEUE DEBUG] Getting day pass price...');
-        await getDayPassPrice();
-        console.log('🚗 [QUEUE DEBUG] Day pass price retrieved:', dayPassPrice);
-        
-        // Purchase day pass automatically
-        console.log('🚗 [QUEUE DEBUG] Purchasing day pass for:', selectedVehicle.licensePlate);
-        const dayPassResult = await purchaseDayPass(selectedVehicle.licensePlate);
-        console.log('🚗 [QUEUE DEBUG] Day pass purchase result:', dayPassResult);
-        
-        if (!dayPassResult.success) {
-          console.log('❌ [QUEUE DEBUG] Day pass purchase failed:', dayPassResult.message);
-          setActionLoading(null);
-          setAddVehicleError(dayPassResult.message || 'Erreur lors de l\'achat du pass journalier');
-          return;
-        }
-        // Mark in-memory state so badge updates immediately
-        setSelectedVehicle((prev: any) => prev && prev.licensePlate === selectedVehicle.licensePlate ? { ...prev, dayPassValid: true } : prev);
-        setVehicles((prev: any[]) => prev.map((v: any) => v.licensePlate === selectedVehicle.licensePlate ? { ...v, dayPassValid: true } : v));
-        
-        console.log('✅ [QUEUE DEBUG] Day pass purchased automatically, proceeding with queue entry...');
-      } catch (error) {
-        console.error('❌ [QUEUE DEBUG] Error purchasing day pass:', error);
-        setActionLoading(null);
-        setAddVehicleError('Erreur lors de l\'achat du pass journalier');
-        return;
-      }
-    } else {
-      // Vehicle has day pass, print entry ticket with 0 price
-      console.log('🚗 [QUEUE DEBUG] Vehicle has day pass, printing entry ticket...');
-      setActionLoading(selectedVehicle.licensePlate);
-      setAddVehicleError(null);
+      const [hasDayPass, destinationInfo] = await Promise.all([
+        // Check day pass status
+        dbClient.hasDayPassToday(selectedVehicle.licensePlate).catch(() => 
+          checkDayPassStatus(selectedVehicle.licensePlate)
+        ),
+        // Get destination info
+        Promise.resolve(vehicleDestinations.find(d => d.stationId === selectedVehicleDestination))
+      ]);
       
-      try {
-        // Print entry ticket for vehicle with day pass
-        console.log('🚗 [QUEUE DEBUG] Formatting entry ticket data...');
-        const entryTicketData = thermalPrinter.formatEntryTicketData(
-          {
-            ticketNumber: `ENTRY-${Date.now()}`,
-            licensePlate: selectedVehicle.licensePlate,
-            stationName: 'Monastir Main Station',
-            ticketPrice: 0, // 0 TND for vehicles with day pass
-            entryTime: new Date().toISOString()
-          },
-          {
-            licensePlate: selectedVehicle.licensePlate,
-            driver: selectedVehicle.driver
+      console.log('🚗 [QUEUE DEBUG] Day pass status:', hasDayPass);
+      console.log('🚗 [QUEUE DEBUG] Destination info:', destinationInfo);
+      
+      // Handle day pass purchase if needed (non-blocking)
+      if (!hasDayPass) {
+        console.log('🚗 [QUEUE DEBUG] Vehicle has no day pass, purchasing...');
+        try {
+          await getDayPassPrice();
+          const dayPassResult = await purchaseDayPass(selectedVehicle.licensePlate);
+          
+          if (!dayPassResult.success) {
+            throw new Error(dayPassResult.message || 'Erreur lors de l\'achat du pass journalier');
           }
-        );
-        console.log('🚗 [QUEUE DEBUG] Entry ticket data formatted:', entryTicketData);
-        
-        const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
-        console.log('🚗 [QUEUE DEBUG] Staff name for entry ticket:', staffName);
-        console.log('🚗 [QUEUE DEBUG] Printing entry ticket...');
-        await thermalPrinter.printEntryTicket(entryTicketData, staffName);
-        console.log('✅ [QUEUE DEBUG] Entry ticket printed for vehicle with day pass');
-      } catch (printError) {
-        console.error('❌ [QUEUE DEBUG] Failed to print entry ticket:', printError);
-        // Continue with queue entry even if printing fails
+          
+          // Update UI state
+          setSelectedVehicle((prev: any) => prev && prev.licensePlate === selectedVehicle.licensePlate ? { ...prev, dayPassValid: true } : prev);
+          setVehicles((prev: any[]) => prev.map((v: any) => v.licensePlate === selectedVehicle.licensePlate ? { ...v, dayPassValid: true } : v));
+          console.log('✅ [QUEUE DEBUG] Day pass purchased successfully');
+        } catch (error) {
+          console.error('❌ [QUEUE DEBUG] Day pass purchase failed:', error);
+          throw error;
+        }
       }
-    }
-    
-    // Proceed with adding to queue
-    console.log('🚗 [QUEUE DEBUG] Proceeding with queue entry...');
-    const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
-    console.log('🚗 [QUEUE DEBUG] Destination info:', destinationInfo);
-    
-    console.log('🚗 [QUEUE DEBUG] Calling handleEnterQueueWithDestination...');
-    const result = await handleEnterQueueWithDestination(
-      selectedVehicle.licensePlate, 
-      selectedVehicleDestination,
-      destinationInfo?.stationName
-    );
-    console.log('🚗 [QUEUE DEBUG] Queue entry result:', result);
-    
-    setActionLoading(null);
-    if (result?.success) {
-      console.log('✅ [QUEUE DEBUG] Vehicle successfully added to queue');
-      setShowAddVehicleModal(false);
-      setSelectedVehicle(null);
-      setSelectedVehicleDestination(null);
-      setVehicleDestinations([]);
-      setSearch("");
-      setIsInputFocused(false);
-    } else if (result?.message) {
-      console.log('❌ [QUEUE DEBUG] Queue entry failed:', result.message);
-      setAddVehicleError(result.message);
+      
+      // Proceed with queue entry using direct database access
+      console.log('🚗 [QUEUE DEBUG] Adding vehicle to queue...');
+      const result = await dbClient.addVehicleToQueue(
+        selectedVehicle.licensePlate, 
+        selectedVehicleDestination,
+        destinationInfo?.stationName
+      );
+      
+      if (result) {
+        console.log('✅ [QUEUE DEBUG] Vehicle successfully added to queue:', result);
+        addNotification({
+          type: 'success',
+          title: 'Véhicule ajouté',
+          message: result,
+          duration: 4000
+        });
+        setShowAddVehicleModal(false);
+        setSelectedVehicle(null);
+        setSelectedVehicleDestination(null);
+        setVehicleDestinations([]);
+        setSearch("");
+        setIsInputFocused(false);
+        
+        // Refresh queue data
+        debouncedRefreshQueues();
+      } else {
+        throw new Error('Échec de l\'entrée en file');
+      }
+    } catch (error: any) {
+      console.error('❌ [QUEUE DEBUG] Vehicle addition failed:', error);
+      setAddVehicleError(error.message || 'Erreur lors de l\'ajout du véhicule');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -969,22 +894,31 @@ export default function QueueManagement() {
       
       const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
       
-      const queueResult = await handleEnterQueueWithDestination(
+      const queueResult = await dbClient.addVehicleToQueue(
         selectedVehicle.licensePlate, 
         selectedVehicleDestination!,
         destinationInfo?.stationName
       );
       
       setActionLoading(null);
-      if (queueResult?.success) {
+      if (queueResult) {
+        addNotification({
+          type: 'success',
+          title: 'Véhicule ajouté',
+          message: queueResult,
+          duration: 4000
+        });
         setShowAddVehicleModal(false);
         setSelectedVehicle(null);
         setSelectedVehicleDestination(null);
         setVehicleDestinations([]);
         setSearch("");
         setIsInputFocused(false);
-      } else if (queueResult?.message) {
-        setAddVehicleError(queueResult.message);
+        
+        // Refresh queue data
+        debouncedRefreshQueues();
+      } else {
+        setAddVehicleError('Échec de l\'entrée en file');
       }
     }
   };
@@ -1210,28 +1144,27 @@ export default function QueueManagement() {
       // Prevent duplicate clicks
       setActionLoading(licensePlate);
       try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
+      
+      // Enter queue
       await dbClient.enterQueueWithDestination(licensePlate, destinationId, destinationName);
-          addNotification({
-            type: 'success',
-            title: 'Véhicule ajouté',
-            message: `${licensePlate} ajouté à la file pour ${destinationName || 'la destination sélectionnée'}`,
-            duration: 4000
-          });
+      
+      // Show success notification
+      addNotification({
+        type: 'success',
+        title: 'Véhicule ajouté',
+        message: `${licensePlate} ajouté à la file pour ${destinationName || 'la destination sélectionnée'}`,
+        duration: 4000
+      });
 
-        try {
-          const summary = queueSummaries.find(s => s.destinationId === destinationId);
+      // Update selected destination
+      try {
+        const summary = queueSummaries.find(s => s.destinationId === destinationId);
         if (summary) setSelectedDestination(summary.destinationName);
-        } catch {}
+      } catch {}
 
-      // Focused fetch with short retries to avoid empty flashes
-      const attempts = 3;
-      for (let i = 0; i < attempts; i++) {
-              await fetchQueueForDestination(destinationId);
-        if (i < attempts - 1) {
-          await new Promise(r => setTimeout(r, 200));
-        }
-      }
-        debouncedRefreshQueues();
+      // Single refresh call instead of multiple attempts
+      await fetchQueueForDestination(destinationId);
+      
       setActionLoading(null);
       return { success: true };
     } catch (error: any) {
@@ -1256,21 +1189,26 @@ export default function QueueManagement() {
     
     setActionLoading(licensePlate);
     try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
-    const result = await exitQueue(licensePlate);
-    setActionLoading(null);
     
-    if (result.success) {
+    try {
+      const result = await dbClient.removeVehicleFromQueue(licensePlate);
+      setActionLoading(null);
+      
       addNotification({
         type: 'success',
         title: 'Véhicule retiré',
-        message: `Le véhicule ${licensePlate} a été retiré de la file d'attente`,
+        message: result,
         duration: 4000
       });
-    } else {
+      
+      // Refresh queue data
+      debouncedRefreshQueues();
+    } catch (error: any) {
+      setActionLoading(null);
       addNotification({
         type: 'error',
         title: 'Échec de la sortie de la file',
-        message: result.message || 'Échec de la sortie de la file',
+        message: error?.message || 'Échec de la sortie de la file',
         duration: 4000
       });
     }
