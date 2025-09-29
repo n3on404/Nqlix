@@ -363,43 +363,47 @@ export default function Settings() {
               <span>Configuration de l'imprimante</span>
             </CardTitle>
             <CardDescription>
-              Configuration statique de l'imprimante thermique (IP et port fixes)
+              Configurez l'adresse IP et le port de votre imprimante thermique
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="printer-ip">Adresse IP (Statique)</Label>
+                <Label htmlFor="printer-ip">Adresse IP</Label>
                 <Input
                   id="printer-ip"
                   type="text"
                   value={printerIp}
-                  disabled={true}
-                  className="bg-gray-100"
+                  onChange={(e) => setPrinterIp(e.target.value)}
+                  placeholder="192.168.192.12"
+                  className="font-mono"
                 />
-                <p className="text-xs text-muted-foreground">IP fixe - Non modifiable</p>
+                <p className="text-xs text-muted-foreground">Adresse IP de l'imprimante</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="printer-port">Port (Statique)</Label>
+                <Label htmlFor="printer-port">Port</Label>
                 <Input
                   id="printer-port"
                   type="number"
                   value={printerPort}
-                  disabled={true}
-                  className="bg-gray-100"
+                  onChange={(e) => setPrinterPort(e.target.value)}
+                  placeholder="9100"
+                  min="1"
+                  max="65535"
+                  className="font-mono"
                 />
-                <p className="text-xs text-muted-foreground">Port fixe - Non modifiable</p>
+                <p className="text-xs text-muted-foreground">Port de l'imprimante (généralement 9100)</p>
               </div>
             </div>
             
             <div className="flex items-center gap-2">
               <Button 
                 onClick={savePrinterConfig} 
-                disabled={true}
-                className="flex items-center gap-2 bg-gray-400"
+                disabled={savingPrinter}
+                className="flex items-center gap-2"
               >
                 <Save className="h-4 w-4" />
-                Configuration statique
+                {savingPrinter ? "Sauvegarde..." : "Sauvegarder"}
               </Button>
               <Button 
                 variant="outline" 
