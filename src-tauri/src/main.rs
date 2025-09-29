@@ -1422,8 +1422,7 @@ async fn get_printer_by_id(printer_id: String) -> Result<Option<PrinterConfig>, 
 #[tauri::command]
 async fn get_current_printer() -> Result<Option<PrinterConfig>, String> {
     let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
-    // Ensure we always reflect latest environment variables when queried
-    let _ = printer.reload_config_from_env();
+    // Return the current configuration without reloading from environment
     printer.get_current_printer()
 }
 

@@ -63,15 +63,20 @@ impl PrinterService {
     fn get_config_path() -> PathBuf {
         // Try to get the executable directory first
         if let Ok(exe_path) = std::env::current_exe() {
+            println!("🔍 [CONFIG] Executable path: {:?}", exe_path);
             if let Some(exe_dir) = exe_path.parent() {
-                return exe_dir.join("printer_config.json");
+                let config_path = exe_dir.join("printer_config.json");
+                println!("🔍 [CONFIG] Config path (from exe): {:?}", config_path);
+                return config_path;
             }
         }
         
         // Fallback to current directory
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("printer_config.json")
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let config_path = current_dir.join("printer_config.json");
+        println!("🔍 [CONFIG] Current directory: {:?}", current_dir);
+        println!("🔍 [CONFIG] Config path (from current dir): {:?}", config_path);
+        config_path
     }
 
     /// Save printer configuration to file
@@ -293,6 +298,8 @@ impl PrinterService {
     }
 
     pub fn new() -> Self {
+        println!("🚀 [CONFIG] PrinterService::new() called - initializing printer service");
+        
         // Default printer configuration
         let printer_ip = "192.168.192.12".to_string(); // Default IP
         let printer_port = 9100; // Default port
@@ -313,6 +320,8 @@ impl PrinterService {
             is_default: true,
         };
 
+        println!("🔧 [CONFIG] Created default config: IP={}, Port={}", printer_config.ip, printer_config.port);
+
         let service = Self {
             printer_config: Arc::new(Mutex::new(printer_config)),
             node_script_path: "scripts/printer.js".to_string(),
@@ -323,8 +332,11 @@ impl PrinterService {
         };
 
         // Try to load configuration from file
+        println!("📂 [CONFIG] Attempting to load configuration from file...");
         if let Err(e) = service.load_config_from_file() {
             println!("⚠️ [CONFIG] Failed to load config from file: {}. Using default configuration.", e);
+        } else {
+            println!("✅ [CONFIG] Configuration loaded successfully from file");
         }
 
         service
