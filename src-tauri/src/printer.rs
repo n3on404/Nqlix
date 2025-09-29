@@ -58,6 +58,98 @@ pub struct PrinterService {
 }
 
 impl PrinterService {
+    /// Helper function to create temporary script files in the proper temp directory
+    fn create_temp_script_path(&self, prefix: &str) -> std::path::PathBuf {
+        let temp_dir = std::env::temp_dir();
+        temp_dir.join(format!("{}_{}.cjs", prefix, uuid::Uuid::new_v4()))
+    }
+
+    /// Helper function to get the path to node_modules for the bundled application
+    fn get_node_modules_path(&self) -> Result<std::path::PathBuf, String> {
+        let exe_path = std::env::current_exe().map_err(|e| format!("Failed to get executable path: {}", e))?;
+        let exe_dir = exe_path.parent().ok_or("Failed to get executable directory")?;
+        
+        println!("🔍 [DEBUG] Executable path: {:?}", exe_path);
+        println!("🔍 [DEBUG] Executable directory: {:?}", exe_dir);
+        
+        // Check multiple possible locations
+        let possible_paths = vec![
+            // Development paths
+            exe_dir.join("resources").join("node_modules"),
+            exe_dir.join("node_modules"),
+            // Production paths
+            exe_dir.join("..").join("node_modules"),
+            exe_dir.join("..").join("resources").join("node_modules"),
+            // Current working directory
+            std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?.join("node_modules"),
+            // Parent of current working directory
+            std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?.join("..").join("node_modules"),
+        ];
+        
+        for path in &possible_paths {
+            println!("🔍 [DEBUG] Checking path: {:?} - exists: {}", path, path.exists());
+            if path.exists() {
+                println!("✅ [DEBUG] Found node_modules at: {:?}", path);
+                return Ok(path.clone());
+            }
+        }
+        
+        // List contents of executable directory for debugging
+        if let Ok(entries) = std::fs::read_dir(exe_dir) {
+            println!("🔍 [DEBUG] Contents of executable directory:");
+            for entry in entries.flatten() {
+                println!("  - {:?}", entry.path());
+            }
+        }
+        
+        Err(format!("Could not find node_modules directory. Checked paths: {:?}", possible_paths))
+    }
+
+    /// Helper function to get the require statement for node-thermal-printer
+    fn get_thermal_printer_require(&self) -> Result<String, String> {
+        // First try to find the module using our path resolution
+        match self.get_node_modules_path() {
+            Ok(node_modules_path) => {
+                let module_path = node_modules_path.join("node-thermal-printer");
+                println!("🔍 [DEBUG] Using module path: {:?}", module_path);
+                Ok(format!("const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');", module_path.to_string_lossy()))
+            }
+            Err(e) => {
+                println!("⚠️ [DEBUG] Path resolution failed: {}", e);
+                // Fallback: try to use Node.js's own module resolution
+                println!("🔄 [DEBUG] Falling back to Node.js module resolution");
+                Ok("const { ThermalPrinter, PrinterTypes, CharacterSet, BreakLine } = require('node-thermal-printer');".to_string())
+            }
+        }
+    }
+
+    /// Helper function to execute Node.js scripts with proper environment setup
+    fn execute_node_script(&self, script_path: &std::path::Path) -> Result<std::process::Output, String> {
+        let mut cmd = Command::new("node");
+        
+        // Try to set NODE_PATH to help with module resolution
+        if let Ok(node_modules_path) = self.get_node_modules_path() {
+            println!("🔍 [DEBUG] Setting NODE_PATH to: {:?}", node_modules_path);
+            cmd.env("NODE_PATH", node_modules_path);
+        }
+        
+        // Also try to set NODE_PATH to current working directory's node_modules
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_node_modules = cwd.join("node_modules");
+            if cwd_node_modules.exists() {
+                println!("🔍 [DEBUG] Adding to NODE_PATH: {:?}", cwd_node_modules);
+                cmd.env("NODE_PATH", format!("{}:{}", 
+                    std::env::var("NODE_PATH").unwrap_or_default(),
+                    cwd_node_modules.to_string_lossy()
+                ));
+            }
+        }
+        
+        cmd.arg(script_path)
+            .output()
+            .map_err(|e| format!("Failed to execute script {:?}: {}", script_path, e))
+    }
+
     fn read_env_from_system(key: &str) -> Option<String> {
         // Linux: read from system files first to reflect latest changes without restart
         #[cfg(target_os = "linux")]
@@ -378,10 +470,13 @@ impl PrinterService {
             is_default: false,
         };
         
+        // Get the node_modules path
+        let require_statement = self.get_thermal_printer_require()?;
+        
         // Create a compact test ticket script
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printTestTicket() {{
     try {{
@@ -431,6 +526,7 @@ async function printTestTicket() {{
 
 printTestTicket();
 "#,
+            require_statement,
             test_printer.width,
             test_printer.ip,
             test_printer.port,
@@ -439,16 +535,13 @@ printTestTicket();
             test_printer.port
         );
 
-        // Write script to temporary file
-        let script_path = format!("temp_test_{}.cjs", uuid::Uuid::new_v4());
+        // Write script to temporary file in proper temp directory
+        let script_path = self.create_temp_script_path("temp_test");
         std::fs::write(&script_path, script_content)
-            .map_err(|e| format!("Failed to write test script: {}", e))?;
+            .map_err(|e| format!("Failed to write test script to {:?}: {}", script_path, e))?;
 
         // Execute the script
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute test script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         // Clean up temporary file
         let _ = std::fs::remove_file(&script_path);
@@ -486,16 +579,13 @@ printTestTicket();
         // Create the Node.js script content
         let script_content = self.create_print_script(printer, &job)?;
         
-        // Write script to temporary file
-        let script_path = format!("temp_print_{}.cjs", uuid::Uuid::new_v4());
+        // Write script to temporary file in proper temp directory
+        let script_path = self.create_temp_script_path("temp_print");
         std::fs::write(&script_path, script_content)
-            .map_err(|e| format!("Failed to write script: {}", e))?;
+            .map_err(|e| format!("Failed to write script to {:?}: {}", script_path, e))?;
 
         // Execute the script
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute print script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         // Clean up temporary file
         let _ = std::fs::remove_file(&script_path);
@@ -511,9 +601,12 @@ printTestTicket();
     }
 
     fn create_print_script(&self, printer: &PrinterConfig, job: &PrintJob) -> Result<String, String> {
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+        
         let script = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printTicket() {{
     try {{
@@ -556,6 +649,7 @@ async function printTicket() {{
 
 printTicket();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -660,9 +754,12 @@ printTicket();
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+        
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printQR() {{
     try {{
@@ -708,6 +805,7 @@ async function printQR() {{
 
 printQR();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -715,14 +813,11 @@ printQR();
             data.replace('"', r#"\""#)
         );
 
-        let script_path = format!("temp_qr_{}.cjs", uuid::Uuid::new_v4());
+        let script_path = self.create_temp_script_path("temp_qr");
         std::fs::write(&script_path, script_content)
-            .map_err(|e| format!("Failed to write QR script: {}", e))?;
+            .map_err(|e| format!("Failed to write QR script to {:?}: {}", script_path, e))?;
 
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute QR script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -740,9 +835,12 @@ printQR();
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+        
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printWithLogo() {{
     try {{
@@ -803,6 +901,7 @@ async function printWithLogo() {{
 
 printWithLogo();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -812,14 +911,11 @@ printWithLogo();
             content.replace('"', r#"\""#)
         );
 
-        let script_path = format!("temp_logo_{}.cjs", uuid::Uuid::new_v4());
+        let script_path = self.create_temp_script_path("temp_logo");
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write logo script: {}", e))?;
 
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute logo script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -837,9 +933,12 @@ printWithLogo();
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+        
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printStandardTicket() {{
     try {{
@@ -904,6 +1003,7 @@ async function printStandardTicket() {{
 
 printStandardTicket();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -911,14 +1011,11 @@ printStandardTicket();
             content.replace('"', r#"\""#)
         );
 
-        let script_path = format!("temp_standard_{}.cjs", uuid::Uuid::new_v4());
+        let script_path = self.create_temp_script_path("temp_standard");
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write standard ticket script: {}", e))?;
 
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute standard ticket script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -963,9 +1060,12 @@ printStandardTicket();
         println!("  - Width: {}", printer.width);
         println!("  - Timeout: {}ms", printer.timeout);
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+        
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printBookingTicket() {{
     try {{
@@ -1072,6 +1172,7 @@ async function printBookingTicket() {{
 
 printBookingTicket();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -1081,7 +1182,7 @@ printBookingTicket();
             staff_footer
         );
 
-        let script_path = format!("temp_booking_{}.cjs", uuid::Uuid::new_v4());
+        let script_path = self.create_temp_script_path("temp_booking");
         
         // Debug: Show the script that will be executed
         println!("📜 DEBUG: Node.js script that will be executed:");
@@ -1092,11 +1193,8 @@ printBookingTicket();
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write booking ticket script: {}", e))?;
 
-        println!("🚀 DEBUG: Executing Node.js script: {}", script_path);
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute booking ticket script: {}", e))?;
+        println!("🚀 DEBUG: Executing Node.js script: {:?}", script_path);
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -1137,9 +1235,12 @@ printBookingTicket();
             .replace('\r', r"\r")
             .replace('\t', r"\t");
 
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printTalon() {{
     try {{
@@ -1184,6 +1285,7 @@ async function printTalon() {{
 
 printTalon();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -1191,17 +1293,14 @@ printTalon();
             escaped_talon_data
         );
 
-        let script_path = format!("temp_talon_{}.cjs", uuid::Uuid::new_v4());
-        println!("🖨️ [RUST DEBUG] Writing talon script to: {}", script_path);
+        let script_path = self.create_temp_script_path("temp_talon");
+        println!("🖨️ [RUST DEBUG] Writing talon script to: {:?}", script_path);
         
         std::fs::write(&script_path, script_content)
             .map_err(|e| format!("Failed to write talon script: {}", e))?;
 
         println!("🖨️ [RUST DEBUG] Executing Node.js talon script...");
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute talon script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -1350,8 +1449,8 @@ printEntryTicket();
             staff_footer
         );
 
-        let script_path = format!("temp_entry_{}.cjs", uuid::Uuid::new_v4());
-        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        let script_path = self.create_temp_script_path("temp_entry");
+        println!("🖨️ [RUST DEBUG] Writing script to: {:?}", script_path);
         
         println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
         println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
@@ -1515,8 +1614,8 @@ printExitTicket();
             staff_footer
         );
 
-        let script_path = format!("temp_exit_{}.cjs", uuid::Uuid::new_v4());
-        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        let script_path = self.create_temp_script_path("temp_exit");
+        println!("🖨️ [RUST DEBUG] Writing script to: {:?}", script_path);
         
         println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
         println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
@@ -1608,9 +1707,12 @@ printExitTicket();
         };
         println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+        
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printDayPassTicket() {{
     try {{
@@ -1697,6 +1799,7 @@ async function printDayPassTicket() {{
 
 printDayPassTicket();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -1705,8 +1808,8 @@ printDayPassTicket();
             staff_footer
         );
 
-        let script_path = format!("temp_daypass_{}.cjs", uuid::Uuid::new_v4());
-        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        let script_path = self.create_temp_script_path("temp_daypass");
+        println!("🖨️ [RUST DEBUG] Writing script to: {:?}", script_path);
         
         println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
         println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
@@ -1715,10 +1818,7 @@ printDayPassTicket();
             .map_err(|e| format!("Failed to write day pass ticket script: {}", e))?;
         println!("🖨️ [RUST DEBUG] Executing Node.js script...");
         
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute day pass ticket script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -1757,9 +1857,12 @@ printDayPassTicket();
         };
         println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+        
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printExitPassTicket() {{
     try {{
@@ -1865,6 +1968,7 @@ async function printExitPassTicket() {{
 
 printExitPassTicket();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -1873,8 +1977,8 @@ printExitPassTicket();
             staff_footer
         );
 
-        let script_path = format!("temp_exitpass_{}.cjs", uuid::Uuid::new_v4());
-        println!("🖨️ [RUST DEBUG] Writing script to: {}", script_path);
+        let script_path = self.create_temp_script_path("temp_exitpass");
+        println!("🖨️ [RUST DEBUG] Writing script to: {:?}", script_path);
         
         println!("🖨️ [RUST DEBUG] Script content preview (first 500 chars):");
         println!("🖨️ [RUST DEBUG] {}", &script_content[..std::cmp::min(500, script_content.len())]);
@@ -1883,10 +1987,7 @@ printExitPassTicket();
             .map_err(|e| format!("Failed to write exit pass ticket script: {}", e))?;
         println!("🖨️ [RUST DEBUG] Executing Node.js script...");
         
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute exit pass ticket script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
