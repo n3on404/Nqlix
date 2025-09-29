@@ -1149,8 +1149,36 @@ export default function MainBooking() {
     }
   };
 
+  // Cancel seat from destination
+  const handleCancelSeatFromDestination = async (destinationId: string) => {
+    if (!currentStaff) {
+      alert('❌ Erreur: Aucun membre du personnel connecté');
+      return;
+    }
 
+    if (!confirm('Annuler 1 place de cette destination ?\n\nCette action ne peut pas être annulée.')) {
+      return;
+    }
 
+    try {
+      console.log('🚫 Cancelling seat from destination:', destinationId);
+      const result = await dbClient.cancelSeatFromDestination(destinationId, currentStaff.id);
+      
+      alert(`✅ ${result}`);
+      
+      // Refresh destinations to update availability
+      fetchDestinations();
+      
+      // If this was the selected destination, refresh its queue data
+      if (selectedDestination?.destinationId === destinationId) {
+        fetchQueueForDestination(destinationId);
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Failed to cancel seat:', error);
+      alert(`❌ Erreur lors de l'annulation: ${error.message || 'Erreur inconnue'}`);
+    }
+  };
 
   const handleBookingSubmit = async () => {
     if (!selectedDestination || !currentStaff) return;
@@ -1425,36 +1453,7 @@ export default function MainBooking() {
                 Refresh
               </Button>
               
-              {/* Test Exit Pass Buttons */}
-              <div className="flex gap-2">
-                <Button
-                  onClick={testExitPass}
-                  variant="outline"
-                  size="sm"
-                  className="bg-orange-100 hover:bg-orange-200 text-orange-700 border-orange-300"
-                  title="Test exit pass modal workflow"
-                >
-                  🧪 Test Modal
-                </Button>
-                <Button
-                  onClick={testExitPassWithPrevious}
-                  variant="outline"
-                  size="sm"
-                  className="bg-blue-100 hover:bg-blue-200 text-blue-700 border-blue-300"
-                  title="Test exit pass with previous vehicle data"
-                >
-                  🧪 Test with Previous
-                </Button>
-                <Button
-                  onClick={testExitPassDirect}
-                  variant="outline"
-                  size="sm"
-                  className="bg-green-100 hover:bg-green-200 text-green-700 border-green-300"
-                  title="Test exit pass printing directly (bypasses modal)"
-                >
-                  🧪 Test Print
-                </Button>
-              </div>
+          
               
               {currentStaff && (
                 <div className="text-right">
@@ -1562,8 +1561,21 @@ export default function MainBooking() {
                           </p>
                         </div>
                             {selectedDestination?.destinationId === destination.destinationId && (
-                          <div className="flex items-center justify-center">
+                          <div className="flex items-center justify-center gap-2">
                             <CheckCircle className="h-5 w-5 text-orange-600" />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCancelSeatFromDestination(destination.destinationId);
+                              }}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-300 text-xs px-2 py-1"
+                              title="Annuler 1 place de cette destination"
+                            >
+                              <X className="h-3 w-3 mr-1" />
+                              Annuler 1 place
+                            </Button>
                             </div>
                         )}
                         </div>
@@ -1822,62 +1834,6 @@ export default function MainBooking() {
                   <Button onClick={reprintLastBookingTicket} variant="outline" className="flex items-center">
                     <Printer className="w-4 h-4 mr-2" /> Réimprimer
                   </Button>
-                  
-                  {/* Cancel buttons section */}
-                  <div className="flex gap-2">
-                    {lastBookingData && lastBookingData.totalSeats > 1 && (
-                      <>
-                        {/* Quick cancel 1 seat button - most common use case */}
-                        <Button
-                          onClick={() => handleCancelLastBooking(1)}
-                          disabled={isCancelling}
-                          variant="outline"
-                          className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300 font-semibold"
-                          title="Annuler 1 place seulement (erreur courante: réservé 2 au lieu de 1)"
-                        >
-                          {isCancelling ? 'Annulation...' : 'Annuler 1 place'}
-                        </Button>
-                        
-                        {/* Additional partial cancel buttons for larger bookings */}
-                        {lastBookingData.totalSeats > 2 && (
-                          <Button
-                            onClick={() => handleCancelLastBooking(2)}
-                            disabled={isCancelling}
-                            variant="outline"
-                            size="sm"
-                            className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300"
-                          >
-                            {isCancelling ? '...' : 'Annuler 2'}
-                          </Button>
-                        )}
-                        
-                        {lastBookingData.totalSeats > 3 && (
-                          <Button
-                            onClick={() => handleCancelLastBooking(3)}
-                            disabled={isCancelling}
-                            variant="outline"
-                            size="sm"
-                            className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 border-orange-300"
-                          >
-                            {isCancelling ? '...' : 'Annuler 3'}
-                          </Button>
-                        )}
-                      </>
-                    )}
-                    
-                    {/* Cancel all button */}
-                    <Button
-                      onClick={() => handleCancelLastBooking()}
-                      disabled={isCancelling}
-                      variant="outline"
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-300"
-                      title="Annuler toute la réservation"
-                    >
-                      {isCancelling ? 'Annulation...' : 
-                        lastBookingData && lastBookingData.totalSeats > 1 ? 'Annuler tout' : 'Annuler'
-                      }
-                    </Button>
-                  </div>
                 </div>
                         </div>
                       ) : (

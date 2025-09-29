@@ -76,6 +76,10 @@ export const dbClient = {
     return invoke<void>('db_cancel_queue_booking', { bookingId });
   },
 
+  async cancelSeatFromDestination(destinationId: string, createdBy?: string) {
+    return invoke<string>('db_cancel_seat_from_destination', { destinationId, createdBy });
+  },
+
   async health(): Promise<boolean> {
     return invoke<boolean>('db_health');
   },

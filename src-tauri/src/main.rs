@@ -1080,6 +1080,75 @@ async fn db_cancel_queue_booking(booking_id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn db_cancel_seat_from_destination(destination_id: String, _created_by: Option<String>) -> Result<String, String> {
+    let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
+    
+    // Find the most recent booking for this destination
+    let booking_row = tx.query_opt(
+        r#"
+        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name
+        FROM bookings b
+        JOIN vehicle_queue vq ON b.queue_id = vq.id
+        WHERE vq.destination_id = $1
+        ORDER BY b.created_at DESC
+        LIMIT 1
+        "#,
+        &[&destination_id]
+    )
+    .await.map_err(|e| e.to_string())?;
+    
+    if let Some(row) = booking_row {
+        let booking_id: String = row.get("id");
+        let queue_id: String = row.get("queue_id");
+        let seats_booked: i32 = row.get("seats_booked");
+        let total_amount: f64 = row.get("total_amount");
+        let verification_code: String = row.get("verification_code");
+        let destination_name: String = row.get("destination_name");
+        
+        if seats_booked > 1 {
+            // Reduce seats by 1
+            let new_seats = seats_booked - 1;
+            let seat_price = total_amount / seats_booked as f64;
+            let new_total = seat_price * new_seats as f64;
+            
+            tx.execute(
+                "UPDATE bookings SET seats_booked = $1, total_amount = $2 WHERE id = $3",
+                &[&new_seats, &new_total, &booking_id]
+            )
+            .await.map_err(|e| e.to_string())?;
+            
+            // Update available seats in the queue
+            tx.execute(
+                "UPDATE vehicle_queue SET available_seats = available_seats + 1 WHERE id = $1",
+                &[&queue_id]
+            )
+            .await.map_err(|e| e.to_string())?;
+            
+            tx.commit().await.map_err(|e| e.to_string())?;
+            Ok(format!("1 place annulée de la réservation {} pour {}", verification_code, destination_name))
+        } else {
+            // Cancel the entire booking if only 1 seat
+            tx.execute("DELETE FROM bookings WHERE id = $1", &[&booking_id])
+                .await.map_err(|e| e.to_string())?;
+            
+            // Update available seats in the queue
+            tx.execute(
+                "UPDATE vehicle_queue SET available_seats = available_seats + 1 WHERE id = $1",
+                &[&queue_id]
+            )
+            .await.map_err(|e| e.to_string())?;
+            
+            tx.commit().await.map_err(|e| e.to_string())?;
+            Ok(format!("Réservation {} annulée complètement pour {}", verification_code, destination_name))
+        }
+    } else {
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Err("Aucune réservation trouvée pour cette destination".to_string())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct DiscoveredServer {
     ip: String,
@@ -3413,6 +3482,7 @@ fn main() {
             db_get_available_seats_for_destination,
             db_create_queue_booking,
             db_cancel_queue_booking,
+            db_cancel_seat_from_destination,
             db_health,
             db_has_day_pass_today,
             db_has_day_pass_today_batch,
