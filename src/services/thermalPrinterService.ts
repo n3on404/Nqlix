@@ -83,8 +83,13 @@ export class ThermalPrinterService {
    */
   async getCurrentPrinter(): Promise<PrinterConfig | null> {
     try {
-      // Return local configuration loaded from localStorage
-      return this.config;
+      // Get current printer from backend
+      const printer = await invoke<PrinterConfig | null>('get_current_printer');
+      if (printer) {
+        // Update local config
+        this.config = printer;
+      }
+      return printer;
     } catch (error) {
       console.error('Failed to get current printer:', error);
       throw error;
@@ -186,6 +191,13 @@ export class ThermalPrinterService {
       console.error('Failed to update printer config:', error);
       throw error;
     }
+  }
+
+  /**
+   * Update printer configuration manually (alias for updateConfig)
+   */
+  async updatePrinterConfigManual(config: { ip: string; port: number; enabled: boolean }): Promise<void> {
+    return this.updateConfig(config);
   }
 
   /**

@@ -2944,8 +2944,18 @@ async fn update_printer_config_manual(config: serde_json::Value) -> Result<(), S
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     
-    // Update the printer configuration
+    // Update the printer configuration (this will automatically save to file)
     printer.update_config_manual(ip, port, enabled)
+}
+
+#[tauri::command]
+async fn save_printer_config() -> Result<String, String> {
+    let printer = PRINTER_SERVICE.lock().map_err(|e| e.to_string())?;
+    
+    // Save the current configuration to file
+    printer.save_config()?;
+    
+    Ok("Printer configuration saved successfully".to_string())
 }
 
 async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<DiscoveredServer>, Box<dyn std::error::Error + Send + Sync>> {
@@ -3393,6 +3403,7 @@ fn main() {
             test_direct_tcp_connection,
             test_printer_connection_manual,
             update_printer_config_manual,
+            save_printer_config,
             db_get_queue_summaries,
             db_get_queue_by_destination,
             db_get_vehicle_authorized_destinations,

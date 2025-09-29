@@ -109,34 +109,70 @@ export default function Settings() {
   const loadCurrentPrinter = async () => {
     setLoadingPrinter(true);
     try {
-      // Static printer configuration - no more localStorage dependency
-      const staticIp = "192.168.192.12";
-      const staticPort = "9100";
+      // Load current printer configuration from backend
+      const currentPrinter = await thermalPrinter.getCurrentPrinter();
       
-      setPrinterIp(staticIp);
-      setPrinterPort(staticPort);
-      
-      // Test connection to static printer
-      try {
-        const status = await thermalPrinter.testConnectionManual(staticIp, parseInt(staticPort));
-        if (status.connected) {
-          setPrinterMessage(`✅ Imprimante statique connectée: ${staticIp}:${staticPort}`);
-        } else {
-          setPrinterMessage(`❌ Imprimante non connectée: ${staticIp}:${staticPort}`);
+      if (currentPrinter) {
+        setPrinterIp(currentPrinter.ip);
+        setPrinterPort(currentPrinter.port.toString());
+        
+        // Test connection to current printer
+        try {
+          const status = await thermalPrinter.testConnectionManual(currentPrinter.ip, currentPrinter.port);
+          if (status.connected) {
+            setPrinterMessage(`✅ Imprimante connectée: ${currentPrinter.ip}:${currentPrinter.port}`);
+          } else {
+            setPrinterMessage(`❌ Imprimante non connectée: ${currentPrinter.ip}:${currentPrinter.port}`);
+          }
+        } catch (error) {
+          setPrinterMessage(`❌ Erreur de connexion: ${currentPrinter.ip}:${currentPrinter.port}`);
         }
-      } catch (error) {
-        setPrinterMessage(`❌ Erreur de connexion: ${staticIp}:${staticPort}`);
+      } else {
+        // Fallback to default configuration
+        const defaultIp = "192.168.192.12";
+        const defaultPort = "9100";
+        
+        setPrinterIp(defaultIp);
+        setPrinterPort(defaultPort);
+        setPrinterMessage(`⚠️ Configuration par défaut: ${defaultIp}:${defaultPort}`);
       }
     } catch (e) {
-      setPrinterMessage("❌ Erreur lors du chargement de la configuration statique");
+      setPrinterMessage("❌ Erreur lors du chargement de la configuration");
     } finally {
       setLoadingPrinter(false);
     }
   };
 
   const savePrinterConfig = async () => {
-    setPrinterMessage("⚠️ Configuration statique - L'IP et le port ne peuvent pas être modifiés");
-    return;
+    setSavingPrinter(true);
+    try {
+      // Validate IP address format
+      const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+      if (!ipRegex.test(printerIp)) {
+        setPrinterMessage("❌ Adresse IP invalide");
+        return;
+      }
+
+      // Validate port number
+      const port = parseInt(printerPort);
+      if (isNaN(port) || port < 1 || port > 65535) {
+        setPrinterMessage("❌ Port invalide (doit être entre 1 et 65535)");
+        return;
+      }
+
+      // Update printer configuration
+      await thermalPrinter.updatePrinterConfigManual({
+        ip: printerIp,
+        port: port,
+        enabled: true
+      });
+
+      setPrinterMessage(`✅ Configuration sauvegardée: ${printerIp}:${port}`);
+    } catch (error) {
+      setPrinterMessage(`❌ Erreur lors de la sauvegarde: ${error}`);
+    } finally {
+      setSavingPrinter(false);
+    }
   };
 
   const testPrinterConnection = async () => {

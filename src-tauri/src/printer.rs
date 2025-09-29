@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use reqwest::Client;
 use std::time::Duration;
 use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PrinterConfig {
@@ -58,6 +59,62 @@ pub struct PrinterService {
 }
 
 impl PrinterService {
+    /// Get the configuration file path
+    fn get_config_path() -> PathBuf {
+        // Try to get the executable directory first
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                return exe_dir.join("printer_config.json");
+            }
+        }
+        
+        // Fallback to current directory
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("printer_config.json")
+    }
+
+    /// Save printer configuration to file
+    fn save_config_to_file(&self) -> Result<(), String> {
+        let config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        let config_path = Self::get_config_path();
+        
+        println!("💾 [CONFIG] Saving printer config to: {:?}", config_path);
+        
+        let config_json = serde_json::to_string_pretty(&*config)
+            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+        
+        fs::write(&config_path, config_json)
+            .map_err(|e| format!("Failed to write config file {:?}: {}", config_path, e))?;
+        
+        println!("✅ [CONFIG] Printer configuration saved successfully");
+        Ok(())
+    }
+
+    /// Load printer configuration from file
+    fn load_config_from_file(&self) -> Result<(), String> {
+        let config_path = Self::get_config_path();
+        
+        println!("📂 [CONFIG] Loading printer config from: {:?}", config_path);
+        
+        if !config_path.exists() {
+            println!("⚠️ [CONFIG] Config file does not exist, using default configuration");
+            return Ok(());
+        }
+        
+        let config_content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config file {:?}: {}", config_path, e))?;
+        
+        let loaded_config: PrinterConfig = serde_json::from_str(&config_content)
+            .map_err(|e| format!("Failed to parse config file: {}", e))?;
+        
+        let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        *config = loaded_config;
+        
+        println!("✅ [CONFIG] Printer configuration loaded successfully: {}:{}", config.ip, config.port);
+        Ok(())
+    }
+
     /// Helper function to create temporary script files in the proper temp directory
     fn create_temp_script_path(&self, prefix: &str) -> std::path::PathBuf {
         let temp_dir = std::env::temp_dir();
@@ -231,9 +288,9 @@ impl PrinterService {
     }
 
     pub fn new() -> Self {
-        // Static printer configuration - no more environment variable dependencies
-        let printer_ip = "192.168.192.12".to_string(); // Static IP - never changes
-        let printer_port = 9100; // Static port - never changes
+        // Default printer configuration
+        let printer_ip = "192.168.192.12".to_string(); // Default IP
+        let printer_port = 9100; // Default port
         let printer_name = "Imprimante Thermique".to_string();
         let printer_width = 48;
         let printer_timeout = 10000; // Increased timeout for better reliability
@@ -251,14 +308,21 @@ impl PrinterService {
             is_default: true,
         };
 
-        Self {
+        let service = Self {
             printer_config: Arc::new(Mutex::new(printer_config)),
             node_script_path: "scripts/printer.js".to_string(),
             last_booking_payload: Arc::new(Mutex::new(None)),
             last_entry_payload: Arc::new(Mutex::new(None)),
             last_exit_payload: Arc::new(Mutex::new(None)),
             last_day_pass_payload: Arc::new(Mutex::new(None)),
+        };
+
+        // Try to load configuration from file
+        if let Err(e) = service.load_config_from_file() {
+            println!("⚠️ [CONFIG] Failed to load config from file: {}. Using default configuration.", e);
         }
+
+        service
     }
 
     pub fn reload_config_from_env(&self) -> Result<(), String> {
@@ -566,7 +630,29 @@ printTestTicket();
         config.ip = ip.to_string();
         config.port = port;
         config.enabled = enabled;
+        
+        // Save the updated configuration to file
+        drop(config); // Release the lock before calling save_config_to_file
+        self.save_config_to_file()?;
+        
         Ok(())
+    }
+
+    /// Update printer configuration with full config object
+    pub fn update_printer_config_full(&self, new_config: PrinterConfig) -> Result<(), String> {
+        let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        *config = new_config;
+        
+        // Save the updated configuration to file
+        drop(config); // Release the lock before calling save_config_to_file
+        self.save_config_to_file()?;
+        
+        Ok(())
+    }
+
+    /// Save current configuration to file (public method)
+    pub fn save_config(&self) -> Result<(), String> {
+        self.save_config_to_file()
     }
 
     pub async fn execute_print_job(&self, job: PrintJob) -> Result<String, String> {
