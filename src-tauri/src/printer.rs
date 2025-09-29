@@ -96,6 +96,7 @@ impl PrinterService {
         let config_path = Self::get_config_path();
         
         println!("📂 [CONFIG] Loading printer config from: {:?}", config_path);
+        println!("📂 [CONFIG] File exists: {}", config_path.exists());
         
         if !config_path.exists() {
             println!("⚠️ [CONFIG] Config file does not exist, using default configuration");
@@ -105,8 +106,12 @@ impl PrinterService {
         let config_content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config file {:?}: {}", config_path, e))?;
         
+        println!("📂 [CONFIG] Config file content: {}", config_content);
+        
         let loaded_config: PrinterConfig = serde_json::from_str(&config_content)
             .map_err(|e| format!("Failed to parse config file: {}", e))?;
+        
+        println!("📂 [CONFIG] Parsed config: IP={}, Port={}", loaded_config.ip, loaded_config.port);
         
         let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
         *config = loaded_config;
@@ -372,6 +377,7 @@ impl PrinterService {
 
     pub fn get_current_printer(&self) -> Result<Option<PrinterConfig>, String> {
         let config = self.printer_config.lock().map_err(|e| e.to_string())?;
+        println!("🔍 [DEBUG] get_current_printer returning: IP={}, Port={}", config.ip, config.port);
         Ok(Some(config.clone()))
     }
 
@@ -626,15 +632,20 @@ printTestTicket();
     }
 
     pub fn update_config_manual(&self, ip: &str, port: u16, enabled: bool) -> Result<(), String> {
+        println!("🔧 [CONFIG] update_config_manual called with: IP={}, Port={}, Enabled={}", ip, port, enabled);
+        
         let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
         config.ip = ip.to_string();
         config.port = port;
         config.enabled = enabled;
         
+        println!("🔧 [CONFIG] Updated config in memory: IP={}, Port={}", config.ip, config.port);
+        
         // Save the updated configuration to file
         drop(config); // Release the lock before calling save_config_to_file
         self.save_config_to_file()?;
         
+        println!("✅ [CONFIG] Configuration updated and saved successfully");
         Ok(())
     }
 
