@@ -7,10 +7,12 @@ import { Badge } from '../components/ui/badge';
 import { useAuth } from '../context/AuthProvider';
 import { useNotifications } from '../context/NotificationProvider';
 import api from '../lib/api';
-import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus, MapPin, Globe, AlertCircle, CheckCircle2, Users, Phone, Hash, Building, Printer, Search } from 'lucide-react';
+import { dbClient } from '../services/dbClient';
+import { Loader2, Plus, Check, X, RefreshCw, Car, UserPlus, MapPin, Globe, AlertCircle, CheckCircle2, Users, Phone, Hash, Building, Printer, Search, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Select } from '../components/ui/select';
 import MunicipalityService from '../services/municipalityService';
+import { keyboardShortcuts } from '../services/keyboardShortcuts';
 
 interface Vehicle {
   id: string;
@@ -56,17 +58,11 @@ const SupervisorVehicleManagement: React.FC = () => {
   const [stationConfig, setStationConfig] = useState<any>(null);
   const tunisianPlateRegex = /^\d{2,3} ?TUN ?\d{1,4}$/i;
   const [licensePlateError, setLicensePlateError] = useState<string | null>(null);
-  const [showCreateStation, setShowCreateStation] = useState(false);
   const [stationSearchTerm, setStationSearchTerm] = useState('');
   const [destinationSearchTerm, setDestinationSearchTerm] = useState('');
-  const [newStation, setNewStation] = useState({
-    name: '',
-    governorateId: '',
-    delegationId: '',
-    address: '',
-  });
-  const [isCreatingStation, setIsCreatingStation] = useState(false);
-  const [createStationError, setCreateStationError] = useState<string | null>(null);
+  const [isLoadingMonastir, setIsLoadingMonastir] = useState(false);
+  const [licensePlateFirst, setLicensePlateFirst] = useState('');
+  const [licensePlateSecond, setLicensePlateSecond] = useState('');
 
   // Helper
   const formatTND = (value: any) => {
@@ -74,35 +70,69 @@ const SupervisorVehicleManagement: React.FC = () => {
     return `${(Number.isFinite(n) ? n : 0).toFixed(3)} TND`;
   };
 
-  // Function to select all Monastir delegations
+  // Handle license plate first part input
+  const handleLicensePlateFirst = (value: string) => {
+    // Only allow numbers, max 3 digits
+    const numericValue = value.replace(/\D/g, '').slice(0, 3);
+    setLicensePlateFirst(numericValue);
+    
+    // Auto-update the full license plate
+    const fullPlate = numericValue && licensePlateSecond 
+      ? `${numericValue} TUN ${licensePlateSecond}` 
+      : numericValue;
+    
+    setForm(prev => ({ ...prev, licensePlate: fullPlate }));
+    setLicensePlateError(null);
+  };
+
+  // Handle license plate second part input
+  const handleLicensePlateSecond = (value: string) => {
+    // Only allow numbers, max 4 digits
+    const numericValue = value.replace(/\D/g, '').slice(0, 4);
+    setLicensePlateSecond(numericValue);
+    
+    // Auto-update the full license plate
+    const fullPlate = licensePlateFirst && numericValue 
+      ? `${licensePlateFirst} TUN ${numericValue}` 
+      : licensePlateFirst;
+    
+    setForm(prev => ({ ...prev, licensePlate: fullPlate }));
+    setLicensePlateError(null);
+  };
+
+  // Function to select all stations for a specific governorate using database
+  const selectAllStationsByGovernorate = async (governorate: string) => {
+    setIsLoadingMonastir(true);
+    try {
+      // Get all stations for the specified governorate from database
+      const stations = await dbClient.getStationsByGovernorate(governorate);
+      
+      const stationIds = stations.map(station => station.stationId);
+      setForm(prev => ({
+        ...prev,
+        authorizedStationIds: stationIds
+      }));
+      
+      addNotification({
+        type: 'success',
+        title: 'Succès',
+        message: `${stationIds.length} stations de ${governorate} sélectionnées`
+      });
+    } catch (error: any) {
+      console.error(`Error fetching ${governorate} stations:`, error);
+      addNotification({
+        type: 'error',
+        title: 'Erreur',
+        message: `Impossible de charger les stations de ${governorate}`
+      });
+    } finally {
+      setIsLoadingMonastir(false);
+    }
+  };
+
+  // Function to select all Monastir delegations using database
   const selectAllMonastirDelegations = () => {
-    const monastirStations = routes.filter(route => 
-      route.stationName.includes('MONASTIR') || 
-      route.stationName.includes('SAHLINE') || 
-      route.stationName.includes('KSIBET EL MEDIOUNI') || 
-      route.stationName.includes('JEMMAL') || 
-      route.stationName.includes('BENI HASSEN') || 
-      route.stationName.includes('SAYADA LAMTA BOU HAJAR') || 
-      route.stationName.includes('TEBOULBA') || 
-      route.stationName.includes('KSAR HELAL') || 
-      route.stationName.includes('BEMBLA') || 
-      route.stationName.includes('MOKNINE') || 
-      route.stationName.includes('ZERAMDINE') || 
-      route.stationName.includes('OUERDANINE') || 
-      route.stationName.includes('BEKALTA')
-    );
-    
-    const stationIds = monastirStations.map(route => route.stationId);
-    setForm(prev => ({
-      ...prev,
-      authorizedStationIds: stationIds
-    }));
-    
-    addNotification({
-      type: 'success',
-      title: 'Succès',
-      message: `${stationIds.length} stations de Monastir sélectionnées`
-    });
+    selectAllStationsByGovernorate('Monastir');
   };
 
   // Function to toggle station selection
@@ -169,43 +199,71 @@ const SupervisorVehicleManagement: React.FC = () => {
     return <div className="p-8 text-center text-lg">Accès refusé. Réservé au superviseur.</div>;
   }
 
-  // Fetch vehicles
+  // Fetch vehicles using direct database access
   const fetchVehicles = async () => {
     setIsLoading(true);
-    const res = await api.get<any>('/api/vehicles');
-    // Handle nested response structure from server
-    const vehiclesData = res.data?.data || res.data;
-    // Filter out banned vehicles
-    const activeVehicles = Array.isArray(vehiclesData) 
-      ? vehiclesData.filter((vehicle: any) => !vehicle.isBanned)
-      : [];
-    setVehicles(activeVehicles);
+    try {
+      const vehiclesData = await dbClient.getAllVehicles();
+      // Filter out banned vehicles
+      const activeVehicles = vehiclesData.filter((vehicle: any) => !vehicle.isBanned);
+      setVehicles(activeVehicles);
+    } catch (error: any) {
+      console.error('Error fetching vehicles:', error);
+      addNotification({ type: 'error', title: 'Erreur', message: 'Impossible de charger la liste des véhicules' });
+    }
     setIsLoading(false);
   };
 
-  // Fetch routes for station selection
+  // Fetch routes for station selection using direct database access
   const fetchRoutes = async () => {
     try {
-      const res = await api.getAllRoutes();
-      if (res.success) {
-        const routesData = res.data?.data || res.data;
-        setRoutes(Array.isArray(routesData) ? routesData : []);
-      }
+      const routesData = await dbClient.getAvailableDestinations();
+      setRoutes(routesData);
     } catch (error) {
       console.error('Error loading routes:', error);
+      addNotification({ type: 'error', title: 'Erreur', message: 'Impossible de charger les destinations' });
     }
   };
 
 
-  // Polling for real-time updates
+  // Polling for real-time updates and keyboard shortcuts setup
   useEffect(() => {
     fetchVehicles();
     fetchRoutes();
+    
+    // Setup keyboard shortcuts for this page
+    keyboardShortcuts.setNavigate(navigate);
+    
+    // Register page-specific shortcuts
+    keyboardShortcuts.registerShortcut({
+      key: 'Ctrl+A',
+      description: 'Ajouter un véhicule',
+      category: 'action',
+      action: () => setShowRequestForm(true)
+    });
+
+    keyboardShortcuts.registerShortcut({
+      key: 'Ctrl+R',
+      description: 'Actualiser la liste',
+      category: 'action',
+      action: () => {
+        fetchVehicles();
+        fetchRoutes();
+      }
+    });
+
+    // Real-time polling with shorter interval for better responsiveness
     const interval = setInterval(() => {
       fetchVehicles();
       fetchRoutes();
-    }, 10000);
-    return () => clearInterval(interval);
+    }, 5000); // Reduced from 10s to 5s for better real-time updates
+    
+    // Cleanup shortcuts and interval on unmount
+    return () => {
+      clearInterval(interval);
+      keyboardShortcuts.unregisterShortcut('Ctrl+A');
+      keyboardShortcuts.unregisterShortcut('Ctrl+R');
+    };
   }, []);
 
   // Check municipality API availability and fetch data on mount
@@ -237,10 +295,15 @@ const SupervisorVehicleManagement: React.FC = () => {
 
 
     const fetchStationConfig = async () => {
-      const res = await api.getStationConfig();
-      if (res.success && res.data) {
-        setStationConfig(res.data);
-        console.log("station config", res.data);
+      try {
+        const res = await api.getStationConfig();
+        if (res.success && res.data) {
+          setStationConfig(res.data);
+          console.log("station config", res.data);
+        }
+      } catch (error) {
+        console.warn('Station config not available:', error);
+        // Continue without station config
       }
     };
 
@@ -259,33 +322,6 @@ const SupervisorVehicleManagement: React.FC = () => {
     }
   }, [showRequestForm, routes, stationConfig]);
 
-  // Handle governorate change for new station creation
-  useEffect(() => {
-    if (showCreateStation && newStation.governorateId && governorates.length > 0) {
-      const fetchDelegationsForNewStation = async () => {
-        setIsLoadingMunicipalities(true);
-        
-        try {
-          const selectedGovernorate = governorates.find(gov => gov.id === newStation.governorateId);
-          if (!selectedGovernorate) {
-            return;
-          }
-
-          const municipalityDelegations = await MunicipalityService.getDelegationsByGovernorate(selectedGovernorate.name);
-          setDelegations(municipalityDelegations);
-          
-          console.log(`🗺️ Fetched ${municipalityDelegations.length} delegations for new station in ${selectedGovernorate.name}`);
-        } catch (error) {
-          console.error('Failed to fetch delegations for new station:', error);
-          setDelegations([]);
-        } finally {
-          setIsLoadingMunicipalities(false);
-        }
-      };
-      
-      fetchDelegationsForNewStation();
-    }
-  }, [showCreateStation, newStation.governorateId, governorates]);
 
   // Approve request
 
@@ -320,7 +356,7 @@ const SupervisorVehicleManagement: React.FC = () => {
     }
   };
 
-  // Submit new vehicle creation
+  // Submit new vehicle creation using direct database operations
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (form.licensePlate && !tunisianPlateRegex.test(form.licensePlate.trim())) {
@@ -330,27 +366,46 @@ const SupervisorVehicleManagement: React.FC = () => {
     setIsSubmitting(true);
     
     try {
-      // Create vehicle
-      const vehiclePayload = {
-        licensePlate: form.licensePlate,
-        capacity: form.capacity ? Number(form.capacity) : 8,
-      };
+      // Create vehicle using direct database operation
+      const capacity = form.capacity ? Number(form.capacity) : 8;
+      const result = await dbClient.createVehicle(form.licensePlate, capacity);
       
-      const vehicleRes = await api.createVehicle(vehiclePayload);
+      // Extract vehicle ID from the result message
+      const vehicleIdMatch = result.match(/ID: ([a-f0-9-]+)/);
+      const vehicleId = vehicleIdMatch ? vehicleIdMatch[1] : null;
       
-      if (vehicleRes.success && vehicleRes.data && vehicleRes.data.id) {
-        const vehicleId = vehicleRes.data.id;
-        
+      if (vehicleId) {
         // Add authorized stations if any are selected
         if (form.authorizedStationIds && form.authorizedStationIds.length > 0) {
           for (const stationId of form.authorizedStationIds) {
             // Find station name from routes
             const station = routes.find(r => r.stationId === stationId);
             if (station) {
-              await api.authorizeVehicleStation(vehicleId, stationId, station.stationName);
+              try {
+                await dbClient.authorizeVehicleStation(vehicleId, stationId, station.stationName);
+              } catch (authError: any) {
+                console.warn('Failed to authorize station:', authError);
+                // Continue with other stations even if one fails
+              }
             }
           }
         }
+        
+        // Create the new vehicle object for immediate display
+        const newVehicle = {
+          id: vehicleId,
+          licensePlate: form.licensePlate,
+          capacity: capacity,
+          isActive: true,
+          isAvailable: true,
+          isBanned: false,
+          defaultDestinationId: form.defaultDestinationId || null,
+          defaultDestinationName: form.defaultDestinationId ? 
+            routes.find(r => r.stationId === form.defaultDestinationId)?.stationName || null : null
+        };
+        
+        // Immediately add the new vehicle to the local state for instant display
+        setVehicles(prevVehicles => [...prevVehicles, newVehicle]);
         
         setShowRequestForm(false);
         setForm({
@@ -359,12 +414,14 @@ const SupervisorVehicleManagement: React.FC = () => {
           authorizedStationIds: [], 
           defaultDestinationId: ''
         });
+        setLicensePlateFirst('');
+        setLicensePlateSecond('');
         addNotification({ type: 'success', title: 'Véhicule créé', message: 'Le véhicule a été créé avec succès.' });
-        // Immediately refresh both vehicles and routes
-        await fetchVehicles();
-        await fetchRoutes();
+        
+        // Optional: Refresh routes to ensure we have the latest data
+        fetchRoutes();
       } else {
-        addNotification({ type: 'error', title: 'Erreur', message: vehicleRes.message || 'Échec de la création du véhicule.' });
+        addNotification({ type: 'error', title: 'Erreur', message: 'Impossible de récupérer l\'ID du véhicule créé.' });
       }
     } catch (error: any) {
       addNotification({ type: 'error', title: 'Erreur', message: error.message || 'Une erreur est survenue.' });
@@ -386,40 +443,19 @@ const SupervisorVehicleManagement: React.FC = () => {
     setIsVehicleDetailsLoading(false);
   };
 
-  // Create station handler
-  const handleCreateStation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsCreatingStation(true);
-    setCreateStationError(null);
-    try {
-      const res = await api.post('/api/vehicles/stations/create', newStation);
-      if (res.success && res.data) {
-        addNotification({ type: 'success', title: 'Station Créée', message: 'Nouvelle station créée avec succès.' });
-        setShowCreateStation(false);
-        setNewStation({ name: '', governorateId: '', delegationId: '', address: '' });
-        // Refresh routes and select the new one
-        fetchRoutes();
-        setForm(f => ({ ...f, authorizedStationIds: [(res.data as any).id] }));
-      } else {
-        setCreateStationError(res.message || 'Échec de la création de la station.');
-      }
-    } catch (err: any) {
-      setCreateStationError(err.message || 'Échec de la création de la station.');
-    }
-    setIsCreatingStation(false);
-  };
 
-  // Add the banVehicle function at the top level of the component
+  // Add the banVehicle function using direct database access
   const banVehicle = async (vehicleId: string) => {
-    const res = await api.banVehicle(vehicleId);
-    if (res.success) {
+    try {
+      await dbClient.banVehicle(vehicleId);
+      
+      // Immediately update the local state to remove the banned vehicle
+      setVehicles(prevVehicles => prevVehicles.filter(v => v.id !== vehicleId));
+      
       addNotification({ type: 'success', title: 'Véhicule banni', message: 'Le véhicule a été banni avec succès.' });
-      // Immediately refresh both vehicles and routes
-      await fetchVehicles();
-      await fetchRoutes();
       setIsVehicleModalOpen(false);
-    } else {
-      addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du bannissement du véhicule.' });
+    } catch (error: any) {
+      addNotification({ type: 'error', title: 'Erreur', message: error.message || 'Échec du bannissement du véhicule.' });
     }
   };
 
@@ -429,22 +465,32 @@ const SupervisorVehicleManagement: React.FC = () => {
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Car className="h-6 w-6" /> Gestion des véhicules
         </h1>
-        <Button onClick={() => {
-          if (stationConfig && governorates.length > 0 && delegations.length > 0 && routes.length > 0) {
-            // Find governorate and delegation IDs by name
-            const gov = governorates.find(g => g.name === stationConfig.governorate);
-            const del = delegations.find(d => d.name === stationConfig.delegation);
-            setForm(f => ({
-              ...f,
-              originGovernorateId: gov ? gov.id : '',
-              originDelegationId: del ? del.id : '',
-              authorizedStationIds: stationConfig.id ? [stationConfig.id] : [],
-            }));
-          }
-          setShowRequestForm(true);
-        }}>
-          <Plus className="h-4 w-4 mr-2" /> Nouvelle demande de conducteur
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline"
+            onClick={() => navigate('/vehicle-reports')}
+          >
+            <FileText className="h-4 w-4 mr-2" /> Rapports
+          </Button>
+          <Button 
+            data-shortcut="add-vehicle"
+            onClick={() => {
+              if (stationConfig && governorates.length > 0 && delegations.length > 0 && routes.length > 0) {
+                // Find governorate and delegation IDs by name
+                const gov = governorates.find(g => g.name === stationConfig.governorate);
+                const del = delegations.find(d => d.name === stationConfig.delegation);
+                setForm(f => ({
+                  ...f,
+                  originGovernorateId: gov ? gov.id : '',
+                  originDelegationId: del ? del.id : '',
+                  authorizedStationIds: stationConfig.id ? [stationConfig.id] : [],
+                }));
+              }
+              setShowRequestForm(true);
+            }}>
+            <Plus className="h-4 w-4 mr-2" /> Nouvelle demande de conducteur
+          </Button>
+        </div>
       </div>
 
       {/* Vehicles Table */}
@@ -455,13 +501,17 @@ const SupervisorVehicleManagement: React.FC = () => {
           </h2>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={async () => {
-              const date = todayStr();
-              const res = await api.get(`/api/vehicles/trips/daily?date=${encodeURIComponent(date)}`);
-              if (res.success && res.data) {
-                try { sessionStorage.setItem(`allVehicleTrips:${date}`, JSON.stringify(res.data)); } catch {}
-                navigate(`/print-all-vehicle-trips?date=${encodeURIComponent(date)}`);
-              } else {
-                addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement du rapport' });
+              try {
+                const date = todayStr();
+                const res = await api.get(`/api/vehicles/trips/daily?date=${encodeURIComponent(date)}`);
+                if (res.success && res.data) {
+                  try { sessionStorage.setItem(`allVehicleTrips:${date}`, JSON.stringify(res.data)); } catch {}
+                  navigate(`/print-all-vehicle-trips?date=${encodeURIComponent(date)}`);
+                } else {
+                  addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement du rapport' });
+                }
+              } catch (error) {
+                addNotification({ type: 'error', title: 'Erreur', message: 'Fonction d\'impression non disponible' });
               }
             }}>
               <Printer className="h-4 w-4 mr-2" /> Imprimer tous les trajets (A4)
@@ -526,17 +576,37 @@ const SupervisorVehicleManagement: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">Plaque d'immatriculation *</label>
-                  <Input 
-                    name="licensePlate" 
-                    value={form.licensePlate} 
-                    onChange={handleFormChange} 
-                    required 
-                    maxLength={12} 
-                    placeholder="123 TUN 4567" 
-                    className={licensePlateError ? "border-red-500" : ""}
-                  />
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Format: 2-3 chiffres, TUN, 1-4 chiffres
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <Input 
+                        value={licensePlateFirst} 
+                        onChange={(e) => handleLicensePlateFirst(e.target.value)} 
+                        placeholder="123" 
+                        maxLength={3}
+                        className={licensePlateError ? "border-red-500" : ""}
+                      />
+                      <div className="text-xs text-muted-foreground mt-1 text-center">
+                        Première partie
+                      </div>
+                    </div>
+                    <div className="text-lg font-bold text-gray-500 px-2">
+                      TUN
+                    </div>
+                    <div className="flex-1">
+                      <Input 
+                        value={licensePlateSecond} 
+                        onChange={(e) => handleLicensePlateSecond(e.target.value)} 
+                        placeholder="4567" 
+                        maxLength={4}
+                        className={licensePlateError ? "border-red-500" : ""}
+                      />
+                      <div className="text-xs text-muted-foreground mt-1 text-center">
+                        Deuxième partie
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 text-center">
+                    Résultat: <span className="font-mono font-semibold">{form.licensePlate || '___ TUN ____'}</span>
                   </div>
                   {licensePlateError && (
                     <div className="text-xs text-red-500 mt-1 flex items-center gap-1">
@@ -579,11 +649,16 @@ const SupervisorVehicleManagement: React.FC = () => {
                         type="button" 
                         variant="outline" 
                         size="sm" 
-                        onClick={selectAllMonastirDelegations}
-                        className="whitespace-nowrap bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+                        onClick={() => selectAllMonastirDelegations()}
+                        disabled={isLoadingMonastir}
+                        className="whitespace-nowrap bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 disabled:opacity-50"
                       >
-                        <Globe className="h-4 w-4 mr-1" />
-                        Tout Monastir
+                        {isLoadingMonastir ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <Globe className="h-4 w-4 mr-1" />
+                        )}
+                        {isLoadingMonastir ? 'Chargement...' : 'Tout Monastir'}
                       </Button>
                       <Button 
                         type="button" 
@@ -595,16 +670,6 @@ const SupervisorVehicleManagement: React.FC = () => {
                         <X className="h-4 w-4 mr-1" />
                         Tout désélectionner
                       </Button>
-                    <Button 
-                      type="button" 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => setShowCreateStation(true)}
-                      className="whitespace-nowrap"
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      Nouvelle station
-                    </Button>
                   </div>
                   </div>
 
@@ -821,6 +886,7 @@ const SupervisorVehicleManagement: React.FC = () => {
               <Button 
                 variant="outline" 
                 type="button" 
+                data-shortcut="close-modal"
                 onClick={() => setShowRequestForm(false)} 
                 disabled={isSubmitting}
               >
@@ -902,14 +968,18 @@ const SupervisorVehicleManagement: React.FC = () => {
                       <span className="text-muted-foreground">-</span>
                     )}
                     <Button size="sm" variant="secondary" className="ml-auto" onClick={async () => {
-                      if (!vehicleDetails) return;
-                      const date = todayStr();
-                      const res = await api.getVehicleTrips(vehicleDetails.id, date);
-                      if (res.success && res.data) {
-                        try { sessionStorage.setItem(`vehicleTrips:${vehicleDetails.id}:${date}`, JSON.stringify(res.data)); } catch {}
-                        navigate(`/print-vehicle-trips?vehicleId=${encodeURIComponent(vehicleDetails.id)}&date=${encodeURIComponent(date)}`);
-                      } else {
-                        addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement des trajets' });
+                      try {
+                        if (!vehicleDetails) return;
+                        const date = todayStr();
+                        const res = await api.getVehicleTrips(vehicleDetails.id, date);
+                        if (res.success && res.data) {
+                          try { sessionStorage.setItem(`vehicleTrips:${vehicleDetails.id}:${date}`, JSON.stringify(res.data)); } catch {}
+                          navigate(`/print-vehicle-trips?vehicleId=${encodeURIComponent(vehicleDetails.id)}&date=${encodeURIComponent(date)}`);
+                        } else {
+                          addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement des trajets' });
+                        }
+                      } catch (error) {
+                        addNotification({ type: 'error', title: 'Erreur', message: 'Fonction d\'impression non disponible' });
                       }
                     }}>
                       <Printer className="h-4 w-4 mr-2" /> Imprimer trajets (A4)
@@ -940,156 +1010,6 @@ const SupervisorVehicleManagement: React.FC = () => {
           ) : (
             <div className="text-center text-muted-foreground">Aucun détail trouvé.</div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Create New Station Dialog */}
-      <Dialog open={showCreateStation} onOpenChange={setShowCreateStation}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Building className="h-5 w-5" />
-              Créer une nouvelle station
-            </DialogTitle>
-            <div className="flex items-center gap-2 mt-2">
-              {municipalityAPIStatus === 'available' && (
-                <div className="flex items-center gap-1 text-green-600">
-                  <CheckCircle2 className="h-3 w-3" />
-                  <span className="text-xs">Données des municipalités tunisiennes disponibles</span>
-                </div>
-              )}
-              {municipalityAPIStatus === 'unavailable' && (
-                <div className="flex items-center gap-1 text-orange-600">
-                  <AlertCircle className="h-3 w-3" />
-                  <span className="text-xs">Utilisation des données locales</span>
-                </div>
-              )}
-            </div>
-          </DialogHeader>
-          <form onSubmit={handleCreateStation} className="space-y-6">
-            <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
-              <h3 className="flex items-center gap-2 font-medium mb-4">
-                <MapPin className="h-4 w-4" />
-                Informations de la station
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Nom de la station *</label>
-                  <Input 
-                    name="name" 
-                    value={newStation.name} 
-                    onChange={e => setNewStation({ ...newStation, name: e.target.value })} 
-                    required 
-                    placeholder="Ex: Station de Tunis Centre"
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1 flex items-center gap-1">
-                      <Globe className="h-3 w-3" />
-                      Gouvernorat *
-                    </label>
-                    <select 
-                      name="governorateId" 
-                      value={newStation.governorateId} 
-                      onChange={e => setNewStation({ ...newStation, governorateId: e.target.value, delegationId: '' })} 
-                      required 
-                      className="w-full border rounded-lg p-3 bg-white dark:bg-gray-800" 
-                      disabled={governorates.length === 0 || isLoadingMunicipalities}
-                    >
-                      <option value="">
-                        {governorates.length === 0 ? 'Aucun gouvernorat disponible' : 'Sélectionner le gouvernorat'}
-                      </option>
-                      {governorates.map(g => (
-                        <option key={g.id} value={g.id}>
-                          {g.name}{g.nameAr ? ` (${g.nameAr})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1 flex items-center gap-1">
-                      <MapPin className="h-3 w-3" />
-                      Délégation *
-                    </label>
-                    <select 
-                      name="delegationId" 
-                      value={newStation.delegationId} 
-                      onChange={e => setNewStation({ ...newStation, delegationId: e.target.value })} 
-                      required 
-                      className="w-full border rounded-lg p-3 bg-white dark:bg-gray-800" 
-                      disabled={!newStation.governorateId || delegations.length === 0 || isLoadingMunicipalities}
-                    >
-                      <option value="">
-                        {!newStation.governorateId ? 'Sélectionner d\'abord le gouvernorat' :
-                         delegations.length === 0 ? 'Aucune délégation disponible' : 
-                         'Sélectionner la délégation'}
-                      </option>
-                      {delegations.map(d => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}{d.nameAr ? ` (${d.nameAr})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Adresse *</label>
-                  <Input 
-                    name="address" 
-                    value={newStation.address} 
-                    onChange={e => setNewStation({ ...newStation, address: e.target.value })} 
-                    required 
-                    placeholder="Ex: Avenue Habib Bourguiba, Tunis"
-                  />
-                </div>
-              </div>
-            </div>
-            
-            {createStationError && (
-              <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3">
-                <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
-                  <AlertCircle className="h-4 w-4" />
-                  <span className="text-sm font-medium">Erreur</span>
-                </div>
-                <div className="text-sm text-red-700 dark:text-red-300 mt-1">
-                  {createStationError}
-                </div>
-              </div>
-            )}
-            
-            <div className="flex justify-end gap-3 pt-4 border-t">
-              <Button 
-                variant="outline" 
-                type="button" 
-                onClick={() => {
-                  setShowCreateStation(false);
-                  setCreateStationError(null);
-                  setNewStation({ name: '', governorateId: '', delegationId: '', address: '' });
-                }} 
-                disabled={isCreatingStation}
-              >
-                Annuler
-              </Button>
-              <Button 
-                type="submit" 
-                disabled={isCreatingStation || isLoadingMunicipalities}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                {isCreatingStation ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Création...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    Créer la station
-                  </>
-                )}
-              </Button>
-            </div>
-          </form>
         </DialogContent>
       </Dialog>
     </div>

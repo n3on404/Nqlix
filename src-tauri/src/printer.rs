@@ -139,13 +139,13 @@ impl PrinterService {
     }
 
     pub fn new() -> Self {
-        // Load printer configuration from system-level env sources (supports Linux /etc/environment)
-        let printer_ip = Self::read_env_from_system("PRINTER_IP").unwrap_or_else(|| "192.168.192.10".to_string());
-        let printer_port = Self::read_u16_from_env("PRINTER_PORT", 9100);
-        let printer_name = Self::read_env_from_system("PRINTER_NAME").unwrap_or_else(|| "Imprimante Thermique".to_string());
-        let printer_width = Self::read_u8_from_env("PRINTER_WIDTH", 48);
-        let printer_timeout = Self::read_u64_from_env("PRINTER_TIMEOUT", 5000);
-        let printer_model = Self::read_env_from_system("PRINTER_MODEL").unwrap_or_else(|| "TM-T20X".to_string());
+        // Static printer configuration - no more environment variable dependencies
+        let printer_ip = "192.168.192.12".to_string(); // Static IP - never changes
+        let printer_port = 9100; // Static port - never changes
+        let printer_name = "Imprimante Thermique".to_string();
+        let printer_width = 48;
+        let printer_timeout = 10000; // Increased timeout for better reliability
+        let printer_model = "TM-T20X".to_string();
 
         let printer_config = PrinterConfig {
             id: "printer1".to_string(),

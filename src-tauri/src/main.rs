@@ -1929,6 +1929,67 @@ struct DestinationDto {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct VehicleInfo {
+    id: String,
+    licensePlate: String,
+    capacity: i32,
+    isActive: bool,
+    isAvailable: bool,
+    isBanned: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct TripInfo {
+    id: String,
+    destinationId: String,
+    destinationName: String,
+    queuePosition: i32,
+    availableSeats: i32,
+    totalSeats: i32,
+    basePrice: f64,
+    enteredAt: String,
+    createdAt: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DestinationSummary {
+    destinationName: String,
+    tripCount: i32,
+    totalSeatsSold: i32,
+    totalIncome: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VehicleDailyReport {
+    vehicle: VehicleInfo,
+    date: String,
+    trips: Vec<TripInfo>,
+    totalTrips: i32,
+    totalIncome: f64,
+    totalSeatsSold: i32,
+    destinations: Vec<DestinationSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VehicleReport {
+    vehicle: VehicleInfo,
+    totalTrips: i32,
+    totalIncome: f64,
+    totalSeatsSold: i32,
+    trips: Vec<TripInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AllVehiclesDailyReport {
+    date: String,
+    vehicles: Vec<VehicleReport>,
+    totalVehicles: i32,
+    totalTrips: i32,
+    totalIncome: f64,
+    totalSeatsSold: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct VehicleQueueStatusDto {
     id: String,
     vehicleId: String,
@@ -1985,6 +2046,390 @@ async fn db_get_available_destinations() -> Result<Vec<DestinationDto>, String> 
         delegation: r.get("delegation"),
     }).collect();
     Ok(destinations)
+}
+
+#[tauri::command]
+async fn db_get_stations_by_governorate(governorate: String) -> Result<Vec<DestinationDto>, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let sql = r#"
+        SELECT station_id, station_name, base_price, governorate, delegation
+        FROM routes
+        WHERE is_active = true AND LOWER(governorate) = LOWER($1)
+        ORDER BY station_name
+    "#;
+    let rows = client.query(sql, &[&governorate]).await.map_err(|e| e.to_string())?;
+    let destinations = rows.into_iter().map(|r| DestinationDto {
+        stationId: r.get("station_id"),
+        stationName: r.get("station_name"),
+        basePrice: r.get("base_price"),
+        governorate: r.get("governorate"),
+        delegation: r.get("delegation"),
+    }).collect();
+    Ok(destinations)
+}
+
+#[tauri::command]
+async fn db_create_vehicle(license_plate: String, capacity: i32) -> Result<String, String> {
+    let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
+
+    // Check if vehicle already exists
+    let existing_vehicle = tx.query_opt(
+        "SELECT id FROM vehicles WHERE license_plate = $1",
+        &[&license_plate]
+    ).await.map_err(|e| e.to_string())?;
+    
+    if existing_vehicle.is_some() {
+        return Err(format!("Véhicule avec la plaque {} existe déjà", license_plate));
+    }
+
+    // Create new vehicle
+    let vehicle_id = uuid::Uuid::new_v4().to_string();
+    tx.execute(
+        "INSERT INTO vehicles (id, license_plate, capacity, is_active, is_available, is_banned, created_at, updated_at) VALUES ($1, $2, $3, true, true, false, NOW(), NOW())",
+        &[&vehicle_id, &license_plate, &capacity]
+    ).await.map_err(|e| format!("Erreur lors de la création du véhicule: {}", e))?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    
+    Ok(format!("Véhicule {} créé avec succès (ID: {})", license_plate, vehicle_id))
+}
+
+#[tauri::command]
+async fn db_authorize_vehicle_station(vehicle_id: String, station_id: String, station_name: String) -> Result<String, String> {
+    let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
+
+    // Check if authorization already exists
+    let existing_auth = tx.query_opt(
+        "SELECT id FROM vehicle_authorized_stations WHERE vehicle_id = $1 AND station_id = $2",
+        &[&vehicle_id, &station_id]
+    ).await.map_err(|e| e.to_string())?;
+    
+    if existing_auth.is_some() {
+        return Err(format!("Autorisation déjà existante pour cette station"));
+    }
+
+    // Create authorization
+    let auth_id = uuid::Uuid::new_v4().to_string();
+    tx.execute(
+        "INSERT INTO vehicle_authorized_stations (id, vehicle_id, station_id, station_name, priority, is_default, created_at) VALUES ($1, $2, $3, $4, 1, false, NOW())",
+        &[&auth_id, &vehicle_id, &station_id, &station_name]
+    ).await.map_err(|e| format!("Erreur lors de l'autorisation: {}", e))?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    
+    Ok(format!("Autorisation créée pour la station {}", station_name))
+}
+
+// Enhanced printer commands with fallback methods
+#[tauri::command]
+async fn print_ticket_tcp(content: String, ip: String, port: u16) -> Result<String, String> {
+    use std::net::TcpStream;
+    use std::io::Write;
+    
+    match TcpStream::connect(format!("{}:{}", ip, port)) {
+        Ok(mut stream) => {
+            // Convert content to bytes and send
+            let bytes = content.as_bytes();
+            match stream.write_all(bytes) {
+                Ok(_) => {
+                    // Send cut command
+                    let cut_command = vec![0x1D, 0x56, 0x00]; // ESC/POS cut command
+                    let _ = stream.write_all(&cut_command);
+                    Ok(format!("Ticket printed successfully via TCP to {}:{}", ip, port))
+                }
+                Err(e) => Err(format!("Failed to write to printer: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to connect to printer at {}:{} - {}", ip, port, e))
+    }
+}
+
+#[tauri::command]
+async fn print_ticket_raw(content: String, ip: String, port: u16) -> Result<String, String> {
+    use std::io::Write;
+    
+    // Try with a longer timeout
+    match std::net::TcpStream::connect_timeout(
+        &format!("{}:{}", ip, port).parse().unwrap(),
+        std::time::Duration::from_secs(10)
+    ) {
+        Ok(mut stream) => {
+            // Set socket options for better reliability
+            let _ = stream.set_nodelay(true);
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+            
+            // Send raw content
+            let bytes = content.as_bytes();
+            match stream.write_all(bytes) {
+                Ok(_) => {
+                    // Send cut command
+                    let cut_command = vec![0x1D, 0x56, 0x00]; // ESC/POS cut command
+                    let _ = stream.write_all(&cut_command);
+                    Ok(format!("Ticket printed successfully via raw socket to {}:{}", ip, port))
+                }
+                Err(e) => Err(format!("Failed to write to printer: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to connect to printer at {}:{} - {}", ip, port, e))
+    }
+}
+
+#[tauri::command]
+async fn print_receipt_tcp(content: String, ip: String, port: u16) -> Result<String, String> {
+    use std::net::TcpStream;
+    use std::io::Write;
+    
+    match TcpStream::connect(format!("{}:{}", ip, port)) {
+        Ok(mut stream) => {
+            // Convert content to bytes and send
+            let bytes = content.as_bytes();
+            match stream.write_all(bytes) {
+                Ok(_) => {
+                    // Send cut command
+                    let cut_command = vec![0x1D, 0x56, 0x00]; // ESC/POS cut command
+                    let _ = stream.write_all(&cut_command);
+                    Ok(format!("Receipt printed successfully via TCP to {}:{}", ip, port))
+                }
+                Err(e) => Err(format!("Failed to write to printer: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to connect to printer at {}:{} - {}", ip, port, e))
+    }
+}
+
+#[tauri::command]
+async fn print_receipt_raw(content: String, ip: String, port: u16) -> Result<String, String> {
+    use std::io::Write;
+    
+    // Try with a longer timeout
+    match std::net::TcpStream::connect_timeout(
+        &format!("{}:{}", ip, port).parse().unwrap(),
+        std::time::Duration::from_secs(10)
+    ) {
+        Ok(mut stream) => {
+            // Set socket options for better reliability
+            let _ = stream.set_nodelay(true);
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+            let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+            
+            // Send raw content
+            let bytes = content.as_bytes();
+            match stream.write_all(bytes) {
+                Ok(_) => {
+                    // Send cut command
+                    let cut_command = vec![0x1D, 0x56, 0x00]; // ESC/POS cut command
+                    let _ = stream.write_all(&cut_command);
+                    Ok(format!("Receipt printed successfully via raw socket to {}:{}", ip, port))
+                }
+                Err(e) => Err(format!("Failed to write to printer: {}", e))
+            }
+        }
+        Err(e) => Err(format!("Failed to connect to printer at {}:{} - {}", ip, port, e))
+    }
+}
+
+#[tauri::command]
+async fn save_ticket_to_file(content: String, filename: String) -> Result<String, String> {
+    use std::fs::File;
+    use std::io::Write;
+    
+    // Create a tickets directory if it doesn't exist
+    let tickets_dir = "tickets";
+    if let Err(_) = std::fs::create_dir_all(tickets_dir) {
+        // If we can't create the directory, try to save in the current directory
+        match File::create(&filename) {
+            Ok(mut file) => {
+                match file.write_all(content.as_bytes()) {
+                    Ok(_) => Ok(format!("Ticket saved to file: {}", filename)),
+                    Err(e) => Err(format!("Failed to write to file: {}", e))
+                }
+            }
+            Err(e) => Err(format!("Failed to create file: {}", e))
+        }
+    } else {
+        // Save in the tickets directory
+        let file_path = format!("{}/{}", tickets_dir, filename);
+        match File::create(&file_path) {
+            Ok(mut file) => {
+                match file.write_all(content.as_bytes()) {
+                    Ok(_) => Ok(format!("Ticket saved to file: {}", file_path)),
+                    Err(e) => Err(format!("Failed to write to file: {}", e))
+                }
+            }
+            Err(e) => Err(format!("Failed to create file: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn db_ban_vehicle(vehicle_id: String) -> Result<String, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    
+    // Update vehicle to be banned
+    let result = client.execute(
+        "UPDATE vehicles SET is_banned = true, updated_at = NOW() WHERE id = $1",
+        &[&vehicle_id]
+    ).await.map_err(|e| e.to_string())?;
+    
+    if result == 0 {
+        return Err(format!("Véhicule introuvable avec l'ID: {}", vehicle_id));
+    }
+    
+    Ok(format!("Véhicule banni avec succès"))
+}
+
+#[tauri::command]
+async fn db_get_vehicle_daily_report(vehicle_id: String, date: String) -> Result<VehicleDailyReport, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    
+    // Get vehicle information
+    let vehicle_row = client.query_opt(
+        "SELECT id, license_plate, capacity, is_active, is_available, is_banned FROM vehicles WHERE id = $1",
+        &[&vehicle_id]
+    ).await.map_err(|e| e.to_string())?;
+    
+    let vehicle = match vehicle_row {
+        Some(row) => VehicleInfo {
+            id: row.get("id"),
+            licensePlate: row.get("license_plate"),
+            capacity: row.get("capacity"),
+            isActive: row.get("is_active"),
+            isAvailable: row.get("is_available"),
+            isBanned: row.get("is_banned"),
+        },
+        None => return Err("Véhicule introuvable".to_string()),
+    };
+    
+    // Get trips for the day
+    let trip_rows = client.query(
+        "SELECT 
+            id, destination_id, destination_name, queue_position, available_seats, total_seats, 
+            base_price, entered_at, created_at
+        FROM vehicle_queue 
+        WHERE vehicle_id = $1 AND DATE(created_at) = $2
+        ORDER BY created_at",
+        &[&vehicle_id, &date]
+    ).await.map_err(|e| e.to_string())?;
+    
+    let trips: Vec<TripInfo> = trip_rows.into_iter().map(|row| TripInfo {
+        id: row.get("id"),
+        destinationId: row.get("destination_id"),
+        destinationName: row.get("destination_name"),
+        queuePosition: row.get("queue_position"),
+        availableSeats: row.get("available_seats"),
+        totalSeats: row.get("total_seats"),
+        basePrice: row.get("base_price"),
+        enteredAt: row.get("entered_at"),
+        createdAt: row.get("created_at"),
+    }).collect();
+    
+    // Calculate totals
+    let total_trips = trips.len() as i32;
+    let total_income: f64 = trips.iter().map(|t| t.basePrice * (t.totalSeats - t.availableSeats) as f64).sum();
+    let total_seats_sold: i32 = trips.iter().map(|t| t.totalSeats - t.availableSeats).sum();
+    
+    // Get destinations summary
+    let mut destinations: std::collections::HashMap<String, DestinationSummary> = std::collections::HashMap::new();
+    for trip in &trips {
+        let entry = destinations.entry(trip.destinationName.clone()).or_insert(DestinationSummary {
+            destinationName: trip.destinationName.clone(),
+            tripCount: 0,
+            totalSeatsSold: 0,
+            totalIncome: 0.0,
+        });
+        entry.tripCount += 1;
+        entry.totalSeatsSold += trip.totalSeats - trip.availableSeats;
+        entry.totalIncome += trip.basePrice * (trip.totalSeats - trip.availableSeats) as f64;
+    }
+    
+    Ok(VehicleDailyReport {
+        vehicle,
+        date,
+        trips,
+        totalTrips: total_trips,
+        totalIncome: total_income,
+        totalSeatsSold: total_seats_sold,
+        destinations: destinations.into_values().collect(),
+    })
+}
+
+#[tauri::command]
+async fn db_get_all_vehicles_daily_report(date: String) -> Result<AllVehiclesDailyReport, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    
+    // Get all vehicles with their trips for the day
+    let rows = client.query(
+        "SELECT 
+            v.id as vehicle_id, v.license_plate, v.capacity, v.is_active, v.is_available, v.is_banned,
+            q.id as trip_id, q.destination_id, q.destination_name, q.queue_position, 
+            q.available_seats, q.total_seats, q.base_price, q.entered_at, q.created_at
+        FROM vehicles v
+        LEFT JOIN vehicle_queue q ON v.id = q.vehicle_id AND DATE(q.created_at) = $1
+        WHERE v.is_banned = false
+        ORDER BY v.license_plate, q.created_at",
+        &[&date]
+    ).await.map_err(|e| e.to_string())?;
+    
+    let mut vehicles: std::collections::HashMap<String, VehicleReport> = std::collections::HashMap::new();
+    
+    for row in rows {
+        let vehicle_id: String = row.get("vehicle_id");
+        let license_plate: String = row.get("license_plate");
+        
+        let vehicle_entry = vehicles.entry(vehicle_id.clone()).or_insert(VehicleReport {
+            vehicle: VehicleInfo {
+                id: vehicle_id.clone(),
+                licensePlate: license_plate.clone(),
+                capacity: row.get("capacity"),
+                isActive: row.get("is_active"),
+                isAvailable: row.get("is_available"),
+                isBanned: row.get("is_banned"),
+            },
+            totalTrips: 0,
+            totalIncome: 0.0,
+            totalSeatsSold: 0,
+            trips: Vec::new(),
+        });
+        
+        // Add trip if exists
+        if let Some(trip_id) = row.get::<_, Option<String>>("trip_id") {
+            let trip = TripInfo {
+                id: trip_id,
+                destinationId: row.get("destination_id"),
+                destinationName: row.get("destination_name"),
+                queuePosition: row.get("queue_position"),
+                availableSeats: row.get("available_seats"),
+                totalSeats: row.get("total_seats"),
+                basePrice: row.get("base_price"),
+                enteredAt: row.get("entered_at"),
+                createdAt: row.get("created_at"),
+            };
+            
+            vehicle_entry.trips.push(trip.clone());
+            vehicle_entry.totalTrips += 1;
+            let seats_sold = trip.totalSeats - trip.availableSeats;
+            vehicle_entry.totalSeatsSold += seats_sold;
+            vehicle_entry.totalIncome += trip.basePrice * seats_sold as f64;
+        }
+    }
+    
+    // Calculate overall totals
+    let total_vehicles = vehicles.len() as i32;
+    let total_trips: i32 = vehicles.values().map(|v| v.totalTrips).sum();
+    let total_income: f64 = vehicles.values().map(|v| v.totalIncome).sum();
+    let total_seats_sold: i32 = vehicles.values().map(|v| v.totalSeatsSold).sum();
+    
+    Ok(AllVehiclesDailyReport {
+        date,
+        vehicles: vehicles.into_values().collect(),
+        totalVehicles: total_vehicles,
+        totalTrips: total_trips,
+        totalIncome: total_income,
+        totalSeatsSold: total_seats_sold,
+    })
 }
 
 #[tauri::command]
@@ -2597,7 +3042,7 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
             let mut other_ips = Vec::new();
             
             for line in output_str.lines() {
-                if line.contains("inet ") && !line.contains("127.0.0.1") {
+                if line.contains("inet ") && !line.contains("192.168.192.100") {
                     // Check if this is an ethernet interface
                     let is_ethernet = line.contains("eth") || line.contains("enp") || line.contains("ens");
                     
@@ -2968,11 +3413,23 @@ fn main() {
             db_update_queue_positions,
             db_move_vehicle_to_front,
             db_get_all_vehicles,
+            db_create_vehicle,
+            db_authorize_vehicle_station,
+            db_ban_vehicle,
+            db_get_vehicle_daily_report,
+            db_get_all_vehicles_daily_report,
             db_add_vehicle_to_queue,
+            // Enhanced printer commands with fallback methods
+            print_ticket_tcp,
+            print_ticket_raw,
+            print_receipt_tcp,
+            print_receipt_raw,
+            save_ticket_to_file,
             db_remove_vehicle_from_queue,
             db_update_queue_position,
             db_get_vehicle_queue_status,
             db_get_available_destinations,
+            db_get_stations_by_governorate,
             db_purchase_day_pass,
             db_get_day_pass_price,
             test_day_pass_printing,

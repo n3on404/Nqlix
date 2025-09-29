@@ -23,6 +23,9 @@ import PrintStaffReport from './routes/print-staff-report';
 import PrintVehicleTrips from './routes/print-vehicle-trips';
 import PrintAllVehicleTrips from './routes/print-all-vehicle-trips';
 import PrintAllStaffReport from './routes/print-all-staff-report';
+import VehicleReports from './routes/vehicle-reports';
+import PrintVehicleReport from './routes/print-vehicle-report';
+import PrintAllVehiclesReport from './routes/print-all-vehicles-report';
 import { TauriProvider } from "./context/TauriProvider";
 import { AuthProvider } from "./context/AuthProvider";
 import "./styles.css";
@@ -192,6 +195,18 @@ const router = createBrowserRouter([
       {
         path: "/print-all-staff-report",
         element: <PrintAllStaffReport />,
+      },
+      {
+        path: "/vehicle-reports",
+        element: <VehicleReports />,
+      },
+      {
+        path: "/print-vehicle-report",
+        element: <PrintVehicleReport />,
+      },
+      {
+        path: "/print-all-vehicles-report",
+        element: <PrintAllVehiclesReport />,
       },
     ],
   },

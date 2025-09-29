@@ -109,70 +109,37 @@ export default function Settings() {
   const loadCurrentPrinter = async () => {
     setLoadingPrinter(true);
     try {
-      // Load printer configuration from localStorage
-      const savedIp = getLocalStorage('printerIp') || "";
-      const savedPort = getLocalStorage('printerPort') || "9100";
+      // Static printer configuration - no more localStorage dependency
+      const staticIp = "192.168.192.12";
+      const staticPort = "9100";
       
-      setPrinterIp(savedIp);
-      setPrinterPort(savedPort);
+      setPrinterIp(staticIp);
+      setPrinterPort(staticPort);
       
-      // Test connection if we have an IP
-      if (savedIp) {
-        try {
-          const status = await thermalPrinter.testConnectionManual(savedIp, parseInt(savedPort));
-          if (status.connected) {
-            setPrinterMessage(`✅ Imprimante connectée: ${savedIp}:${savedPort}`);
-          } else {
-            setPrinterMessage(`❌ Imprimante non connectée: ${savedIp}:${savedPort}`);
-          }
-        } catch (error) {
-          setPrinterMessage(`❌ Erreur de connexion: ${savedIp}:${savedPort}`);
+      // Test connection to static printer
+      try {
+        const status = await thermalPrinter.testConnectionManual(staticIp, parseInt(staticPort));
+        if (status.connected) {
+          setPrinterMessage(`✅ Imprimante statique connectée: ${staticIp}:${staticPort}`);
+        } else {
+          setPrinterMessage(`❌ Imprimante non connectée: ${staticIp}:${staticPort}`);
         }
-      } else {
-        setPrinterMessage("Aucune imprimante configurée");
+      } catch (error) {
+        setPrinterMessage(`❌ Erreur de connexion: ${staticIp}:${staticPort}`);
       }
     } catch (e) {
-      setPrinterIp("");
-      setPrinterPort("9100");
-      setPrinterMessage("Erreur lors du chargement de la configuration");
+      setPrinterMessage("❌ Erreur lors du chargement de la configuration statique");
     } finally {
       setLoadingPrinter(false);
     }
   };
 
   const savePrinterConfig = async () => {
-    if (!printerIp.trim()) {
-      setPrinterMessage("❌ Veuillez saisir une adresse IP");
-      return;
-    }
-
-    setSavingPrinter(true);
-    try {
-      // Save to localStorage
-      setLocalStorage('printerIp', printerIp.trim());
-      setLocalStorage('printerPort', printerPort.trim());
-      
-      // Update the printer service configuration
-      await thermalPrinter.updateConfig({
-        ip: printerIp.trim(),
-        port: parseInt(printerPort.trim()),
-        enabled: true
-      });
-      
-      setPrinterMessage(`✅ Configuration sauvegardée: ${printerIp.trim()}:${printerPort.trim()}`);
-    } catch (error) {
-      setPrinterMessage(`❌ Erreur lors de la sauvegarde: ${error}`);
-    } finally {
-      setSavingPrinter(false);
-    }
+    setPrinterMessage("⚠️ Configuration statique - L'IP et le port ne peuvent pas être modifiés");
+    return;
   };
 
   const testPrinterConnection = async () => {
-    if (!printerIp.trim()) {
-      setPrinterMessage("❌ Veuillez saisir une adresse IP");
-      return;
-    }
-
     setTestingPrinter(true);
     try {
       const status = await thermalPrinter.testConnectionManual(printerIp.trim(), parseInt(printerPort.trim()));
@@ -360,43 +327,43 @@ export default function Settings() {
               <span>Configuration de l'imprimante</span>
             </CardTitle>
             <CardDescription>
-              Configurez l'adresse IP et le port de votre imprimante thermique
+              Configuration statique de l'imprimante thermique (IP et port fixes)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="printer-ip">Adresse IP</Label>
+                <Label htmlFor="printer-ip">Adresse IP (Statique)</Label>
                 <Input
                   id="printer-ip"
                   type="text"
-                  placeholder="192.168.1.100"
                   value={printerIp}
-                  onChange={(e) => setPrinterIp(e.target.value)}
-                  disabled={loadingPrinter}
+                  disabled={true}
+                  className="bg-gray-100"
                 />
+                <p className="text-xs text-muted-foreground">IP fixe - Non modifiable</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="printer-port">Port</Label>
+                <Label htmlFor="printer-port">Port (Statique)</Label>
                 <Input
                   id="printer-port"
                   type="number"
-                  placeholder="9100"
                   value={printerPort}
-                  onChange={(e) => setPrinterPort(e.target.value)}
-                  disabled={loadingPrinter}
+                  disabled={true}
+                  className="bg-gray-100"
                 />
+                <p className="text-xs text-muted-foreground">Port fixe - Non modifiable</p>
               </div>
             </div>
             
             <div className="flex items-center gap-2">
               <Button 
                 onClick={savePrinterConfig} 
-                disabled={savingPrinter || loadingPrinter}
-                className="flex items-center gap-2"
+                disabled={true}
+                className="flex items-center gap-2 bg-gray-400"
               >
                 <Save className="h-4 w-4" />
-                {savingPrinter ? "Sauvegarde..." : "Sauvegarder"}
+                Configuration statique
               </Button>
               <Button 
                 variant="outline" 

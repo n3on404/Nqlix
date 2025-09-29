@@ -125,6 +125,10 @@ export const dbClient = {
     return invoke<DestinationDto[]>('db_get_available_destinations');
   },
 
+  async getStationsByGovernorate(governorate: string) {
+    return invoke<DestinationDto[]>('db_get_stations_by_governorate', { governorate });
+  },
+
   async addVehicleToQueue(licensePlate: string, destinationId: string, destinationName?: string) {
     return invoke<string>('db_add_vehicle_to_queue', { licensePlate, destinationId, destinationName });
   },
@@ -149,7 +153,85 @@ export const dbClient = {
   async getDayPassPrice() {
     return invoke<number>('db_get_day_pass_price');
   },
+
+  // Vehicle management functions
+  async createVehicle(licensePlate: string, capacity: number) {
+    return invoke<string>('db_create_vehicle', { licensePlate, capacity });
+  },
+
+  async authorizeVehicleStation(vehicleId: string, stationId: string, stationName: string) {
+    return invoke<string>('db_authorize_vehicle_station', { vehicleId, stationId, stationName });
+  },
+
+  async banVehicle(vehicleId: string) {
+    return invoke<string>('db_ban_vehicle', { vehicleId });
+  },
+
+  // Report functions
+  async getVehicleDailyReport(vehicleId: string, date: string) {
+    return invoke<VehicleDailyReport>('db_get_vehicle_daily_report', { vehicleId, date });
+  },
+
+  async getAllVehiclesDailyReport(date: string) {
+    return invoke<AllVehiclesDailyReport>('db_get_all_vehicles_daily_report', { date });
+  }
 };
+
+// Report interfaces
+export interface VehicleInfo {
+  id: string;
+  licensePlate: string;
+  capacity: number;
+  isActive: boolean;
+  isAvailable: boolean;
+  isBanned: boolean;
+}
+
+export interface TripInfo {
+  id: string;
+  destinationId: string;
+  destinationName: string;
+  queuePosition: number;
+  availableSeats: number;
+  totalSeats: number;
+  basePrice: number;
+  enteredAt: string;
+  createdAt: string;
+}
+
+export interface DestinationSummary {
+  destinationName: string;
+  tripCount: number;
+  totalSeatsSold: number;
+  totalIncome: number;
+}
+
+export interface VehicleDailyReport {
+  vehicle: VehicleInfo;
+  date: string;
+  trips: TripInfo[];
+  totalTrips: number;
+  totalIncome: number;
+  totalSeatsSold: number;
+  destinations: DestinationSummary[];
+}
+
+export interface VehicleReport {
+  vehicle: VehicleInfo;
+  totalTrips: number;
+  totalIncome: number;
+  totalSeatsSold: number;
+  trips: TripInfo[];
+}
+
+export interface AllVehiclesDailyReport {
+  date: string;
+  vehicles: VehicleReport[];
+  totalVehicles: number;
+  totalTrips: number;
+  totalIncome: number;
+  totalSeatsSold: number;
+}
 
 // New TypeScript interfaces for the enhanced queue management
 export interface VehicleDto {

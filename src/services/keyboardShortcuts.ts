@@ -74,7 +74,7 @@ export class KeyboardShortcutsService {
 // Global instance
 export const keyboardShortcuts = new KeyboardShortcutsService();
 
-// Common shortcuts configuration
+// Common shortcuts configuration - AZERTY layout optimized
 export const COMMON_SHORTCUTS = {
   // Navigation shortcuts
   F1: {
@@ -87,7 +87,7 @@ export const COMMON_SHORTCUTS = {
       }
     }
   },
-  F3: {
+  F2: {
     key: 'F2',
     description: 'Aller au pass journalier',
     category: 'navigation' as const,
@@ -97,13 +97,23 @@ export const COMMON_SHORTCUTS = {
       }
     }
   },
-  F4: {
+  F3: {
     key: 'F3',
     description: 'Aller à la gestion de file',
     category: 'navigation' as const,
     action: () => {
       if (keyboardShortcuts.navigate) {
         keyboardShortcuts.navigate('/queue-management');
+      }
+    }
+  },
+  F4: {
+    key: 'F4',
+    description: 'Gestion des véhicules',
+    category: 'navigation' as const,
+    action: () => {
+      if (keyboardShortcuts.navigate) {
+        keyboardShortcuts.navigate('/supervisor-vehicle-management');
       }
     }
   },
@@ -141,9 +151,9 @@ export const COMMON_SHORTCUTS = {
       }
     }
   },
-  // Action shortcuts
-  'Ctrl+N': {
-    key: 'Ctrl+N',
+  // Action shortcuts - AZERTY optimized
+  'Ctrl+A': {
+    key: 'Ctrl+A',
     description: 'Ajouter un élément (contexte)',
     category: 'action' as const,
     action: () => {
@@ -160,6 +170,28 @@ export const COMMON_SHORTCUTS = {
     category: 'action' as const,
     action: () => {
       window.location.reload();
+    }
+  },
+  'Ctrl+Q': {
+    key: 'Ctrl+Q',
+    description: 'Ajouter véhicule (contexte)',
+    category: 'action' as const,
+    action: () => {
+      const addVehicleButton = document.querySelector('[data-shortcut="add-vehicle"]') as HTMLButtonElement;
+      if (addVehicleButton) {
+        addVehicleButton.click();
+      }
+    }
+  },
+  'Ctrl+W': {
+    key: 'Ctrl+W',
+    description: 'Fermer la modale actuelle',
+    category: 'modal' as const,
+    action: () => {
+      const closeButton = document.querySelector('[data-shortcut="close-modal"]') as HTMLButtonElement;
+      if (closeButton && closeButton.offsetParent !== null) {
+        closeButton.click();
+      }
     }
   },
   'Escape': {

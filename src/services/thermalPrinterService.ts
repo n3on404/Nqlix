@@ -33,17 +33,14 @@ export class ThermalPrinterService {
   private config: PrinterConfig;
 
   private constructor() {
-    // Load configuration from localStorage or use defaults
-    const savedIp = getLocalStorage('printerIp') || '';
-    const savedPort = getLocalStorage('printerPort') || '9100';
-    
+    // Static printer configuration - no more dynamic IP changes
     this.config = {
       id: 'printer1',
       name: 'Imprimante Thermique',
-      ip: savedIp || '192.168.1.100', // Default IP
-      port: parseInt(savedPort) || 9100, // Default port
+      ip: '192.168.192.12', // Static IP - never changes
+      port: 9100, // Static port - never changes
       width: 48,
-      timeout: 5000,
+      timeout: 10000, // Increased timeout for better reliability
       model: 'TM-T20X',
       enabled: true,
       is_default: true,
@@ -204,27 +201,159 @@ export class ThermalPrinterService {
   }
 
   /**
-   * Print a simple ticket
+   * Print a simple ticket with multiple fallback methods
    */
   async printTicket(content: string): Promise<string> {
-    try {
-      return await invoke<string>('print_ticket', { content });
-    } catch (error) {
-      console.error('Failed to print ticket:', error);
-      throw error;
+    const methods = [
+      () => this.printTicketMethod1(content),
+      () => this.printTicketMethod2(content),
+      () => this.printTicketMethod3(content),
+      () => this.printTicketFallback(content)
+    ];
+
+    let lastError: Error | null = null;
+    
+    for (let i = 0; i < methods.length; i++) {
+      try {
+        console.log(`🖨️ Attempting print method ${i + 1}...`);
+        const result = await methods[i]();
+        console.log(`✅ Print method ${i + 1} succeeded`);
+        return result;
+      } catch (error) {
+        console.warn(`❌ Print method ${i + 1} failed:`, error);
+        lastError = error as Error;
+        
+        // Wait a bit before trying the next method
+        if (i < methods.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
     }
+    
+    throw new Error(`All print methods failed. Last error: ${lastError?.message || 'Unknown error'}`);
   }
 
   /**
-   * Print a receipt
+   * Primary print method - Tauri invoke
+   */
+  private async printTicketMethod1(content: string): Promise<string> {
+    return await invoke<string>('print_ticket', { content });
+  }
+
+  /**
+   * Secondary print method - Direct TCP connection
+   */
+  private async printTicketMethod2(content: string): Promise<string> {
+    return await invoke<string>('print_ticket_tcp', { 
+      content, 
+      ip: this.config.ip, 
+      port: this.config.port 
+    });
+  }
+
+  /**
+   * Tertiary print method - Raw socket connection
+   */
+  private async printTicketMethod3(content: string): Promise<string> {
+    return await invoke<string>('print_ticket_raw', { 
+      content, 
+      ip: this.config.ip, 
+      port: this.config.port 
+    });
+  }
+
+  /**
+   * Fallback method - Save to file for manual printing
+   */
+  private async printTicketFallback(content: string): Promise<string> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `ticket-${timestamp}.txt`;
+    
+    // Save to file as fallback
+    await invoke<string>('save_ticket_to_file', { 
+      content, 
+      filename 
+    });
+    
+    return `Ticket saved to file: ${filename} (Printer unavailable)`;
+  }
+
+  /**
+   * Print a receipt with multiple fallback methods
    */
   async printReceipt(content: string): Promise<string> {
-    try {
-      return await invoke<string>('print_receipt', { content });
-    } catch (error) {
-      console.error('Failed to print receipt:', error);
-      throw error;
+    const methods = [
+      () => this.printReceiptMethod1(content),
+      () => this.printReceiptMethod2(content),
+      () => this.printReceiptMethod3(content),
+      () => this.printReceiptFallback(content)
+    ];
+
+    let lastError: Error | null = null;
+    
+    for (let i = 0; i < methods.length; i++) {
+      try {
+        console.log(`🖨️ Attempting receipt print method ${i + 1}...`);
+        const result = await methods[i]();
+        console.log(`✅ Receipt print method ${i + 1} succeeded`);
+        return result;
+      } catch (error) {
+        console.warn(`❌ Receipt print method ${i + 1} failed:`, error);
+        lastError = error as Error;
+        
+        // Wait a bit before trying the next method
+        if (i < methods.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
     }
+    
+    throw new Error(`All receipt print methods failed. Last error: ${lastError?.message || 'Unknown error'}`);
+  }
+
+  /**
+   * Primary receipt print method - Tauri invoke
+   */
+  private async printReceiptMethod1(content: string): Promise<string> {
+    return await invoke<string>('print_receipt', { content });
+  }
+
+  /**
+   * Secondary receipt print method - Direct TCP connection
+   */
+  private async printReceiptMethod2(content: string): Promise<string> {
+    return await invoke<string>('print_receipt_tcp', { 
+      content, 
+      ip: this.config.ip, 
+      port: this.config.port 
+    });
+  }
+
+  /**
+   * Tertiary receipt print method - Raw socket connection
+   */
+  private async printReceiptMethod3(content: string): Promise<string> {
+    return await invoke<string>('print_receipt_raw', { 
+      content, 
+      ip: this.config.ip, 
+      port: this.config.port 
+    });
+  }
+
+  /**
+   * Fallback method - Save receipt to file for manual printing
+   */
+  private async printReceiptFallback(content: string): Promise<string> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `receipt-${timestamp}.txt`;
+    
+    // Save to file as fallback
+    await invoke<string>('save_ticket_to_file', { 
+      content, 
+      filename 
+    });
+    
+    return `Receipt saved to file: ${filename} (Printer unavailable)`;
   }
 
 
