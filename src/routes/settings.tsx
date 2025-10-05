@@ -109,12 +109,21 @@ export default function Settings() {
   const loadCurrentPrinter = async () => {
     setLoadingPrinter(true);
     try {
+      // Prefill from localStorage first (fast UX), then sync from backend
+      const storedIp = getLocalStorage('printerIp');
+      const storedPort = getLocalStorage('printerPort');
+      if (storedIp) setPrinterIp(storedIp);
+      if (storedPort) setPrinterPort(storedPort);
+
       // Load current printer configuration from backend
       const currentPrinter = await thermalPrinter.getCurrentPrinter();
       
       if (currentPrinter) {
         setPrinterIp(currentPrinter.ip);
         setPrinterPort(currentPrinter.port.toString());
+        // Keep a local backup for faster restore
+        setLocalStorage('printerIp', currentPrinter.ip);
+        setLocalStorage('printerPort', currentPrinter.port.toString());
         
         // Test connection to current printer
         try {
@@ -166,6 +175,10 @@ export default function Settings() {
         port: port,
         enabled: true
       });
+
+      // Persist locally for quick restore
+      setLocalStorage('printerIp', printerIp);
+      setLocalStorage('printerPort', String(port));
 
       setPrinterMessage(`✅ Configuration sauvegardée: ${printerIp}:${port}`);
     } catch (error) {

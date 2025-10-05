@@ -44,8 +44,8 @@ export const dbClient = {
     return invoke<AuthorizedDestinationDto[]>('db_get_vehicle_authorized_destinations', { licensePlate });
   },
 
-  async enterQueueWithDestination(licensePlate: string, destinationId: string, destinationName?: string) {
-    return invoke<string>('db_enter_queue', { licensePlate, destinationId, destinationName });
+  async enterQueueWithDestination(licensePlate: string, destinationId: string, destinationName?: string, staffId?: string) {
+    return invoke<string>('db_enter_queue', { licensePlate, destinationId, destinationName, staffId });
   },
 
   async exitQueue(licensePlate: string) {
@@ -70,6 +70,10 @@ export const dbClient = {
 
   async createQueueBooking(destinationId: string, seatsRequested: number, createdBy?: string) {
     return invoke<any>('db_create_queue_booking', { destinationId, seatsRequested, createdBy });
+  },
+
+  async createVehicleSpecificBooking(queueId: string, seatsRequested: number, createdBy?: string) {
+    return invoke<any>('db_create_vehicle_specific_booking', { queueId, seatsRequested, createdBy });
   },
 
   async cancelQueueBooking(bookingId: string) {
@@ -99,6 +103,10 @@ export const dbClient = {
 
   async getTodayExitPasses() {
     return invoke<any>('db_get_today_exit_passes');
+  },
+
+  async getRecentExitPasses() {
+    return invoke<any>('db_get_recent_exit_passes');
   },
 
   async getQueuedWithoutDayPass() {
@@ -159,8 +167,11 @@ export const dbClient = {
   },
 
   // Vehicle management functions
-  async createVehicle(licensePlate: string, capacity: number) {
-    return invoke<string>('db_create_vehicle', { licensePlate, capacity });
+  async createVehicle(licensePlate: string, capacity: number, phoneNumber?: string) {
+    return invoke<string>('db_create_vehicle', { licensePlate, capacity, phoneNumber });
+  },
+  async getVehicleActivity72h(licensePlate: string) {
+    return invoke<Array<{eventType: string; timestamp: string; destinationName?: string}>>('db_get_vehicle_activity_72h', { licensePlate });
   },
 
   async authorizeVehicleStation(vehicleId: string, stationId: string, stationName: string) {
@@ -178,7 +189,12 @@ export const dbClient = {
 
   async getAllVehiclesDailyReport(date: string) {
     return invoke<AllVehiclesDailyReport>('db_get_all_vehicles_daily_report', { date });
-  }
+  },
+
+  // Add new method for transferring seats and removing vehicle
+  async transferSeatsAndRemoveVehicle(licensePlate: string, destinationId: string) {
+    return invoke<string>('db_transfer_seats_and_remove_vehicle', { licensePlate, destinationId });
+  },
 };
 
 // Report interfaces
@@ -245,6 +261,7 @@ export interface VehicleDto {
   isActive: boolean;
   isAvailable: boolean;
   isBanned: boolean;
+  phoneNumber?: string | null;
   defaultDestinationId?: string;
   defaultDestinationName?: string;
 }

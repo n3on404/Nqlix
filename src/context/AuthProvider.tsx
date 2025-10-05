@@ -15,7 +15,7 @@ interface Staff {
 interface AuthContextInterface {
   isAuthenticated: boolean;
   currentStaff: Staff | null;
-  login: (cin: string, password: string) => Promise<any>;
+  login: (cin: string) => Promise<any>;
   logout: () => Promise<void>;
   isLoading: boolean;
   restoreSession: () => Promise<boolean>;
@@ -87,9 +87,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     initializeAuth();
   }, []);
 
-  const login = async (cin: string, password: string) => {
+  const login = async (cin: string) => {
     try {
-      const response = await api.login(cin, password);
+      const response = await api.login(cin);
       
       if (response.success && response.staff) {
         console.log('✅ Login successful, saving session...');

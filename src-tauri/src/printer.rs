@@ -183,9 +183,18 @@ impl PrinterService {
             }
             Err(e) => {
                 println!("⚠️ [DEBUG] Path resolution failed: {}", e);
-                // Fallback: try to use Node.js's own module resolution
-                println!("🔄 [DEBUG] Falling back to Node.js module resolution");
-                Ok("const { ThermalPrinter, PrinterTypes, CharacterSet, BreakLine } = require('node-thermal-printer');".to_string())
+                // Stronger fallback: try relative require from project root
+                if let Ok(cwd) = std::env::current_dir() {
+                    let rel_module = cwd.join("node_modules").join("node-thermal-printer");
+                    println!("🔄 [DEBUG] Trying relative module at: {:?}", rel_module);
+                    Ok(format!(
+                        "const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');",
+                        rel_module.to_string_lossy()
+                    ))
+                } else {
+                    println!("🔄 [DEBUG] Falling back to Node.js module resolution");
+                    Ok("const { ThermalPrinter, PrinterTypes, CharacterSet, BreakLine } = require('node-thermal-printer');".to_string())
+                }
             }
         }
     }
@@ -193,25 +202,29 @@ impl PrinterService {
     /// Helper function to execute Node.js scripts with proper environment setup
     fn execute_node_script(&self, script_path: &std::path::Path) -> Result<std::process::Output, String> {
         let mut cmd = Command::new("node");
-        
-        // Try to set NODE_PATH to help with module resolution
+
+        // Resolve node_modules and prefer running Node with CWD set to its parent (project root)
         if let Ok(node_modules_path) = self.get_node_modules_path() {
             println!("🔍 [DEBUG] Setting NODE_PATH to: {:?}", node_modules_path);
-            cmd.env("NODE_PATH", node_modules_path);
-        }
-        
-        // Also try to set NODE_PATH to current working directory's node_modules
-        if let Ok(cwd) = std::env::current_dir() {
+            cmd.env("NODE_PATH", &node_modules_path);
+
+            if let Some(project_root) = node_modules_path.parent() {
+                println!("🔍 [DEBUG] Setting working directory to project root: {:?}", project_root);
+                cmd.current_dir(project_root);
+            }
+        } else if let Ok(cwd) = std::env::current_dir() {
+            // Fallback: ensure current_dir has a node_modules sibling
             let cwd_node_modules = cwd.join("node_modules");
             if cwd_node_modules.exists() {
-                println!("🔍 [DEBUG] Adding to NODE_PATH: {:?}", cwd_node_modules);
-                cmd.env("NODE_PATH", format!("{}:{}", 
-                    std::env::var("NODE_PATH").unwrap_or_default(),
-                    cwd_node_modules.to_string_lossy()
-                ));
+                println!("🔍 [DEBUG] Using CWD node_modules at: {:?}", cwd_node_modules);
+                cmd.env("NODE_PATH", &cwd_node_modules);
+                if let Some(project_root) = cwd_node_modules.parent() {
+                    cmd.current_dir(project_root);
+                }
             }
         }
-        
+
+        // Execute the script
         cmd.arg(script_path)
             .output()
             .map_err(|e| format!("Failed to execute script {:?}: {}", script_path, e))
@@ -645,18 +658,36 @@ printTestTicket();
 
     pub fn update_config_manual(&self, ip: &str, port: u16, enabled: bool) -> Result<(), String> {
         println!("🔧 [CONFIG] update_config_manual called with: IP={}, Port={}, Enabled={}", ip, port, enabled);
-        
+
+        // Basic IPv4 validation
+        let ip_trimmed = ip.trim();
+        let octets: Vec<&str> = ip_trimmed.split('.').collect();
+        if octets.len() != 4 {
+            return Err("Invalid IP address format".to_string());
+        }
+        for part in octets {
+            if part.is_empty() { return Err("Invalid IP address format".to_string()); }
+            let parsed = part.parse::<u8>().map_err(|_| "Invalid IP address octet".to_string())?;
+            // parsed used to ensure 0-255 range
+            let _ = parsed;
+        }
+
+        // Port validation
+        if port == 0 {
+            return Err("Invalid port (must be between 1 and 65535)".to_string());
+        }
+
         let mut config = self.printer_config.lock().map_err(|e| e.to_string())?;
-        config.ip = ip.to_string();
+        config.ip = ip_trimmed.to_string();
         config.port = port;
         config.enabled = enabled;
-        
+
         println!("🔧 [CONFIG] Updated config in memory: IP={}, Port={}", config.ip, config.port);
-        
+
         // Save the updated configuration to file
         drop(config); // Release the lock before calling save_config_to_file
         self.save_config_to_file()?;
-        
+
         println!("✅ [CONFIG] Configuration updated and saved successfully");
         Ok(())
     }
@@ -1444,17 +1475,29 @@ printTalon();
         println!("🖨️ [RUST DEBUG] Printer config: IP={}, Port={}, Width={}, Timeout={}", 
                  printer.ip, printer.port, printer.width, printer.timeout);
         
-        // Use provided staff name or fallback
+        // Use provided staff name or extract from ticket data or fallback
         let staff_footer = if let Some(name) = staff_name {
             format!("Émis par: {}", name)
         } else {
-            "Émis par: Staff".to_string()
+            // Try to extract staff name from ticket data
+            if let Ok(parsed_data) = serde_json::from_str::<serde_json::Value>(&ticket_data) {
+                if let Some(staff_name_from_data) = parsed_data.get("staffName").and_then(|v| v.as_str()) {
+                    format!("Émis par: {}", staff_name_from_data)
+                } else {
+                    "Émis par: Staff".to_string()
+                }
+            } else {
+                "Émis par: Staff".to_string()
+            }
         };
         println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printEntryTicket() {{
     try {{
@@ -1507,11 +1550,47 @@ async function printEntryTicket() {{
         printer.bold(false);
         printer.drawLine();
         
-        // Content
+        // Content - Parse JSON and format properly
         console.log('🖨️ [NODE DEBUG] Printing entry ticket content...');
-        const entryContent = `{}`;
+        const entryData = JSON.parse(`{}`);
+        console.log('🖨️ [NODE DEBUG] Entry ticket data:', entryData);
+        
         printer.alignLeft();
-        printer.println(entryContent);
+        
+        // Vehicle information
+        printer.println("VÉHICULE:");
+        printer.println("Plaque: " + entryData.licensePlate);
+        printer.println("Position: " + entryData.queuePosition);
+        printer.println("");
+        
+        // Destination
+        printer.println("DESTINATION:");
+        printer.println("Station: " + entryData.destinationName);
+        printer.println("");
+        
+        // Entry time
+        printer.println("HEURE D'ENTRÉE:");
+        printer.println(entryData.entryTime);
+        printer.println("");
+        
+        // Day pass status and pricing
+        printer.println("TARIFICATION:");
+        if (entryData.dayPassStatus === "VALID") {{
+            printer.println("Pass journalier: VALIDE");
+            printer.println("Achat le: " + entryData.dayPassPurchaseDate);
+            printer.println("MONTANT: 0.00 TND");
+        }} else if (entryData.dayPassStatus === "PURCHASED") {{
+            printer.println("Pass journalier: ACHETÉ");
+            printer.println("Achat le: " + entryData.dayPassPurchaseDate);
+            printer.println("MONTANT: 2.00 TND");
+        }} else {{
+            printer.println("Pass journalier: NON VALIDE");
+            printer.println("MONTANT: 2.00 TND");
+        }}
+        printer.println("");
+        
+        // Ticket number
+        printer.println("N° Ticket: " + entryData.ticketNumber);
         
         // Footer (entry ticket: no date or messages)
         console.log('🖨️ [NODE DEBUG] Printing footer...');
@@ -1524,8 +1603,7 @@ async function printEntryTicket() {{
 
         // Barcode at bottom
         console.log('🖨️ [NODE DEBUG] Extracting entry ticket number for barcode...');
-        const entryNumMatch = entryContent.match(/N°\s*Ticket:\s*([\w-]+)/);
-        const entryTicketNumber = entryNumMatch ? entryNumMatch[1] : null;
+        const entryTicketNumber = entryData.ticketNumber;
         console.log('🖨️ [NODE DEBUG] Entry ticket number found:', entryTicketNumber);
         if (entryTicketNumber) {{
             console.log('🖨️ [NODE DEBUG] Printing barcode...');
@@ -1550,6 +1628,7 @@ async function printEntryTicket() {{
 
 printEntryTicket();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -1568,10 +1647,7 @@ printEntryTicket();
             .map_err(|e| format!("Failed to write entry ticket script: {}", e))?;
         println!("🖨️ [RUST DEBUG] Executing Node.js script...");
         
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute entry ticket script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -1614,9 +1690,12 @@ printEntryTicket();
         };
         println!("🖨️ [RUST DEBUG] Staff footer: {}", staff_footer);
         
+        // Get the require statement
+        let require_statement = self.get_thermal_printer_require()?;
+
         let script_content = format!(
             r#"
-const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('node-thermal-printer');
+{}
 
 async function printExitTicket() {{
     try {{
@@ -1715,6 +1794,7 @@ async function printExitTicket() {{
 
 printExitTicket();
 "#,
+            require_statement,
             printer.width,
             printer.ip,
             printer.port,
@@ -1733,10 +1813,7 @@ printExitTicket();
             .map_err(|e| format!("Failed to write exit ticket script: {}", e))?;
         println!("🖨️ [RUST DEBUG] Executing Node.js script...");
         
-        let output = Command::new("node")
-            .arg(&script_path)
-            .output()
-            .map_err(|e| format!("Failed to execute exit ticket script: {}", e))?;
+        let output = self.execute_node_script(&script_path)?;
 
         let _ = std::fs::remove_file(&script_path);
 
@@ -1876,11 +1953,17 @@ async function printDayPassTicket() {{
         printer.alignLeft();
         printer.println("Plaque: " + dayPassData.licensePlate);
         
-    
-        printer.println("Montant: " + dayPassData.amount + " TND");
+        // Show correct pricing based on day pass status
+        if (dayPassData.amount === 0) {{
+            printer.println("Pass journalier: VALIDE");
+            printer.println("Montant: 0.00 TND");
+            printer.println("Achat précédent: " + dayPassData.purchaseDate);
+        }} else {{
+            printer.println("Pass journalier: ACHETÉ");
+            printer.println("Montant: 2.00 TND");
+            printer.println("Date d'achat: " + dayPassData.purchaseDate);
+        }}
         
-        
-        printer.println("Date d'achat: " + dayPassData.purchaseDate);
         printer.println("Valide pour: " + dayPassData.validFor);
         printer.println("Destination: " + dayPassData.destinationName);
 

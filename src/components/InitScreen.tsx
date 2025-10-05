@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Wifi, WifiOff, Printer, User, Download, CheckCircle, XCircle, AlertCircle, Settings, Search, Globe } from 'lucide-react';
+import { Loader2, Wifi, Printer, User, Download, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { useInit } from '../context/InitProvider';
 import { useTauri } from '../context/TauriProvider';
@@ -23,27 +21,23 @@ interface InitScreenProps {
 
 export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   const { systemStatus, updateServerUrl } = useInit();
-  const { discoverLocalServers, getAppVersion } = useTauri();
+  const { getAppVersion } = useTauri();
   const [appVersion, setAppVersion] = useState<string>('');
   const [currentStep, setCurrentStep] = useState(0);
-  const [showServerConfig, setShowServerConfig] = useState(false);
-  const [serverUrl, setServerUrl] = useState('');
-  const [isTestingConnection, setIsTestingConnection] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [isDiscovering, setIsDiscovering] = useState(false);
-  const [discoveredServers, setDiscoveredServers] = useState<Array<{ip: string, port: number, url: string, response_time: number}>>([]);
-  const [hasPerformedInitialChecks, setHasPerformedInitialChecks] = useState(false);
+  const [connectionAttempts, setConnectionAttempts] = useState(0);
+  const [isConnecting, setIsConnecting] = useState(true);
+  
+  // Fixed server URL - no configuration needed
+  const FIXED_SERVER_URL = 'http://192.168.192.100:3001';
   
   // Load app version on component mount
   useEffect(() => {
     const loadAppVersion = async () => {
       try {
-        // Check if Tauri is available before calling functions
         if (typeof window !== 'undefined' && (window as any).__TAURI__) {
           const version = await getAppVersion();
           setAppVersion(version);
         } else {
-          console.warn('Tauri not available, using fallback version');
           setAppVersion('Web Version');
         }
       } catch (err) {
@@ -56,15 +50,9 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   
   const [checks, setChecks] = useState<SystemCheck[]>([
     {
-      name: 'Network Discovery',
-      status: 'pending',
-      message: 'Searching for local node servers...',
-      icon: <Search className="w-5 h-5" />
-    },
-    {
       name: 'Server Connection',
       status: 'pending',
-      message: 'Connecting to local server...',
+      message: `Connecting to ${FIXED_SERVER_URL}...`,
       icon: <Wifi className="w-5 h-5" />
     },
     {
@@ -106,312 +94,113 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
     ));
   };
 
-  const handleServerUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setServerUrl(e.target.value);
-    setConnectionError(null);
-  };
-
-  const discoverServers = async () => {
-    // Prevent multiple simultaneous discovery calls
-    if (isDiscovering) {
-      console.log('🔍 Network discovery already in progress, skipping...');
-      return null;
-    }
-    
-    setIsDiscovering(true);
-    updateCheck(0, 'pending', 'Scanning local network for servers...');
-    
+  const attemptConnection = async (attempt: number): Promise<boolean> => {
     try {
-      console.log('🔍 Starting network discovery...');
-      const result = await discoverLocalServers();
-      console.log('🔍 Discovery result:', result);
-      setDiscoveredServers(result.servers);
+      console.log(`🔄 Connection attempt ${attempt} to ${FIXED_SERVER_URL}`);
+      updateCheck(0, 'pending', `Connecting to ${FIXED_SERVER_URL}... (attempt ${attempt})`);
       
-      if (result.servers.length > 0) {
-        const bestServer = result.servers[0]; // Fastest response time
-        setServerUrl(bestServer.url);
-        updateCheck(0, 'success', `Found ${result.servers.length} server(s) on port ${bestServer.port} in ${result.scan_duration_ms}ms`);
-        console.log('🔍 Best server found:', bestServer);
-        return bestServer.url;
-      } else {
-        updateCheck(0, 'error', `No local node servers found on network (scanned ${result.total_scanned} IPs on ports 3001-3005)`);
-        console.log('🔍 No servers found, scanned:', result.total_scanned, 'IPs');
-        return null;
-      }
-    } catch (error) {
-      console.error('🔍 Network discovery failed:', error);
-      updateCheck(0, 'error', `Network discovery failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      return null;
-    } finally {
-      setIsDiscovering(false);
-    }
-  };
-
-  const testServerConnection = async () => {
-    setIsTestingConnection(true);
-    setConnectionError(null);
-    
-    try {
-      console.log('🔍 Testing connection to:', serverUrl);
-      const success = await updateServerUrl(serverUrl);
+      const success = await updateServerUrl(FIXED_SERVER_URL);
       
       if (success) {
-        console.log('🔍 Connection successful!');
-        setShowServerConfig(false);
-        performChecks(); // Restart checks with new URL
-      } else {
-        console.log('🔍 Connection failed');
-        setConnectionError('Could not connect to server. Please check the URL and ensure the server is running.');
+        const isConnected = await api.checkConnection();
+        if (isConnected) {
+          updateCheck(0, 'success', `Connected to ${FIXED_SERVER_URL}`);
+          return true;
+        }
       }
+      
+      updateCheck(0, 'error', `Failed to connect (attempt ${attempt})`);
+      return false;
     } catch (error) {
-      console.error('🔍 Connection test error:', error);
-      setConnectionError(`Connection error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsTestingConnection(false);
+      console.error(`❌ Connection attempt ${attempt} failed:`, error);
+      updateCheck(0, 'error', `Connection failed (attempt ${attempt})`);
+      return false;
     }
   };
 
   const performChecks = async () => {
-    // Reset checks
-    setChecks(prev => prev.map(check => ({
-      ...check,
-      status: 'pending',
-      message: check.name === 'Network Discovery' 
-        ? 'Skipping discovery - using localhost...' 
-        : check.name === 'Server Connection'
-        ? 'Connecting to 192.168.192.100:3001...'
-        : check.message.replace(/success|error|warning/i, 'pending')
-    })));
+    setIsConnecting(true);
+    setConnectionAttempts(0);
     
-    // Check 1: Skip Network Discovery - use localhost directly
+    // Step 1: Server Connection with retry logic
     setCurrentStep(0);
-    const localhostUrl = 'http://192.168.192.100:3001';
+    let connected = false;
+    let attempts = 0;
+    const maxAttempts = 10; // Try up to 10 times
     
-    // Mark network discovery as skipped
-    updateCheck(0, 'success', 'Using hardcoded 192.168.192.100:3001');
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Auto-connect to localhost
-    setServerUrl(localhostUrl);
-    const connectionSuccess = await updateServerUrl(localhostUrl);
-    if (!connectionSuccess) {
-      setShowServerConfig(true);
-      return;
-    }
-
-    // Check 2: Server Connection
-    setCurrentStep(1);
-    try {
-      const isConnected = await api.checkConnection();
+    while (!connected && attempts < maxAttempts) {
+      attempts++;
+      setConnectionAttempts(attempts);
       
-      if (isConnected) {
-        updateCheck(1, 'success', `Connected to 192.168.192.100:3001`);
-      } else {
-        updateCheck(1, 'error', 'Failed to connect to 192.168.192.100:3001');
-        setShowServerConfig(true);
-        return; // Stop checks if server connection fails
+      connected = await attemptConnection(attempts);
+      
+      if (!connected) {
+        // Wait 2 seconds before next attempt
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
-    } catch (error) {
-      updateCheck(1, 'error', 'Network error when connecting to server');
-      setShowServerConfig(true);
-      return; // Stop checks if server connection fails
+    }
+    
+    if (!connected) {
+      updateCheck(0, 'error', `Failed to connect after ${maxAttempts} attempts`);
+      setIsConnecting(false);
+      return; // Stop if we can't connect
     }
 
-    // Check 3: Authentication
-    setCurrentStep(2);
+    // Step 2: Authentication
+    setCurrentStep(1);
     await new Promise(resolve => setTimeout(resolve, 800));
     
     try {
-      // Check if token is valid
       const authResponse = await api.verifyToken();
       const isLoggedIn = authResponse.success;
       
       if (isLoggedIn) {
-        updateCheck(2, 'success', 'User session active');
+        updateCheck(1, 'success', 'User session active');
       } else {
-        updateCheck(2, 'warning', 'No active session - login required');
+        updateCheck(1, 'warning', 'No active session - login required');
       }
     } catch (error) {
-      updateCheck(2, 'warning', 'Could not verify authentication status');
+      updateCheck(1, 'warning', 'Could not verify authentication status');
     }
 
-    // Check 4: Printer Configuration
+    // Step 3: Printer Configuration
+    setCurrentStep(2);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    const printerIp = getLocalStorage('printerIp') || '';
+    if (printerIp) {
+      updateCheck(2, 'success', `Printer configured: ${printerIp}`);
+    } else {
+      updateCheck(2, 'warning', 'Printer not configured - configure in settings');
+    }
+
+    // Step 4: App Updates
     setCurrentStep(3);
     await new Promise(resolve => setTimeout(resolve, 800));
     
-    // Check if printer is configured
-    const printerIp = getLocalStorage('printerIp') || '';
-    if (printerIp) {
-      updateCheck(3, 'success', `Imprimante configurée: ${printerIp}`);
-    } else {
-      updateCheck(3, 'warning', 'Imprimante non configurée - configurez dans les paramètres');
-    }
-
-    // Check 5: App Updates
-    setCurrentStep(4);
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    // Simulate update check (95% up to date)
+    // Simulate update check
     const needsUpdate = Math.random() > 0.95;
     if (needsUpdate) {
-      updateCheck(4, 'warning', 'Update available (v2.1.3)');
+      updateCheck(3, 'warning', 'Update available (v2.1.3)');
     } else {
-      updateCheck(4, 'success', 'App is up to date (v2.1.2)');
+      updateCheck(3, 'success', 'App is up to date');
     }
 
     // Wait a bit before completing
     await new Promise(resolve => setTimeout(resolve, 800));
     
     // Complete initialization
-    const networkCheck = checks[0];
-    const serverCheck = checks[1];
-    const authCheck = checks[2];
+    const serverCheck = checks[0];
+    const authCheck = checks[1];
     const shouldShowLogin = authCheck.status !== 'success' || serverCheck.status !== 'success';
+    
+    setIsConnecting(false);
     onInitComplete(shouldShowLogin);
   };
 
   useEffect(() => {
-    if (!hasPerformedInitialChecks) {
-      setHasPerformedInitialChecks(true);
-      performChecks();
-    }
-  }, [hasPerformedInitialChecks]);
-
-  if (showServerConfig) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md">
-          <CardContent className="p-8">
-            {/* Logo and Title */}
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 bg-primary rounded-xl flex items-center justify-center mx-auto mb-4">
-                <span className="text-white font-bold text-2xl">L</span>
-              </div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                Server Configuration
-              </h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-                No local node servers found. Please enter the server URL manually.
-              </p>
-            </div>
-
-            {/* Discovered Servers */}
-            {discoveredServers.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                  Discovered Servers:
-                </h3>
-                <div className="space-y-2">
-                  {discoveredServers.map((server, index) => (
-                    <div
-                      key={`${server.ip}:${server.port}`}
-                      className="flex items-center justify-between p-3 bg-muted dark:bg-muted rounded-lg cursor-pointer hover:bg-muted/80 dark:hover:bg-muted/80"
-                      onClick={() => setServerUrl(server.url)}
-                    >
-                      <div>
-                        <div className="font-medium text-sm">{server.ip}:{server.port}</div>
-                        <div className="text-xs text-gray-500">{server.response_time}ms response</div>
-                      </div>
-                      {serverUrl === server.url && (
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Server URL Input */}
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label htmlFor="server-url" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Server URL
-                </label>
-                <Input
-                  id="server-url"
-                  value={serverUrl}
-                  onChange={handleServerUrlChange}
-                  placeholder="http://192.168.192.100:3001"
-                  className="w-full"
-                />
-                {connectionError && (
-                  <p className="text-sm text-red-500">{connectionError}</p>
-                )}
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Example: http://192.168.192.100:3001
-                </p>
-              </div>
-
-              <div className="flex space-x-3">
-                <Button
-                  onClick={testServerConnection}
-                  disabled={isTestingConnection}
-                  className="flex-1"
-                >
-                  {isTestingConnection ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Testing...
-                    </>
-                  ) : (
-                    <>
-                      <Wifi className="w-4 h-4 mr-2" />
-                      Test Connection
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={discoverServers}
-                  disabled={isDiscovering}
-                  className="flex-1"
-                >
-                  {isDiscovering ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Scanning...
-                    </>
-                  ) : (
-                    <>
-                      <Search className="w-4 h-4 mr-2" />
-                      Scan Network
-                    </>
-                  )}
-                </Button>
-              </div>
-              
-              <div className="flex space-x-3">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    // Skip discovery and try to connect with default URL
-                    setServerUrl('http://192.168.192.100:3001');
-                    testServerConnection();
-                  }}
-                  className="flex-1"
-                >
-                  <Globe className="w-4 h-4 mr-2" />
-                  Try Localhost
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    // Skip discovery and try to connect with common local IP
-                    setServerUrl('http://192.168.192.100:3001');
-                    testServerConnection();
-                  }}
-                  className="flex-1"
-                >
-                  <Globe className="w-4 h-4 mr-2" />
-                  Try Localhost (Alt)
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+    performChecks();
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
@@ -431,7 +220,7 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
               </Badge>
             </div>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              Initializing system...
+              {isConnecting ? 'Connecting to server...' : 'Initializing system...'}
             </p>
           </div>
 
@@ -457,16 +246,6 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
                     {check.message}
                   </div>
                 </div>
-                {index === 0 && check.status === 'error' && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowServerConfig(true)}
-                    className="flex-shrink-0"
-                  >
-                    <Settings className="w-4 h-4" />
-                  </Button>
-                )}
               </div>
             ))}
           </div>
@@ -491,7 +270,7 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
           <div className="flex items-center justify-center mt-6">
             <Loader2 className="w-6 h-6 animate-spin text-primary mr-2" />
             <span className="text-sm text-gray-600 dark:text-gray-400">
-              Please wait...
+              {isConnecting ? `Connecting... (${connectionAttempts} attempts)` : 'Please wait...'}
             </span>
           </div>
         </CardContent>

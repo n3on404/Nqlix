@@ -5,7 +5,6 @@ import {
   Users, 
   Star, 
   ArrowRight,
-  GripVertical,
   RefreshCw,
   CheckCircle,
   SignalHigh,
@@ -19,35 +18,16 @@ import {
   X,
   MapPin,
   ArrowUp,
-  Move,
   
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { useQueue } from "../context/QueueProvider";
 import { formatCurrency } from "../utils/formatters";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import {
-  useSortable,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { Badge } from "../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { useNotifications } from "../context/NotificationProvider";
 import { usePaymentNotifications } from "../components/NotificationToast";
+import SessionManager from "../lib/sessionManager";
 // TODO: Replace with MQTT integration
 import { thermalPrinter } from "../services/thermalPrinterService";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
@@ -57,8 +37,8 @@ import { useAuth } from "../context/AuthProvider";
 import { dbClient } from "../services/dbClient";
 import React from "react";
 
-// Sortable queue item component
-interface SortableQueueItemProps {
+// Simple queue item component (no drag and drop)
+interface QueueItemProps {
   queue: any;
   getStatusColor: (status: string) => string;
   formatTime: (dateString: string) => string;
@@ -70,34 +50,17 @@ interface SortableQueueItemProps {
   actionLoading: string | null;
 }
 
-function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, onEndTrip, onMoveToFront, actionLoading }: SortableQueueItemProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: queue.id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
+function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, onEndTrip, onMoveToFront, actionLoading }: QueueItemProps) {
   const basePrice = getBasePriceForDestination(queue.destinationName) ?? queue.basePrice;
+  const hasBookedSeats = queue.availableSeats < queue.totalSeats;
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`bg-white border-2 rounded-lg p-4 transition-all ${
-        queue.status === 'WAITING' ? 'border-yellow-300' :
-        queue.status === 'LOADING' ? 'border-blue-300' :
-        queue.status === 'READY' ? 'border-green-300' :
-        'border-gray-200'
-      } ${isDragging ? 'opacity-70 shadow-lg' : 'hover:shadow-md'}`}
-    >
+    <div className={`bg-white border-2 rounded-lg p-4 transition-all ${
+      queue.status === 'WAITING' ? 'border-yellow-300' :
+      queue.status === 'LOADING' ? 'border-blue-300' :
+      queue.status === 'READY' ? 'border-green-300' :
+      'border-gray-200'
+    } hover:shadow-md`}>
       <div className="flex items-center justify-between">
         {/* Left: Position and Vehicle Info */}
         <div className="flex items-center gap-4 flex-1">
@@ -108,19 +71,27 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
           
           {/* Vehicle Info */}
           <div 
-            className="flex items-center gap-3 flex-1 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
-            onClick={() => onVehicleClick({ 
-              licensePlate: queue.licensePlate,
-              // cin removed - no longer supported without driver table
-              currentDestination: queue.destinationName, 
-              currentDestinationId: queue.destinationId,
-              queueId: queue.id 
-            })}
+            className={`flex items-center gap-3 flex-1 p-2 rounded transition-colors ${
+              hasBookedSeats 
+                ? 'cursor-not-allowed opacity-60' 
+                : 'cursor-pointer hover:bg-gray-50'
+            }`}
+            onClick={() => {
+              if (!hasBookedSeats) {
+                onVehicleClick({ 
+                  licensePlate: queue.licensePlate,
+                  currentDestination: queue.destinationName, 
+                  currentDestinationId: queue.destinationId,
+                  queueId: queue.id 
+                });
+              }
+            }}
+            title={hasBookedSeats ? `Impossible de changer la destination - ${queue.totalSeats - queue.availableSeats} sièges réservés` : 'Cliquer pour changer la destination'}
           >
             <Car className="h-5 w-5 text-gray-600" />
             <div>
               <div className="font-semibold text-gray-900">{queue.licensePlate}</div>
-                <div className="text-sm text-gray-600">Véhicule: {queue.vehicle?.licensePlate}</div>
+              <div className="text-sm text-gray-600">Véhicule: {queue.vehicle?.licensePlate}</div>
             </div>
           </div>
         </div>
@@ -148,6 +119,11 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
               <span className="font-medium text-gray-900">{queue.availableSeats}/{queue.totalSeats}</span>
             </div>
             <div className="text-xs text-gray-600">places</div>
+            {hasBookedSeats && (
+              <div className="text-xs text-red-600 font-medium">
+                {queue.totalSeats - queue.availableSeats} réservé(s)
+              </div>
+            )}
           </div>
           
           {/* Price */}
@@ -159,27 +135,29 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
         
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {/* Move to Front Button */}
-          <Button 
-            variant="outline" 
-            size="sm"
-            className="text-purple-600 border-purple-300 hover:bg-purple-50"
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveToFront(queue.id, queue.destinationId);
-            }}
-            disabled={actionLoading === queue.licensePlate || queue.status !== 'WAITING'}
-            title="Déplacer en première position"
-          >
-            {actionLoading === queue.licensePlate ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ArrowUp className="h-4 w-4" />
-            )}
-          </Button>
+          {/* Move to Front Button - only show if no booked seats */}
+          {!hasBookedSeats && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="text-purple-600 border-purple-300 hover:bg-purple-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMoveToFront(queue.id, queue.destinationId);
+              }}
+              disabled={actionLoading === queue.licensePlate || (queue.status !== 'WAITING' && queue.status !== 'LOADING')}
+              title="Déplacer en première position"
+            >
+              {actionLoading === queue.licensePlate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowUp className="h-4 w-4" />
+              )}
+            </Button>
+          )}
 
           {/* End Trip Button - only show if vehicle has booked seats */}
-          {queue.availableSeats < queue.totalSeats && (
+          {hasBookedSeats && (
             <Button 
               variant="outline" 
               size="sm"
@@ -207,7 +185,7 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
               e.stopPropagation();
               onExitQueue(queue.licensePlate);
             }}
-            disabled={actionLoading === queue.licensePlate || queue.status !== 'WAITING'}
+            disabled={actionLoading === queue.licensePlate || (queue.status !== 'WAITING' && queue.status !== 'LOADING')}
           >
             {actionLoading === queue.licensePlate ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -216,21 +194,23 @@ function SortableQueueItem({ queue, getStatusColor, formatTime, getBasePriceForD
             )}
           </Button>
           
-          <Button 
-            variant="outline" 
-            size="sm"
-            className="text-blue-600 border-blue-300 hover:bg-blue-50"
-            disabled={queue.status !== 'WAITING'}
-            onClick={() => onVehicleClick({ 
-              licensePlate: queue.licensePlate,
-              // cin removed - no longer supported without driver table
-              currentDestination: queue.destinationName, 
-              currentDestinationId: queue.destinationId,
-              queueId: queue.id 
-            })}
-          >
-            <Edit className="h-4 w-4" />
-          </Button>
+          {/* Edit button - only show if no booked seats */}
+          {!hasBookedSeats && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="text-blue-600 border-blue-300 hover:bg-blue-50"
+              disabled={queue.status !== 'WAITING' && queue.status !== 'LOADING'}
+              onClick={() => onVehicleClick({ 
+                licensePlate: queue.licensePlate,
+                currentDestination: queue.destinationName, 
+                currentDestinationId: queue.destinationId,
+                queueId: queue.id 
+              })}
+            >
+              <Edit className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -276,7 +256,6 @@ export default function QueueManagement() {
   const [refreshTimeout, setRefreshTimeout] = useState<NodeJS.Timeout | null>(null);
   const [dbOk, setDbOk] = useState<boolean | null>(null);
   const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
-  const [isReordering, setIsReordering] = useState(false);
 
   // Debounced refresh function to prevent multiple simultaneous refreshes
   const debouncedRefreshQueues = useCallback(() => {
@@ -336,11 +315,6 @@ export default function QueueManagement() {
   const [dayPassError, setDayPassError] = useState<string | null>(null);
   const [dayPassPrice, setDayPassPrice] = useState<number>(0);
 
-  // Filter state
-  const [governments, setGovernments] = useState<any[]>([]);
-  const [selectedGovernment, setSelectedGovernment] = useState<string>('');
-  const [selectedDelegation, setSelectedDelegation] = useState<string>('');
-  const [availableDelegations, setAvailableDelegations] = useState<any[]>([]);
 
   // Helper to get base price for a destination - updated to work with route table
   function getBasePriceForDestination(destinationName: string) {
@@ -387,30 +361,6 @@ export default function QueueManagement() {
     }
   }, [queueSummaries, queues, isLoading, fetchQueueForDestination]);
 
-  // Fetch queues with filters when filters change
-  useEffect(() => {
-    const fetchQueuesWithFilters = async () => {
-      try {
-        const filters: { governorate?: string; delegation?: string } = {};
-        if (selectedGovernment) filters.governorate = selectedGovernment;
-        if (selectedDelegation) filters.delegation = selectedDelegation;
-        
-        console.log('🔄 Fetching queues with filters:', filters);
-        const response = await api.getAvailableQueues(filters);
-        
-        if (response.success && response.data) {
-          console.log('✅ Filtered queues loaded:', response.data);
-          // Update the queue summaries with filtered data
-          // Note: This would need to be integrated with the QueueProvider context
-          // For now, we'll just log the filtered results
-        }
-      } catch (error) {
-        console.error('❌ Error fetching filtered queues:', error);
-      }
-    };
-
-    fetchQueuesWithFilters();
-  }, [selectedGovernment, selectedDelegation]);
 
   // Enhanced function to get route info for a destination
   function getRouteForDestination(destinationName: string) {
@@ -648,48 +598,6 @@ export default function QueueManagement() {
     fetchRoutesFromDB();
   }, []);
 
-  // Fetch governments for filtering
-  const fetchGovernments = async () => {
-    try {
-      const response = await api.getAllLocations();
-      if (response.success && response.data) {
-        console.log('🏛️ Governments loaded:', response.data);
-        setGovernments(response.data);
-      } else {
-        console.warn('⚠️ Failed to load governments:', response);
-        setGovernments([]);
-      }
-    } catch (error) {
-      console.error('❌ Error loading governments:', error);
-      setGovernments([]);
-    }
-  };
-
-  // Handle government change
-  const handleGovernmentChange = (government: string) => {
-    setSelectedGovernment(government);
-    setSelectedDelegation('');
-    
-    if (government) {
-      const selectedGov = governments.find(g => g.name === government);
-      setAvailableDelegations(selectedGov?.delegations || []);
-    } else {
-      setAvailableDelegations([]);
-    }
-  };
-
-  // Handle delegation change
-  const handleDelegationChange = (delegation: string) => {
-    setSelectedDelegation(delegation);
-  };
-
-  // Clear filters
-  const clearFilters = () => {
-    setSelectedGovernment('');
-    setSelectedDelegation('');
-    setAvailableDelegations([]);
-  };
-
   // Check if vehicle has valid day pass
   const checkDayPassStatus = async (licensePlate: string) => {
     try {
@@ -923,11 +831,6 @@ export default function QueueManagement() {
     }
   };
 
-  // Fetch governments on mount
-  useEffect(() => {
-    fetchGovernments();
-  }, []);
-
   // Keyboard shortcuts and navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -992,31 +895,44 @@ export default function QueueManagement() {
       if (showAddVehicleModal && vehicles.length > 0) {
         const currentIndex = selectedVehicle ? vehicles.findIndex(v => v.licensePlate === selectedVehicle.licensePlate) : -1;
         
-        // Arrow keys or W/S for navigation
-        if (event.key === 'ArrowUp' || event.key === 'w' || event.key === 'W') {
+        // Ctrl+Z for up navigation, Ctrl+S for down navigation
+        if (event.ctrlKey && (event.key === 'z' || event.key === 'Z')) {
           event.preventDefault();
           const prevIndex = currentIndex > 0 ? currentIndex - 1 : vehicles.length - 1;
           setSelectedVehicle(vehicles[prevIndex]);
         }
         
-        if (event.key === 'ArrowDown' || event.key === 's' || event.key === 'S') {
+        if (event.ctrlKey && (event.key === 's' || event.key === 'S')) {
           event.preventDefault();
           const nextIndex = currentIndex < vehicles.length - 1 ? currentIndex + 1 : 0;
           setSelectedVehicle(vehicles[nextIndex]);
         }
         
-        // Space to select vehicle or confirm day pass purchase
-        if (event.code === 'Space') {
+        // Space to confirm vehicle selection
+        if (event.code === 'Space' && selectedVehicle && !selectedVehicleDestination) {
           event.preventDefault();
-          
-          if (selectedVehicle && !selectedVehicleDestination) {
-            // Vehicle is selected but no destination - this shouldn't happen in normal flow
-            return;
-          }
-          
-          if (selectedVehicle && selectedVehicleDestination) {
-            // Both vehicle and destination selected - proceed with adding to queue
-            handleAddVehicleToQueue();
+          // Vehicle selected, now fetch destinations for this vehicle
+          fetchVehicleDestinations(selectedVehicle.licensePlate);
+          return;
+        }
+        
+        // Space to confirm destination selection and add to queue
+        if (event.code === 'Space' && selectedVehicle && selectedVehicleDestination) {
+          event.preventDefault();
+          handleAddVehicleToQueue();
+        }
+      }
+
+      // Destination selection with AZERTY keys (only when vehicle is selected and destinations are loaded)
+      if (showAddVehicleModal && selectedVehicle && vehicleDestinations.length > 0) {
+        // Map AZERTY keys to destinations (first 10 destinations)
+        const destinationKeys = ['a', 'z', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'];
+        
+        for (let i = 0; i < Math.min(destinationKeys.length, vehicleDestinations.length); i++) {
+          if (event.key === destinationKeys[i] || event.key === destinationKeys[i].toUpperCase()) {
+            event.preventDefault();
+            setSelectedVehicleDestination(vehicleDestinations[i].stationId);
+            break;
           }
         }
       }
@@ -1070,14 +986,6 @@ export default function QueueManagement() {
     const total = allItems.length;
     return { waiting, loading, ready, total };
   };
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -1145,8 +1053,13 @@ export default function QueueManagement() {
       setActionLoading(licensePlate);
       try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
       
+      // Get current staff information
+      const sessionManager = SessionManager.getInstance();
+      const currentSession = sessionManager.getCurrentSession();
+      const staffId = currentSession?.staff?.id;
+      
       // Enter queue
-      await dbClient.enterQueueWithDestination(licensePlate, destinationId, destinationName);
+      await dbClient.enterQueueWithDestination(licensePlate, destinationId, destinationName, staffId);
       
       // Show success notification
       addNotification({
@@ -1180,19 +1093,92 @@ export default function QueueManagement() {
     }
   };
   const handleExitQueue = async (licensePlate: string) => {
-    // Show confirmation dialog
-    const confirmed = window.confirm(
-      `Êtes-vous sûr de vouloir retirer le véhicule ${licensePlate} de la file d'attente ?\n\nCette action supprimera également toutes les réservations associées.`
-    );
-    
-    if (!confirmed) return;
-    
+    // First, get the current queue status to check for booked seats
+    try {
+      const queueStatus = await dbClient.getVehicleQueueStatus(licensePlate);
+      
+      if (queueStatus) {
+        const hasBookedSeats = queueStatus.availableSeats < queueStatus.totalSeats;
+        
+        if (hasBookedSeats) {
+          // Check if there are other vehicles in the same queue
+          const summary = queueSummaries.find(s => s.destinationId === queueStatus.destinationId);
+          if (summary && summary.totalVehicles > 1) {
+            // Show confirmation dialog with seat transfer option
+            const confirmed = window.confirm(
+              `Le véhicule ${licensePlate} a ${queueStatus.totalSeats - queueStatus.availableSeats} sièges réservés.\n\n` +
+              `Voulez-vous transférer ces réservations vers un autre véhicule de la même file avant de retirer ce véhicule ?\n\n` +
+              `Cliquez sur "OK" pour transférer les réservations, ou "Annuler" pour garder le véhicule dans la file.`
+            );
+            
+            if (confirmed) {
+              // Call the seat transfer function
+              await handleTransferSeatsAndRemoveVehicle(licensePlate, queueStatus.destinationId);
+              return;
+            } else {
+              return; // User cancelled, keep vehicle in queue
+            }
+          } else {
+            // No other vehicles available for transfer
+            window.alert(
+              `Impossible de retirer le véhicule ${licensePlate}.\n\n` +
+              `Ce véhicule a ${queueStatus.totalSeats - queueStatus.availableSeats} sièges réservés et il n'y a pas d'autres véhicules dans cette file pour transférer les réservations.\n\n` +
+              `Veuillez d'abord terminer le voyage ou attendre qu'un autre véhicule rejoigne la file.`
+            );
+            return;
+          }
+        }
+      }
+      
+      // Proceed with normal removal if no booked seats
+      const confirmed = window.confirm(
+        `Êtes-vous sûr de vouloir retirer le véhicule ${licensePlate} de la file d'attente ?\n\nCette action supprimera également toutes les réservations associées.`
+      );
+      
+      if (!confirmed) return;
+      
+      setActionLoading(licensePlate);
+      try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
+      
+      try {
+        const result = await dbClient.removeVehicleFromQueue(licensePlate);
+        setActionLoading(null);
+        
+        addNotification({
+          type: 'success',
+          title: 'Véhicule retiré',
+          message: result,
+          duration: 4000
+        });
+        
+        // Refresh queue data
+        debouncedRefreshQueues();
+      } catch (error: any) {
+        setActionLoading(null);
+        addNotification({
+          type: 'error',
+          title: 'Échec de la sortie de la file',
+          message: error?.message || 'Échec de la sortie de la file',
+          duration: 4000
+        });
+      }
+    } catch (error: any) {
+      console.error('Error checking vehicle queue status:', error);
+      addNotification({
+        type: 'error',
+        title: 'Erreur',
+        message: 'Impossible de vérifier le statut du véhicule',
+        duration: 4000
+      });
+    }
+  };
+
+  // Add new function to handle seat transfer and vehicle removal
+  const handleTransferSeatsAndRemoveVehicle = async (licensePlate: string, destinationId: string) => {
     setActionLoading(licensePlate);
-    try { beginOptimisticSuppression({ licensePlate, durationMs: 2500 }); } catch {}
     
     try {
-      const result = await dbClient.removeVehicleFromQueue(licensePlate);
-      setActionLoading(null);
+      const result = await dbClient.transferSeatsAndRemoveVehicle(licensePlate, destinationId);
       
       addNotification({
         type: 'success',
@@ -1204,13 +1190,14 @@ export default function QueueManagement() {
       // Refresh queue data
       debouncedRefreshQueues();
     } catch (error: any) {
-      setActionLoading(null);
       addNotification({
         type: 'error',
-        title: 'Échec de la sortie de la file',
-        message: error?.message || 'Échec de la sortie de la file',
+        title: 'Échec du transfert et de la suppression',
+        message: error?.message || 'Échec du transfert des sièges et de la suppression du véhicule',
         duration: 4000
       });
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -1285,96 +1272,6 @@ export default function QueueManagement() {
     }
   };
 
-  const handleDragEnd = async (event: any) => {
-    const { active, over } = event;
-    
-    if (!active || !over || active.id === over.id) {
-      setIsReordering(false);
-      return;
-    }
-
-    const destinationName = selectedDestination;
-    if (!destinationName) return;
-
-    const destinationQueues = queues[destinationName] || [];
-    const oldIndex = destinationQueues.findIndex((item: any) => item.id === active.id);
-    const newIndex = destinationQueues.findIndex((item: any) => item.id === over.id);
-
-    if (oldIndex === -1 || newIndex === -1) {
-      setIsReordering(false);
-      return;
-    }
-
-    // Get the actual destination ID from the queue summaries
-    console.log('🔍 [DRAG DEBUG] Available queue summaries:', queueSummaries);
-    console.log('🔍 [DRAG DEBUG] Looking for destination name:', destinationName);
-    console.log('🔍 [DRAG DEBUG] Destination queues:', destinationQueues);
-    
-    const summary = queueSummaries.find(s => s.destinationName === destinationName);
-    console.log('🔍 [DRAG DEBUG] Found summary:', summary);
-    
-    // Try to get destination ID from summary first, then from queue items
-    let destinationId = summary?.destinationId;
-    
-    // Fallback: try to get destination ID from queue items if they have it
-    if (!destinationId && destinationQueues.length > 0) {
-      const firstItem = destinationQueues[0] as any;
-      if (firstItem.destinationId) {
-        destinationId = firstItem.destinationId;
-        console.log('🔍 [DRAG DEBUG] Got destination ID from queue item:', destinationId);
-      }
-    }
-    
-    if (!destinationId) {
-      console.error('❌ [DRAG DEBUG] No destination ID found for destination:', destinationName);
-      console.error('❌ [DRAG DEBUG] Available summaries:', queueSummaries.map(s => ({ name: s.destinationName, id: s.destinationId })));
-      console.error('❌ [DRAG DEBUG] First queue item:', destinationQueues[0]);
-      setIsReordering(false);
-      return;
-    }
-    
-    console.log('✅ [DRAG DEBUG] Using destination ID:', destinationId);
-
-    // Create new order
-    const newOrder = [...destinationQueues];
-    const [movedItem] = newOrder.splice(oldIndex, 1);
-    newOrder.splice(newIndex, 0, movedItem);
-
-    // Update positions
-    const vehiclePositions = newOrder.map((item: any, index: number) => ({
-      queueId: item.id,
-      position: index + 1
-    }));
-
-    try {
-      console.log('🔄 [FRONTEND DEBUG] Updating queue positions:', {
-        destinationId,
-        vehiclePositions,
-        destinationName
-      });
-      
-      await dbClient.updateQueuePositions(destinationId, vehiclePositions);
-      
-      addNotification({
-        type: 'success',
-        title: 'Ordre mis à jour',
-        message: 'L\'ordre des véhicules a été mis à jour',
-        duration: 2000
-      });
-      
-      // Refresh the queue to show updated order
-      debouncedRefreshQueues();
-    } catch (error: any) {
-      addNotification({
-        type: 'error',
-        title: 'Échec de la mise à jour',
-        message: error?.message || 'Échec de la mise à jour de l\'ordre',
-        duration: 4000
-      });
-    } finally {
-      setIsReordering(false);
-    }
-  };
   const handleUpdateVehicleStatus = async (licensePlate: string, status: string) => {
     setActionLoading(licensePlate + status);
     const result = await updateVehicleStatus(licensePlate, status);
@@ -1470,51 +1367,6 @@ export default function QueueManagement() {
         })()}
       </div>
 
-      {/* Simple Filter Section */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="flex items-center gap-4">
-          <h3 className="text-sm font-medium text-gray-700">Filtrer par localisation:</h3>
-          <select 
-            className="px-3 py-2 border border-gray-300 rounded-md bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            value={selectedGovernment} 
-            onChange={(e) => handleGovernmentChange(e.target.value)}
-          >
-            <option value="">Tous les gouvernorats</option>
-            {governments.map(gov => (
-              <option key={gov.name} value={gov.name}>
-                {gov.nameAr ? `${gov.name} - ${gov.nameAr}` : gov.name}
-              </option>
-            ))}
-          </select>
-          
-          {selectedGovernment && (
-            <select 
-              className="px-3 py-2 border border-gray-300 rounded-md bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              value={selectedDelegation} 
-              onChange={(e) => handleDelegationChange(e.target.value)}
-            >
-              <option value="">Toutes les délégations</option>
-              {availableDelegations.map(delegation => (
-                <option key={delegation.name} value={delegation.name}>
-                  {delegation.nameAr ? `${delegation.name} - ${delegation.nameAr}` : delegation.name}
-                </option>
-              ))}
-            </select>
-          )}
-          
-          {(selectedGovernment || selectedDelegation) && (
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={clearFilters}
-              className="text-gray-600 hover:bg-gray-50"
-            >
-              Effacer
-            </Button>
-          )}
-        </div>
-      </div>
-
       {/* Improved Add Vehicle Modal */}
       <Dialog open={showAddVehicleModal} onOpenChange={setShowAddVehicleModal}>
         <DialogContent className="max-w-2xl">
@@ -1523,9 +1375,11 @@ export default function QueueManagement() {
             <p className="text-sm text-gray-600">Sélectionnez un véhicule et sa destination</p>
             <div className="mt-2 text-xs text-gray-500 space-y-1">
               <div><strong>Raccourcis clavier:</strong></div>
-              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Alt</kbd> : Basculer entre recherche et sélection</div>
-              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">↑</kbd> <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">↓</kbd> ou <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">W</kbd> <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">S</kbd> : Naviguer</div>
-              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Espace</kbd> : Sélectionner/Confirmer</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">F6</kbd> : Ouvrir ce panneau</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Ctrl+Z</kbd> <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Ctrl+S</kbd> : Naviguer dans les véhicules</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Espace</kbd> : Confirmer véhicule</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">A-Z</kbd> : Sélectionner destination</div>
+              <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Espace</kbd> : Confirmer et ajouter</div>
               <div>• <kbd className="px-1 py-0.5 bg-gray-100 rounded text-xs">Échap</kbd> : Annuler</div>
             </div>
           </DialogHeader>
@@ -1650,19 +1504,28 @@ export default function QueueManagement() {
                           }`}
                           onClick={() => setSelectedVehicleDestination(dest.stationId)}
                         >
-                          {/* Selection indicator */}
-                          <div className={`absolute top-3 right-3 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                            selectedVehicleDestination === dest.stationId 
-                              ? 'border-blue-500 bg-blue-500' 
-                              : 'border-gray-300 group-hover:border-blue-400'
-                          }`}>
-                            {selectedVehicleDestination === dest.stationId && (
-                              <CheckCircle className="w-3 h-3 text-white" />
+                          {/* Selection indicator with AZERTY key */}
+                          <div className="absolute top-3 right-3 flex items-center space-x-2">
+                            {/* AZERTY key indicator */}
+                            {index < 10 && (
+                              <div className="px-2 py-1 bg-gray-100 border border-gray-300 rounded text-xs font-mono font-bold text-gray-700">
+                                {['a', 'z', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'][index].toUpperCase()}
+                              </div>
                             )}
+                            {/* Selection indicator */}
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                              selectedVehicleDestination === dest.stationId 
+                                ? 'border-blue-500 bg-blue-500' 
+                                : 'border-gray-300 group-hover:border-blue-400'
+                            }`}>
+                              {selectedVehicleDestination === dest.stationId && (
+                                <CheckCircle className="w-3 h-3 text-white" />
+                              )}
+                            </div>
                           </div>
                           
                           {/* Station info */}
-                          <div className="pr-8">
+                          <div className="pr-20">
                             <div className="flex items-center space-x-2 mb-2">
                               <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
                                 {index + 1}
@@ -2203,40 +2066,22 @@ export default function QueueManagement() {
                   <div className="p-6">
                     {summary && summary.totalVehicles > 0 ? (
                       destinationQueues.length > 0 ? (
-                        <DndContext
-                          sensors={sensors}
-                          collisionDetection={closestCenter}
-                          onDragStart={() => setIsReordering(true)}
-                          onDragEnd={(event) => handleDragEnd(event)}
-                        >
-                          <SortableContext
-                            items={destinationQueues.map(q => q.id) || []}
-                            strategy={verticalListSortingStrategy}
-                          >
-                            <div className={`space-y-3 ${isReordering ? 'opacity-75' : ''}`}>
-                              {isReordering && (
-                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center text-blue-700 text-sm">
-                                  <Move className="h-4 w-4 inline mr-2" />
-                                  Glissez-déposez pour réorganiser les véhicules
-                                </div>
-                              )}
-                              {destinationQueues.map((queue) => (
-                                <SortableQueueItem
-                                  key={queue.id}
-                                  queue={queue}
-                                  getStatusColor={getStatusColor}
-                                  formatTime={formatTime}
-                                  getBasePriceForDestination={getBasePriceForDestination}
-                                  onVehicleClick={handleVehicleClick}
-                                  onExitQueue={handleExitQueue}
-                                  onEndTrip={handleEndTrip}
-                                  onMoveToFront={handleMoveToFront}
-                                  actionLoading={actionLoading}
-                                />
-                              ))}
-                            </div>
-                          </SortableContext>
-                        </DndContext>
+                        <div className="space-y-3">
+                          {destinationQueues.map((queue) => (
+                            <QueueItem
+                              key={queue.id}
+                              queue={queue}
+                              getStatusColor={getStatusColor}
+                              formatTime={formatTime}
+                              getBasePriceForDestination={getBasePriceForDestination}
+                              onVehicleClick={handleVehicleClick}
+                              onExitQueue={handleExitQueue}
+                              onEndTrip={handleEndTrip}
+                              onMoveToFront={handleMoveToFront}
+                              actionLoading={actionLoading}
+                            />
+                          ))}
+                        </div>
                       ) : (
                         <div className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3 text-gray-400" />

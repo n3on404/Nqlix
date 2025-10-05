@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthProvider';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
-import { Loader2, Eye, EyeOff, Shield, AlertCircle, Settings } from "lucide-react";
+import { Loader2, Shield, AlertCircle, Settings } from "lucide-react";
 import { useInit } from "../context/InitProvider";
 
 type LoginStep = 'login' | 'success' | 'config';
@@ -12,8 +12,6 @@ type LoginStep = 'login' | 'success' | 'config';
 export default function LoginScreen() {
   const [step, setStep] = useState<LoginStep>('login');
   const [cin, setCin] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -38,14 +36,8 @@ export default function LoginScreen() {
       return;
     }
 
-    if (!password || password.length < 6) {
-      setError('Le mot de passe doit contenir au moins 6 caractères');
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      const response = await login(cin, password);
+      const response = await login(cin);
       
       if (response.success) {
         setShowSuccess(true);
@@ -53,7 +45,7 @@ export default function LoginScreen() {
           navigate('/dashboard');
         }, 1500);
       } else {
-        setError(response.message || 'CIN ou mot de passe incorrect');
+        setError(response.message || 'CIN incorrect');
       }
     } catch (err) {
       setError('Impossible de se connecter au serveur. Veuillez réessayer.');
@@ -72,11 +64,6 @@ export default function LoginScreen() {
   const handleCinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '').slice(0, 8);
     setCin(value);
-    setError(null);
-  };
-
-  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPassword(e.target.value);
     setError(null);
   };
 
@@ -154,7 +141,7 @@ export default function LoginScreen() {
             Connexion
           </CardTitle>
           <CardDescription>
-            Connectez-vous avec votre CIN et mot de passe
+            Connectez-vous avec votre numéro CIN
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -175,35 +162,6 @@ export default function LoginScreen() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Mot de passe
-              </label>
-              <div className="relative">
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={handlePasswordChange}
-                  placeholder="Votre mot de passe"
-                  className="w-full pr-10"
-                  disabled={isLoading}
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  disabled={isLoading}
-                >
-                  {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-
             {error && (
               <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
                 <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
@@ -214,7 +172,7 @@ export default function LoginScreen() {
             <Button
               type="submit"
               className="w-full"
-              disabled={isLoading || !cin || !password}
+              disabled={isLoading || !cin}
             >
               {isLoading ? (
                 <>

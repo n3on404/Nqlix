@@ -20,6 +20,7 @@ interface Vehicle {
   capacity: number;
   isActive: boolean;
   isAvailable: boolean;
+  phoneNumber?: string | null;
   driver?: {
     id: string;
     cin: string;
@@ -42,6 +43,7 @@ const SupervisorVehicleManagement: React.FC = () => {
   const [form, setForm] = useState({
     licensePlate: '',
     capacity: '8', // Default to 8 seats
+    phoneNumber: '',
     authorizedStationIds: [] as string[],
     defaultDestinationId: '',
   });
@@ -54,6 +56,8 @@ const SupervisorVehicleManagement: React.FC = () => {
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [vehicleDetails, setVehicleDetails] = useState<Vehicle | null>(null);
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
+  const [isVehicleFloatingOpen, setIsVehicleFloatingOpen] = useState(false);
+  const [vehicleActivity, setVehicleActivity] = useState<Array<{eventType: string; timestamp: string; destinationName?: string}>>([]);
   const [isVehicleDetailsLoading, setIsVehicleDetailsLoading] = useState(false);
   const [stationConfig, setStationConfig] = useState<any>(null);
   const tunisianPlateRegex = /^\d{2,3} ?TUN ?\d{1,4}$/i;
@@ -368,7 +372,7 @@ const SupervisorVehicleManagement: React.FC = () => {
     try {
       // Create vehicle using direct database operation
       const capacity = form.capacity ? Number(form.capacity) : 8;
-      const result = await dbClient.createVehicle(form.licensePlate, capacity);
+      const result = await dbClient.createVehicle(form.licensePlate, capacity, form.phoneNumber || undefined);
       
       // Extract vehicle ID from the result message
       const vehicleIdMatch = result.match(/ID: ([a-f0-9-]+)/);
@@ -411,6 +415,7 @@ const SupervisorVehicleManagement: React.FC = () => {
         setForm({
           licensePlate: '', 
           capacity: '8', 
+          phoneNumber: '',
           authorizedStationIds: [], 
           defaultDestinationId: ''
         });
@@ -437,6 +442,12 @@ const SupervisorVehicleManagement: React.FC = () => {
     const vehicle = vehicles.find(v => v.id === id);
     if (vehicle) {
       setVehicleDetails(vehicle);
+      try {
+        const activity = await dbClient.getVehicleActivity72h(vehicle.licensePlate);
+        setVehicleActivity(activity);
+      } catch (e) {
+        setVehicleActivity([]);
+      }
     } else {
       setVehicleDetails(null);
     }
@@ -528,15 +539,17 @@ const SupervisorVehicleManagement: React.FC = () => {
                 <tr>
                   <th className="text-left py-2 px-3">Plaque d'immatriculation</th>
                   <th className="text-left py-2 px-3">Capacité</th>
+                  <th className="text-left py-2 px-3">Téléphone</th>
                   <th className="text-left py-2 px-3">CIN du conducteur</th>
                   <th className="text-left py-2 px-3">Statut</th>
                 </tr>
               </thead>
               <tbody>
                 {vehicles.map(v => (
-                  <tr key={v.id} className="border-b hover:bg-muted cursor-pointer" onClick={async () => { setSelectedVehicle(v); setIsVehicleModalOpen(true); fetchVehicleDetails(v.id); }}>
+                  <tr key={v.id} className="border-b hover:bg-muted cursor-pointer" onClick={async () => { setSelectedVehicle(v); setIsVehicleFloatingOpen(true); fetchVehicleDetails(v.id); }}>
                     <td className="py-2 px-3 font-medium">{v.licensePlate}</td>
                     <td className="py-2 px-3">{v.capacity} places</td>
+                    <td className="py-2 px-3">{v.phoneNumber || '-'}</td>
                     <td className="py-2 px-3">{v.licensePlate || '-'}</td>
                     <td className="py-2 px-3">
                       <Badge variant={v.isActive ? 'default' : 'secondary'}>
@@ -630,6 +643,18 @@ const SupervisorVehicleManagement: React.FC = () => {
                   <div className="text-xs text-muted-foreground mt-1">
                     Nombre de places disponibles (défaut: 8)
                 </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Téléphone (optionnel)</label>
+                <Input 
+                  name="phoneNumber"
+                  value={form.phoneNumber}
+                  onChange={handleFormChange}
+                  placeholder="Ex: 23 456 789"
+                />
+                <div className="text-xs text-muted-foreground mt-1">
+                  Numéro de téléphone du propriétaire/conducteur (vide par défaut)
                 </div>
               </div>
             </div>
@@ -914,50 +939,85 @@ const SupervisorVehicleManagement: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Vehicle Details Modal */}
-      <Dialog open={isVehicleModalOpen} onOpenChange={open => { setIsVehicleModalOpen(open); if (!open) { setVehicleDetails(null); setSelectedVehicle(null); } }}>
-        <DialogContent>
+      {/* Floating Vehicle Details Panel - New Layout */}
+      <Dialog open={isVehicleFloatingOpen} onOpenChange={open => { setIsVehicleFloatingOpen(open); if (!open) { setVehicleDetails(null); setSelectedVehicle(null); setVehicleActivity([]); } }}>
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Détails du véhicule & du conducteur</DialogTitle>
+            <DialogTitle>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <Car className="h-6 w-6 text-primary" />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl font-semibold">Détails du véhicule</span>
+                      {vehicleDetails && (
+                        <>
+                          {vehicleDetails.isBanned && <Badge variant="destructive">Banni</Badge>}
+                          {!vehicleDetails.isBanned && !vehicleDetails.isActive && <Badge variant="secondary">Inactif</Badge>}
+                          {vehicleDetails.isActive && !vehicleDetails.isBanned && <Badge variant="default">Actif</Badge>}
+                          <Badge variant={vehicleDetails.isAvailable ? 'default' : 'secondary'}>
+                            {vehicleDetails.isAvailable ? 'Disponible' : 'Indisponible'}
+                          </Badge>
+                        </>
+                      )}
+                    </div>
+                    {vehicleDetails && (
+                      <div className="text-sm text-muted-foreground mt-1">
+                        Plaque: <span className="font-mono font-medium">{vehicleDetails.licensePlate}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </DialogTitle>
           </DialogHeader>
           {isVehicleDetailsLoading ? (
             <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin mr-2" /> Chargement...</div>
           ) : vehicleDetails ? (
-            <div className="space-y-6">
-              <div className="bg-white dark:bg-zinc-900 rounded-lg shadow p-6 border flex flex-col gap-4">
-                <div className="flex items-center gap-4 border-b pb-3 mb-2">
-                  <Car className="h-7 w-7 text-primary" />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl font-bold">{vehicleDetails.licensePlate}</span>
-                      {vehicleDetails.isBanned && <Badge variant="destructive">Banni</Badge>}
-                      {!vehicleDetails.isBanned && !vehicleDetails.isActive && <Badge variant="secondary">Inactif</Badge>}
-                      {vehicleDetails.isActive && !vehicleDetails.isBanned && <Badge variant="default">Actif</Badge>}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Left column: essentials */}
+              <div className="lg:col-span-2 space-y-4">
+                {/* Overview */}
+                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
+                      <div className="text-xs text-muted-foreground">Capacité</div>
+                      <div className="text-lg font-semibold">{vehicleDetails.capacity} places</div>
                     </div>
-                    <div className="text-sm text-muted-foreground">Capacité: {vehicleDetails.capacity} places</div>
-                  </div>
-                  <div>
-                    <Badge variant={vehicleDetails.isAvailable ? 'default' : 'secondary'}>
-                      {vehicleDetails.isAvailable ? 'Disponible' : 'Indisponible'}
-                    </Badge>
+                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
+                      <div className="text-xs text-muted-foreground">Statut</div>
+                      <div className="text-sm">{vehicleDetails.isActive ? 'Actif' : 'Inactif'}</div>
+                    </div>
+                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
+                      <div className="text-xs text-muted-foreground">Disponibilité</div>
+                      <div className="text-sm">{vehicleDetails.isAvailable ? 'Disponible' : 'Indisponible'}</div>
+                    </div>
+                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
+                      <div className="text-xs text-muted-foreground">Téléphone</div>
+                      <div className="text-sm">{vehicleDetails.phoneNumber || '-'}</div>
+                    </div>
                   </div>
                 </div>
-                  {/* Driver Income (today, from exit passes) */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="bg-card p-3 rounded border">
-                      <div className="text-xs text-muted-foreground">Revenus d'aujourd'hui</div>
-                      <div className="text-lg font-semibold" id="driver-income-today">
-                        {/* Filled dynamically below */}
-                      </div>
-                    </div>
-                    <div className="md:col-span-2 bg-card p-3 rounded border">
-                      <div className="text-xs text-muted-foreground mb-1">Sorties aujourd'hui</div>
-                      <div className="space-y-1 text-sm max-h-32 overflow-auto" id="driver-income-list"></div>
-                    </div>
+
+                {/* Authorized stations */}
+                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-medium">Stations autorisées</div>
+                    <Button size="sm" variant="secondary" onClick={async () => {
+                      try {
+                        if (!vehicleDetails) return;
+                        const date = todayStr();
+                        const report = await dbClient.getVehicleDailyReport(vehicleDetails.id, date);
+                        try { sessionStorage.setItem(`vehicleTrips:${vehicleDetails.id}:${date}`, JSON.stringify(report)); } catch {}
+                        navigate(`/print-vehicle-trips?vehicleId=${encodeURIComponent(vehicleDetails.id)}&date=${encodeURIComponent(date)}`);
+                      } catch (error: any) {
+                        addNotification({ type: 'error', title: 'Erreur', message: error?.message || 'Échec du chargement des trajets' });
+                      }
+                    }}>
+                      <Printer className="h-4 w-4 mr-2" /> Imprimer trajets (A4)
+                    </Button>
                   </div>
-                <div className="flex flex-col gap-2">
-                  <div className="font-semibold text-zinc-700 dark:text-zinc-200">Stations autorisées</div>
-                  <div className="flex flex-wrap gap-2 items-center">
+                  <div className="flex flex-wrap gap-2">
                     {vehicleDetails.authorizedStations && vehicleDetails.authorizedStations.length > 0 ? (
                       vehicleDetails.authorizedStations.map((s: any) => (
                         <Badge key={s.id} variant="outline" className="bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200">
@@ -965,45 +1025,68 @@ const SupervisorVehicleManagement: React.FC = () => {
                         </Badge>
                       ))
                     ) : (
-                      <span className="text-muted-foreground">-</span>
+                      <span className="text-sm text-muted-foreground">Aucune station autorisée</span>
                     )}
-                    <Button size="sm" variant="secondary" className="ml-auto" onClick={async () => {
-                      try {
-                        if (!vehicleDetails) return;
-                        const date = todayStr();
-                        const res = await api.getVehicleTrips(vehicleDetails.id, date);
-                        if (res.success && res.data) {
-                          try { sessionStorage.setItem(`vehicleTrips:${vehicleDetails.id}:${date}`, JSON.stringify(res.data)); } catch {}
-                          navigate(`/print-vehicle-trips?vehicleId=${encodeURIComponent(vehicleDetails.id)}&date=${encodeURIComponent(date)}`);
-                        } else {
-                          addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement des trajets' });
-                        }
-                      } catch (error) {
-                        addNotification({ type: 'error', title: 'Erreur', message: 'Fonction d\'impression non disponible' });
-                      }
-                    }}>
-                      <Printer className="h-4 w-4 mr-2" /> Imprimer trajets (A4)
-                    </Button>
                   </div>
                 </div>
-                <div className="pt-2">
-                  <div className="font-semibold text-zinc-700 dark:text-zinc-200 mb-1">Conducteur</div>
+              </div>
+
+              {/* Right column: activity and actions */}
+              <div className="space-y-4">
+                {/* Activity */}
+                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
+                  <div className="text-sm font-medium mb-2">Activité des 72 dernières heures</div>
+                  <div className="space-y-2 max-h-80 overflow-auto">
+                    {vehicleActivity.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">Aucune activité récente.</div>
+                    ) : vehicleActivity.map((it, idx) => (
+                      <div key={idx} className="flex items-start justify-between gap-3 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${it.eventType === 'ENTRY' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {it.eventType === 'ENTRY' ? 'Entrée' : 'Sortie'}
+                          </span>
+                          <span className="truncate max-w-[160px]">{it.destinationName || '-'}</span>
+                        </div>
+                        <div className="text-muted-foreground font-mono whitespace-nowrap">{new Date(it.timestamp).toLocaleString('fr-FR')}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Driver/contact */}
+                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
+                  <div className="text-sm font-medium mb-2">Conducteur</div>
                   {vehicleDetails.driver ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <div><span className="text-xs text-muted-foreground">Plaque</span><br /><span className="font-mono">{vehicleDetails.licensePlate}</span></div>
-                      <div><span className="text-xs text-muted-foreground">Statut du compte</span><br />{vehicleDetails.driver.accountStatus}</div>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <div className="text-xs text-muted-foreground">Plaque</div>
+                        <div className="font-mono">{vehicleDetails.licensePlate}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Statut du compte</div>
+                        <div>{vehicleDetails.driver.accountStatus}</div>
+                      </div>
                     </div>
                   ) : (
-                    <div className="text-muted-foreground">Aucun conducteur assigné.</div>
+                    <div className="text-sm text-muted-foreground">Aucun conducteur assigné.</div>
                   )}
+                  <div className="mt-3">
+                    <div className="text-xs text-muted-foreground">Téléphone</div>
+                    <div className="text-sm">{vehicleDetails.phoneNumber || '-'}</div>
+                  </div>
                 </div>
-                <div className="pt-4 flex justify-end">
-                  <Button variant="destructive" onClick={async () => {
-                    if (!vehicleDetails) return;
-                    await banVehicle(vehicleDetails.id);
-                  }} disabled={vehicleDetails.isBanned}>
-                    Bannir ce véhicule
-                  </Button>
+
+                {/* Danger zone */}
+                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
+                  <div className="text-sm font-medium mb-3 text-red-600">Actions</div>
+                  <div className="flex justify-end">
+                    <Button variant="destructive" onClick={async () => {
+                      if (!vehicleDetails) return;
+                      await banVehicle(vehicleDetails.id);
+                    }} disabled={vehicleDetails.isBanned}>
+                      Bannir ce véhicule
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>

@@ -116,10 +116,10 @@ export default function DayPassPage() {
     }
   };
 
-  // Fetch today's exit passes (direct DB)
-  const fetchTodayExitPasses = async () => {
+  // Fetch recent exit passes (within 10 minutes)
+  const fetchRecentExitPasses = async () => {
     try {
-      const data = await dbClient.getTodayExitPasses();
+      const data = await dbClient.getRecentExitPasses();
       setExitPasses(Array.isArray(data) ? data as ExitPass[] : []);
     } catch (error) {
       setError('Erreur lors du chargement des tickets de sortie');
@@ -137,35 +137,66 @@ export default function DayPassPage() {
     setError(null);
 
     try {
-      // For now, purchase remains via printing workflow integrated in queue enter; here we only print
-      {
-        setSuccess(`Pass journalier acheté avec succès pour ${driver.vehicle.licensePlate}`);
+      // Check if vehicle already has a valid day pass
+      const hasValidDayPass = await dbClient.hasDayPassToday(driver.vehicle.licensePlate);
+      
+      if (hasValidDayPass) {
+        // Vehicle already has a valid day pass - print with 0 TND
+        setSuccess(`Pass journalier valide trouvé pour ${driver.vehicle.licensePlate} - Ticket imprimé avec 0 TND`);
         setShowPurchaseModal(false);
         setSelectedDriver(null);
         
-        // Print day pass ticket
+        // Print day pass ticket with 0 TND
         try {
           const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
             licensePlate: driver.vehicle.licensePlate,
-            amount: 2 // Fixed price for day pass
+            amount: 0 // 0 TND because day pass is already valid
           });
           
-          console.log('🖨️ Printing day pass ticket for:', driver.vehicle.licensePlate);
+          console.log('🖨️ Printing day pass ticket (0 TND) for:', driver.vehicle.licensePlate);
           const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
           await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
-          console.log('✅ Day pass ticket printed successfully');
+          console.log('✅ Day pass ticket (0 TND) printed successfully');
         } catch (printError) {
           console.error('❌ Failed to print day pass ticket:', printError);
           // Don't fail the purchase if printing fails
         }
+      } else {
+        // No valid day pass - purchase new one for 2 TND
+        const result = await dbClient.purchaseDayPass(
+          driver.vehicle.licensePlate,
+          driver.vehicle.id,
+          2.0, // Fixed price for new day pass
+          currentStaff?.id
+        );
         
-        // Refresh data
-        await Promise.all([
-          fetchDriversWithoutDayPass(),
-          fetchTodayDayPasses(),
-          fetchTodayExitPasses()
-        ]);
+        setSuccess(`Pass journalier acheté avec succès pour ${driver.vehicle.licensePlate} - 2 TND`);
+        setShowPurchaseModal(false);
+        setSelectedDriver(null);
+        
+        // Print day pass ticket with 2 TND
+        try {
+          const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
+            licensePlate: driver.vehicle.licensePlate,
+            amount: 2 // 2 TND for new day pass
+          });
+          
+          console.log('🖨️ Printing day pass ticket (2 TND) for:', driver.vehicle.licensePlate);
+          const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+          await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
+          console.log('✅ Day pass ticket (2 TND) printed successfully');
+        } catch (printError) {
+          console.error('❌ Failed to print day pass ticket:', printError);
+          // Don't fail the purchase if printing fails
+        }
       }
+      
+      // Refresh data
+      await Promise.all([
+        fetchDriversWithoutDayPass(),
+        fetchTodayDayPasses(),
+        fetchRecentExitPasses()
+      ]);
     } catch (error) {
       console.error('Error purchasing day pass:', error);
       setError('Erreur lors de l\'achat du pass journalier');
@@ -192,7 +223,7 @@ export default function DayPassPage() {
         await Promise.all([
           fetchDriversWithoutDayPass(),
           fetchTodayDayPasses(),
-          fetchTodayExitPasses()
+          fetchRecentExitPasses()
         ]);
       } catch (error: any) {
         console.error('❌ [DAY PASS DEBUG] Error loading data:', error);
@@ -268,7 +299,7 @@ export default function DayPassPage() {
                   await Promise.all([
                     fetchDriversWithoutDayPass(),
                     fetchTodayDayPasses(),
-                    fetchTodayExitPasses()
+                    fetchRecentExitPasses()
                   ]);
                   setIsRefreshing(false);
                 }}
@@ -302,19 +333,7 @@ export default function DayPassPage() {
         </div>
 
         {/* Modern Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Chauffeurs sans Pass</p>
-                <p className="text-3xl font-bold text-amber-600 mt-2">{drivers.length}</p>
-                <p className="text-xs text-slate-500 mt-1">En attente</p>
-              </div>
-              <div className="p-3 bg-amber-100 dark:bg-amber-900/20 rounded-xl">
-                <AlertTriangle className="h-6 w-6 text-amber-600" />
-              </div>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow">
             <div className="flex items-center justify-between">
@@ -392,88 +411,7 @@ export default function DayPassPage() {
         )}
 
         {/* Modern Main Content */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Drivers Without Day Pass */}
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-            <div className="bg-gradient-to-r from-amber-500 to-orange-500 p-6">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-white/20 rounded-lg">
-                  <AlertTriangle className="h-6 w-6 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-white">Chauffeurs sans Pass</h3>
-                  <p className="text-amber-100 text-sm">Véhicules en attente</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-6">
-              <div className="space-y-4">
-                {/* Search */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <Input
-                    placeholder="Rechercher par nom, CIN ou plaque..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 border-slate-300 focus:border-amber-500 focus:ring-amber-500"
-                  />
-                </div>
-
-                {/* Drivers List */}
-                <div className="space-y-3 max-h-80 overflow-y-auto">
-                  {filteredDrivers.length === 0 ? (
-                    <div className="text-center py-8 text-gray-500">
-                      <CheckCircle className="h-12 w-12 mx-auto mb-4 text-green-500" />
-                      <p>Tous les chauffeurs ont un pass journalier valide</p>
-                    </div>
-                  ) : (
-                    filteredDrivers.map((driver) => (
-                      <div
-                        key={driver.id}
-                        className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border hover:shadow-sm transition"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/20 rounded-full flex items-center justify-center border border-orange-200">
-                            <User className="h-5 w-5 text-orange-700" />
-                          </div>
-                          <div>
-                            <p className="text-sm text-gray-600 dark:text-gray-400">
-                              Véhicule: {driver.vehicle?.licensePlate}
-                            </p>
-                            {driver.vehicle && (
-                              <p className="text-sm text-gray-600 dark:text-gray-400">
-                                <Car className="h-3 w-3 inline mr-1" />
-                                {driver.vehicle.licensePlate}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">Sans Pass</Badge>
-                          {driver.vehicle && (
-                            <span className="text-xs text-muted-foreground">{driver.vehicle.capacity} places</span>
-                          )}
-                        <Button
-                          onClick={() => {
-                            setSelectedDriver(driver);
-                            setShowPurchaseModal(true);
-                          }}
-                          disabled={!driver.vehicle}
-                          className="bg-orange-600 hover:bg-orange-700"
-                          data-shortcut="purchase-day-pass"
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Acheter Pass
-                        </Button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
           {/* Today's Day Passes */}
           <Card className="flex flex-col h-[600px]">

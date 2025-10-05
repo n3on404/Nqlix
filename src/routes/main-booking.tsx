@@ -97,6 +97,15 @@ export default function MainBooking() {
   const [isLoading, setIsLoading] = useState(true);
   const [basePrice, setBasePrice] = useState<number>(0);
   
+  // Track current destination ID to maintain focus after refresh
+  const [currentDestinationId, setCurrentDestinationId] = useState<string | null>(null);
+  
+  // Debounced fetch destinations to prevent excessive calls
+  const [fetchDestinationsTimeout, setFetchDestinationsTimeout] = useState<NodeJS.Timeout | null>(null);
+  
+  // Prevent multiple simultaneous fetch calls
+  const [isFetchingDestinations, setIsFetchingDestinations] = useState(false);
+  
   // Last booking data for cancel functionality
   const [lastBookingData, setLastBookingData] = useState<{
     bookings: any[];
@@ -122,6 +131,15 @@ export default function MainBooking() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [routes, setRoutes] = useState<any[]>([]);
   
+  // Vehicle selection for queue reordering
+  const [selectedVehicle, setSelectedVehicle] = useState<{
+    queueId: string;
+    licensePlate: string;
+    availableSeats: number;
+    totalSeats: number;
+    queuePosition: number;
+  } | null>(null);
+  
   // Exit pass confirmation modal state
   const [showExitPassModal, setShowExitPassModal] = useState(false);
   const [exitPassVehicleData, setExitPassVehicleData] = useState<{
@@ -145,13 +163,39 @@ export default function MainBooking() {
   const [lastUpdateTime, setLastUpdateTime] = useState(new Date());
   const [dbOk, setDbOk] = useState<boolean | null>(null);
   
-  // Helper functions for queue management
+  // Helper functions
+  const normalizeStationName = (name: string) => {
+    return name.toUpperCase().trim();
+  };
+
   const normalizeDestinationName = (name: string) => {
     return name.replace(/^STATION /i, "").toUpperCase().trim();
   };
+  
+  // Vehicle selection handler
+  const handleVehicleSelect = (queue: any) => {
+    setSelectedVehicle({
+      queueId: queue.id,
+      licensePlate: queue.licensePlate,
+      availableSeats: queue.availableSeats,
+      totalSeats: queue.totalSeats,
+      queuePosition: queue.queuePosition
+    });
+    // Set the available seats to the vehicle's actual available seats
+    setAvailableSeats(queue.availableSeats);
+    setBookingData({ seats: 1 }); // Start with 1 seat selected by default
+  };
 
-  const normalizeStationName = (name: string) => {
-    return name.toUpperCase().trim();
+  // Clear vehicle selection
+  const clearVehicleSelection = () => {
+    setSelectedVehicle(null);
+    // Reset to destination's total available seats or 1 if no destination selected
+    if (selectedDestination) {
+      setAvailableSeats(selectedDestination.totalAvailableSeats);
+    } else {
+      setAvailableSeats(1);
+    }
+    setBookingData({ seats: 1 });
   };
 
   const getBasePriceForDestination = (destinationName: string) => {
@@ -519,8 +563,28 @@ export default function MainBooking() {
     }
   };
 
+  // Debounced fetch destinations to prevent excessive calls
+  const debouncedFetchDestinations = (delay: number = 500) => {
+    if (fetchDestinationsTimeout) {
+      clearTimeout(fetchDestinationsTimeout);
+    }
+    
+    const timeout = setTimeout(() => {
+      fetchDestinations();
+    }, delay);
+    
+    setFetchDestinationsTimeout(timeout);
+  };
+
   // Fetch available destinations from API (only destinations with available seats)
   const fetchDestinations = async () => {
+    // Prevent multiple simultaneous calls
+    if (isFetchingDestinations) {
+      console.log('🔄 Fetch destinations already in progress, skipping...');
+      return;
+    }
+    
+    setIsFetchingDestinations(true);
     setIsLoading(true);
     
     try {
@@ -559,11 +623,33 @@ export default function MainBooking() {
         setDestinations(availableDestinations);
         setLastUpdateTime(new Date());
         console.log(`📍 Fetched ${availableDestinations.length} available destinations`);
+        
+        // Restore previous selection or auto-select first destination
+        if (currentDestinationId) {
+          // Try to restore the previously selected destination
+          const previousDestination = availableDestinations.find(d => d.destinationId === currentDestinationId);
+          if (previousDestination) {
+            console.log('🎯 Restoring previous destination selection:', previousDestination.destinationName);
+            setSelectedDestination(previousDestination);
+            setSelectedQueueDestination(previousDestination.destinationId);
+            fetchQueueForDestination(previousDestination.destinationId);
+          } else {
+            console.log('⚠️ Previous destination no longer available, auto-selecting first');
+            if (availableDestinations.length > 0) {
+              handleDestinationSelect(availableDestinations[0]);
+            }
+          }
+        } else if (availableDestinations.length > 0) {
+          // Auto-select first destination if none is currently selected
+          console.log('🎯 Auto-selecting first destination:', availableDestinations[0].destinationName);
+          handleDestinationSelect(availableDestinations[0]);
+        }
     } catch (error: any) {
       console.error('❌ [MAIN BOOKING DEBUG] Error fetching destinations:', error);
       setDestinations([]);
     } finally {
       setIsLoading(false);
+      setIsFetchingDestinations(false);
     }
   };
 
@@ -714,40 +800,18 @@ export default function MainBooking() {
     fetchDestinations();
     fetchRoutes();
 
+    // Reduced refresh interval from 15s to 30s to improve performance
     const refreshInterval = setInterval(() => {
-      fetchDestinations();
+      debouncedFetchDestinations(1000); // Debounce the refresh
       dbClient.health().then(setDbOk).catch(() => setDbOk(false));
-    }, 15000);
-
-    // With DB direct, rely on periodic refresh + explicit fetches around actions
-
-    const handleBookingCreated = () => {};
-
-    const handleBookingConflict = () => {};
-
-    const handlePaymentConfirmation = () => {};
-
-    const handleVehicleStatusChanged = () => {};
-
-    const handleExitTicketGenerated = async () => {};
-
-    const handleVehicleDeparted = (data: any) => {
-      if (data?.type === 'vehicle_departed') {
-        console.log('🚪 Vehicle departed from queue:', data);
-        
-        // Show notification about vehicle departure
-        if (data.reason === 'fully_booked') {
-          console.log(`✅ Vehicle ${data.licensePlate} has departed - fully booked and exit ticket printed`);
-        }
-        
-        // Refresh destinations to update the queue
-        fetchDestinations();
-      }
-    };
+    }, 30000);
 
     // Cleanup
-    return () => { if (refreshInterval) clearInterval(refreshInterval as any); };
-  }, [selectedDestination, destinations.length, isProcessing]);
+    return () => { 
+      if (refreshInterval) clearInterval(refreshInterval as any);
+      if (fetchDestinationsTimeout) clearTimeout(fetchDestinationsTimeout);
+    };
+  }, []); // Removed dependencies to prevent unnecessary re-runs
 
   // When a destination is selected, fetch its available seats
   useEffect(() => {
@@ -756,9 +820,9 @@ export default function MainBooking() {
     }
   }, [selectedDestination]);
 
-  // When filters change, refetch destinations
+  // When filters change, debounced refetch destinations
   useEffect(() => {
-    fetchDestinations();
+    debouncedFetchDestinations(300); // Short delay for filter changes
   }, [selectedGovernment, selectedDelegation]);
 
   // Check if selected destination becomes fully booked and clear selection
@@ -772,24 +836,8 @@ export default function MainBooking() {
 
   // TODO: Replace with MQTT connection logic
 
-  // Aggressive refresh on any user interaction
-  useEffect(() => {
-    const handleUserInteraction = () => {
-      console.log('👆 User interaction detected - refreshing destinations');
-      fetchDestinations();
-    };
-
-    // Add event listeners for various user interactions
-    document.addEventListener('click', handleUserInteraction);
-    document.addEventListener('keydown', handleUserInteraction);
-    document.addEventListener('focus', handleUserInteraction);
-
-    return () => {
-      document.removeEventListener('click', handleUserInteraction);
-      document.removeEventListener('keydown', handleUserInteraction);
-      document.removeEventListener('focus', handleUserInteraction);
-    };
-  }, []);
+  // Removed aggressive refresh on user interaction to improve performance
+  // Only refresh when necessary (booking operations, filter changes, etc.)
 
   // Keyboard shortcuts for numberpad
   useEffect(() => {
@@ -805,8 +853,8 @@ export default function MainBooking() {
         return;
       }
 
-      // Q-P shortcuts for destination selection (Q, W, E, R, T, Y, U, I)
-      const destinationKeys = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i'];
+      // AZERTY shortcuts for destination selection (A, Z, E, R, T, Y, U, I)
+      const destinationKeys = ['a', 'z', 'e', 'r', 't', 'y', 'u', 'i'];
       const destinationIndex = destinationKeys.indexOf(event.key.toLowerCase());
       if (destinationIndex !== -1 && destinations[destinationIndex]) {
         event.preventDefault();
@@ -866,6 +914,7 @@ export default function MainBooking() {
   const handleDestinationSelect = (destination: Destination | null) => {
     console.log("destination", destination);
     setSelectedDestination(destination);
+    setCurrentDestinationId(destination?.destinationId || null);
     setShowSuccess(false);
     setLastBookingData(null); // Clear any previous booking data
     
@@ -1161,7 +1210,7 @@ export default function MainBooking() {
     }
 
     try {
-      console.log('🚫 Cancelling seat from destination:', destinationId);
+      console.log('🚫 Cancelling seat from destination:', destinationId, 'by staff:', currentStaff.id);
       const result = await dbClient.cancelSeatFromDestination(destinationId, currentStaff.id);
       
       alert(`✅ ${result}`);
@@ -1176,7 +1225,15 @@ export default function MainBooking() {
       
     } catch (error: any) {
       console.error('❌ Failed to cancel seat:', error);
-      alert(`❌ Erreur lors de l'annulation: ${error.message || 'Erreur inconnue'}`);
+      
+      // Handle specific access denied errors
+      if (error.message?.includes('Accès refusé') || error.message?.includes('n\'est plus dans la file d\'attente')) {
+        alert(`❌ ${error.message}`);
+      } else if (error.message?.includes('Aucune réservation trouvée')) {
+        alert(`❌ ${error.message}`);
+      } else {
+        alert(`❌ Erreur lors de l'annulation: ${error.message || 'Erreur inconnue'}`);
+      }
     }
   };
 
@@ -1214,11 +1271,25 @@ export default function MainBooking() {
     })();
 
     try {
-      const response = await dbClient.createQueueBooking(
-        selectedDestination.destinationId,
-        seatsToBook,
-        currentStaff?.id
-      );
+      let response;
+      
+      // If a specific vehicle is selected, book only from that vehicle
+      if (selectedVehicle) {
+        console.log('🎫 Booking for specific vehicle:', selectedVehicle);
+        response = await dbClient.createVehicleSpecificBooking(
+          selectedVehicle.queueId,
+          seatsToBook,
+          currentStaff?.id
+        );
+      } else {
+        // Fallback to general queue booking (books from first available vehicle)
+        console.log('🎫 Booking from general queue (first available vehicle)');
+        response = await dbClient.createQueueBooking(
+          selectedDestination.destinationId,
+          seatsToBook,
+          currentStaff?.id
+        );
+      }
 
       if (response && response.bookings) {
         console.log('✅ Booking created successfully:', response);
@@ -1241,6 +1312,13 @@ export default function MainBooking() {
             await fetchQueueForDestination(selectedDestination.destinationId);
           }
         } catch {}
+        
+        // Ensure the selected destination remains focused after refresh
+        if (selectedDestination) {
+          console.log('🎯 Maintaining focus on destination:', selectedDestination.destinationName);
+          // The destination should remain selected, just refresh its queue data
+          await fetchQueueForDestination(selectedDestination.destinationId);
+        }
 
         // Compare expected seats with latest
         try {
@@ -1282,9 +1360,39 @@ export default function MainBooking() {
           let successfulPrints = 0;
           const baseBooking = response.bookings[0];
           
-          // Calculate seat positions based on vehicle capacity and current booking
+          // Get the correct vehicle information for seat calculation
           const vehicleCapacity = baseBooking.vehicleCapacity || 8;
-          const seatsAlreadyBooked = vehicleCapacity - (preBookingSnapshot?.seatsBefore || vehicleCapacity);
+          const vehicleLicensePlate = baseBooking.vehicleLicensePlate || baseBooking.licensePlate;
+          
+          // Find the vehicle in the current queue to get accurate seat information
+          let seatsAlreadyBooked = 0;
+          if (selectedDestination && vehicleLicensePlate) {
+            const normalizedDestination = normalizeDestinationName(selectedDestination.destinationName);
+            const destinationQueues = queues[normalizedDestination] || [];
+            const vehicleInQueue = destinationQueues.find(v => 
+              v.licensePlate === vehicleLicensePlate
+            );
+            
+            if (vehicleInQueue && vehicleInQueue.totalSeats && vehicleInQueue.availableSeats !== undefined) {
+              // Calculate seats already booked: total capacity - available seats
+              // Note: availableSeats is AFTER the booking, so we need to add back the seats we just booked
+              seatsAlreadyBooked = vehicleInQueue.totalSeats - vehicleInQueue.availableSeats - seatsToBook;
+              console.log(`🚗 Vehicle ${vehicleLicensePlate} info:`, {
+                totalSeats: vehicleInQueue.totalSeats,
+                availableSeats: vehicleInQueue.availableSeats,
+                seatsJustBooked: seatsToBook,
+                seatsAlreadyBooked: seatsAlreadyBooked
+              });
+            } else {
+              console.warn(`⚠️ Could not find vehicle ${vehicleLicensePlate} in queue for seat calculation`);
+              // Fallback: assume seats are booked sequentially from the beginning
+              seatsAlreadyBooked = vehicleCapacity - seatsToBook;
+            }
+          } else {
+            console.warn('⚠️ Missing vehicle information for seat calculation');
+            // Fallback calculation
+            seatsAlreadyBooked = vehicleCapacity - seatsToBook;
+          }
           
           // Print one ticket for each seat (not per booking, but per seat)
           for (let seatNumber = 1; seatNumber <= seatsToBook; seatNumber++) {
@@ -1372,12 +1480,14 @@ export default function MainBooking() {
           checkForFullyBookedVehicle(selectedDestination.destinationId, seatsToBook, response.data);
         }, 1000);
         
-        // Clear selection after successful booking
+        // Keep focus on the selected destination after booking
+        // Only clear success state and reset booking data
         setTimeout(() => {
-          setSelectedDestination(null);
           setShowSuccess(false);
           setTicketsPrinted(0);
           setBookingData({ seats: 1 });
+          // Clear vehicle selection but keep destination focus
+          setSelectedVehicle(null);
         }, 3000);
       } else {
         console.error('❌ Booking failed:', response.message);
@@ -1467,55 +1577,6 @@ export default function MainBooking() {
           {/* Tab Navigation */}
       
 
-          {/* Location Filters - Only show on bookings tab */}
-          {activeTab === 'bookings' && (
-          <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
-              <label className="text-sm font-medium whitespace-nowrap">Gouvernorat:</label>
-              <select 
-                className="w-full sm:w-auto px-3 py-2 border rounded-lg bg-card dark:bg-card"
-                value={selectedGovernment} 
-                onChange={(e) => handleGovernmentChange(e.target.value)}
-              >
-                <option value="">Tous les gouvernorats</option>
-                {governments.map(gov => (
-                  <option key={gov.name} value={gov.name}>
-                    {gov.nameAr ? `${gov.name} - ${gov.nameAr}` : gov.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            {selectedGovernment && (
-              <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full sm:w-auto">
-                <label className="text-sm font-medium whitespace-nowrap">Délégation:</label>
-                <select 
-                  className="w-full sm:w-auto px-3 py-2 border rounded-lg bg-card dark:bg-card"
-                  value={selectedDelegation} 
-                  onChange={(e) => handleDelegationChange(e.target.value)}
-                >
-                  <option value="">Toutes les délégations</option>
-                  {availableDelegations.map(delegation => (
-                    <option key={delegation.name} value={delegation.name}>
-                      {delegation.nameAr ? `${delegation.name} - ${delegation.nameAr}` : delegation.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            
-            {(selectedGovernment || selectedDelegation) && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                className="w-full sm:w-auto"
-                onClick={clearFilters}
-              >
-                Effacer les filtres
-              </Button>
-            )}
-          </div>
-          )}
         </div>
       </div>
 
@@ -1546,10 +1607,10 @@ export default function MainBooking() {
                     >
                     <CardContent className="p-4 text-center">
                         <div className="space-y-2">
-                        {/* Q-P shortcut indicator */}
+                        {/* AZERTY shortcut indicator */}
                         <div className="absolute top-2 right-2">
                           <Badge variant="outline" className="text-xs font-mono bg-blue-100 text-blue-700 border-blue-300">
-                            {['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I'][index]}
+                            {['A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I'][index]}
                           </Badge>
                         </div>
                         
@@ -1588,6 +1649,55 @@ export default function MainBooking() {
             {/* Right Side - Queue Table */}
           <div className="space-y-4">
               <h2 className="text-xl font-bold">File d'Attente</h2>
+              
+              {/* Vehicle Selection Panel */}
+              {selectedVehicle && (
+                <Card className="border-green-200 bg-green-50 dark:bg-green-900/20">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                          <CheckCircle className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-green-800 dark:text-green-200">
+                            Véhicule sélectionné: {selectedVehicle.licensePlate}
+                          </h3>
+                          <p className="text-sm text-green-600 dark:text-green-300">
+                            Position {selectedVehicle.queuePosition} • {selectedVehicle.availableSeats} places disponibles
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-4">
+                        {/* Clear Selection Button */}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={clearVehicleSelection}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <X className="w-4 h-4 mr-1" />
+                          Annuler
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              
+              {/* Instructions */}
+              {selectedDestination && !selectedVehicle && (
+                <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                    <Edit className="w-4 h-4" />
+                    <span>
+                      <strong>Instructions:</strong> Cliquez sur un véhicule dans la file d'attente pour le sélectionner, puis utilisez le sélecteur de places en bas pour spécifier le nombre de places à réserver.
+                    </span>
+                  </div>
+                </div>
+              )}
+              
               <Card>
                 <CardContent className="p-0">
               {!selectedDestination ? (
@@ -1685,10 +1795,17 @@ export default function MainBooking() {
                                }
                               };
                               
+                              const isSelected = selectedVehicle?.queueId === queue.id;
+                              
                               return (
                                <div
                                  key={queue.id}
-                                 className={`grid grid-cols-12 gap-4 p-5 border-b border-gray-100 dark:border-gray-700 transition-all duration-200 hover:shadow-md ${getStatusBackground(queue.status)}`}
+                                 className={`grid grid-cols-12 gap-4 p-5 border-b border-gray-100 dark:border-gray-700 transition-all duration-200 hover:shadow-md cursor-pointer ${
+                                   isSelected 
+                                     ? 'ring-2 ring-green-500 bg-green-50 dark:bg-green-900/20 shadow-lg' 
+                                     : 'hover:shadow-md'
+                                 } ${getStatusBackground(queue.status)}`}
+                                 onClick={() => handleVehicleSelect(queue)}
                                >
                                  {/* Booked Seats */}
                                  <div className="col-span-2 flex items-center">
@@ -1706,14 +1823,22 @@ export default function MainBooking() {
                                  
                                  {/* License Plate */}
                                  <div className="col-span-5 flex items-center justify-between">
-                                   <span className="font-mono text-base font-bold bg-white/50 dark:bg-gray-800/50 px-3 py-2 rounded border min-w-0 flex-1 mr-3">
-                                     {queue.licensePlate}
-                                   </span>
+                                   <div className="flex items-center gap-3 flex-1">
+                                     {isSelected && (
+                                       <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                                         <CheckCircle className="w-4 h-4 text-white" />
+                                       </div>
+                                     )}
+                                     <span className="font-mono text-base font-bold bg-white/50 dark:bg-gray-800/50 px-3 py-2 rounded border min-w-0 flex-1">
+                                       {queue.licensePlate}
+                                     </span>
+                                   </div>
                                    <Button 
                                      variant="ghost" 
                                      size="sm"
                                      className="text-red-600 hover:text-red-700 hover:bg-red-100 dark:hover:bg-red-900/20 p-2 flex-shrink-0"
-                                     onClick={() => {
+                                     onClick={(e) => {
+                                       e.stopPropagation(); // Prevent vehicle selection when clicking remove button
                                        // Check vehicle status and handle accordingly
                                        if (queue.status === 'READY') {
                                          // Vehicle is ready (fully booked) - show exit pass modal
@@ -1803,11 +1928,26 @@ export default function MainBooking() {
             <h3 className="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">
               Chargement des destinations...
             </h3>
-            <p className="text-gray-500">
+            <p className="text-gray-500 mb-4">
               Recherche des destinations avec des places disponibles
-                          </p>
-                        </div>
-                      )}
+            </p>
+            <div className="flex justify-center">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => {
+                  setIsLoading(false);
+                  setIsFetchingDestinations(false);
+                  fetchDestinations();
+                }}
+                className="text-blue-600 border-blue-300 hover:bg-blue-50"
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Actualiser
+              </Button>
+            </div>
+          </div>
+        )}
                     </div>
 
             {/* Bottom Booking Panel - Only show when destination is selected */}
@@ -1971,7 +2111,7 @@ export default function MainBooking() {
                       <div key={destination.destinationId} className="flex items-center justify-between p-2 bg-blue-50 rounded-lg">
                         <span className="text-sm">{destination.destinationName}</span>
                         <Badge variant="outline" className="font-mono text-xs">
-                          {['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I'][index]}
+                          {['A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I'][index]}
                         </Badge>
                       </div>
                     ))}
@@ -2007,7 +2147,7 @@ export default function MainBooking() {
 
               <div className="bg-gray-50 p-4 rounded-lg">
                 <p className="text-sm text-gray-600">
-                  <strong>Raccourcis:</strong> Q-W-E-R-T-Y-U-I pour destinations, Alt+1-8 pour places, Espace pour réserver. 
+                  <strong>Raccourcis:</strong> A-Z-E-R-T-Y-U-I pour destinations, Alt+1-8 pour places, Espace pour réserver. 
                   Appuyez sur <Badge variant="outline" className="mx-1">F12</Badge> 
                   pour ouvrir/fermer cette aide.
                 </p>
