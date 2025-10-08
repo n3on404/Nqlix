@@ -243,14 +243,12 @@ impl PrinterService {
         {
             if let Ok(exe_path) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_path.parent() {
-                    let resources_dir = exe_dir.join("resources");
-                    if resources_dir.exists() {
-                        if let Ok(path_env) = std::env::var("PATH") {
-                            let mut new_path = resources_dir.to_string_lossy().to_string();
-                            new_path.push(';');
-                            new_path.push_str(&path_env);
-                            cmd.env("PATH", new_path);
-                        }
+                    // Prefer packaged node_modules inside resources
+                    let resources_node_modules = exe_dir.join("resources").join("node_modules");
+                    if resources_node_modules.exists() {
+                        println!("🔍 [DEBUG] Using packaged node_modules at: {:?}", resources_node_modules);
+                        cmd.env("NODE_PATH", &resources_node_modules);
+                        cmd.current_dir(exe_dir);
                     }
                 }
             }
