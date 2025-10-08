@@ -174,7 +174,28 @@ impl PrinterService {
 
     /// Helper function to get the require statement for node-thermal-printer
     fn get_thermal_printer_require(&self) -> Result<String, String> {
-        // First try to find the module using our path resolution
+        // 1) Prefer packaged resource path (we bundle ../node_modules/node-thermal-printer/** under resources)
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let resource_direct_paths = vec![
+                    exe_dir.join("resources").join("node-thermal-printer"),
+                    exe_dir.join("resources").join("node_modules").join("node-thermal-printer"),
+                ];
+                for p in resource_direct_paths {
+                    println!("🔍 [DEBUG] Checking resource module path: {:?} exists={}", p, p.exists());
+                    if p.exists() {
+                        let mut s = p.to_string_lossy().to_string();
+                        #[cfg(windows)]
+                        { s = s.replace("\\", "\\\\"); }
+                        let s = s.replace("\\\\", "/");
+                        println!("✅ [DEBUG] Using resource module path: {}", s);
+                        return Ok(format!("const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');", s));
+                    }
+                }
+            }
+        }
+
+        // 2) Try discovered node_modules root
         match self.get_node_modules_path() {
             Ok(node_modules_path) => {
                 let module_path = node_modules_path.join("node-thermal-printer");
@@ -244,11 +265,23 @@ impl PrinterService {
             if let Ok(exe_path) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_path.parent() {
                     // Prefer packaged node_modules inside resources
-                    let resources_node_modules = exe_dir.join("resources").join("node_modules");
+                    let resources_dir = exe_dir.join("resources");
+                    let resources_node_modules = resources_dir.join("node_modules");
                     if resources_node_modules.exists() {
                         println!("🔍 [DEBUG] Using packaged node_modules at: {:?}", resources_node_modules);
                         cmd.env("NODE_PATH", &resources_node_modules);
+                        // Also add resources path to NODE_PATH so direct requires from resources work
+                        if let Ok(existing) = std::env::var("NODE_PATH") {
+                            let mut combined = resources_node_modules.to_string_lossy().to_string();
+                            combined.push(';');
+                            combined.push_str(&existing);
+                            cmd.env("NODE_PATH", combined);
+                        }
                         cmd.current_dir(exe_dir);
+                    } else if resources_dir.exists() {
+                        // Fallback: set CWD to resources so relative requires find bundled folder
+                        println!("🔍 [DEBUG] Setting working directory to resources: {:?}", resources_dir);
+                        cmd.current_dir(&resources_dir);
                     }
                 }
             }
