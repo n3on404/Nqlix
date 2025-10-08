@@ -564,18 +564,11 @@ impl PrinterService {
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
         
-        // Test connection by trying to connect to the printer
-        let test_result = self.execute_print_job_with_printer(&printer, PrintJob {
-            content: "CONNECTION TEST".to_string(),
-            align: Some("center".to_string()),
-            bold: Some(true),
-            underline: None,
-            size: Some("normal".to_string()),
-            cut: Some(false),
-            open_cash_drawer: Some(false),
-        }).await;
+        // Test connection by sending a simple ESC/POS message directly
+        let result = self.send_tcp_bytes(&printer, &Self::build_simple_test_bytes())
+            .await;
 
-        match test_result {
+        match result {
             Ok(_) => Ok(PrinterStatus {
                 connected: true,
                 error: None,
@@ -591,16 +584,9 @@ impl PrinterService {
         let printer = self.get_printer_by_id(printer_id)?;
         let printer = printer.ok_or(format!("Printer with ID '{}' not found", printer_id))?;
         
-        // Test connection by trying to connect to the printer
-        let test_result = self.execute_print_job_with_printer(&printer, PrintJob {
-            content: "CONNECTION TEST".to_string(),
-            align: Some("center".to_string()),
-            bold: Some(true),
-            underline: None,
-            size: Some("normal".to_string()),
-            cut: Some(false),
-            open_cash_drawer: Some(false),
-        }).await;
+        // Test connection by sending a simple ESC/POS message directly
+        let test_result = self.send_tcp_bytes(&printer, &Self::build_simple_test_bytes())
+            .await;
 
         match test_result {
             Ok(_) => Ok(PrinterStatus {
@@ -779,28 +765,8 @@ printTestTicket();
     }
         
     pub async fn execute_print_job_with_printer(&self, printer: &PrinterConfig, job: PrintJob) -> Result<String, String> {
-        // Create the Node.js script content
-        let script_content = self.create_print_script(printer, &job)?;
-        
-        // Write script to temporary file in proper temp directory
-        let script_path = self.create_temp_script_path("temp_print");
-        std::fs::write(&script_path, script_content)
-            .map_err(|e| format!("Failed to write script to {:?}: {}", script_path, e))?;
-
-        // Execute the script
-        let output = self.execute_node_script(&script_path)?;
-
-        // Clean up temporary file
-        let _ = std::fs::remove_file(&script_path);
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(format!(
-                "Print failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        let bytes = Self::build_escpos_from_job(&job);
+        self.send_tcp_bytes(printer, &bytes).await
     }
 
     fn create_print_script(&self, printer: &PrinterConfig, job: &PrintJob) -> Result<String, String> {
@@ -863,6 +829,81 @@ printTicket();
         );
 
         Ok(script)
+    }
+
+    fn build_simple_test_bytes() -> Vec<u8> {
+        let mut d = Vec::new();
+        // Initialize
+        d.extend_from_slice(&[0x1B, 0x40]);
+        // Center, bold
+        d.extend_from_slice(&[0x1B, 0x61, 0x01]);
+        d.extend_from_slice(&[0x1B, 0x45, 0x01]);
+        d.extend_from_slice(b"CONNECTION TEST\n");
+        // Normal, left
+        d.extend_from_slice(&[0x1B, 0x45, 0x00]);
+        d.extend_from_slice(&[0x1B, 0x61, 0x00]);
+        // Feed and no cut (test)
+        d.extend_from_slice(b"\n\n");
+        d
+    }
+
+    fn build_escpos_from_job(job: &PrintJob) -> Vec<u8> {
+        let mut data: Vec<u8> = Vec::new();
+        // Initialize
+        data.extend_from_slice(&[0x1B, 0x40]); // ESC @
+
+        // Alignment
+        if let Some(align) = &job.align {
+            let v = match align.as_str() {
+                "center" => 1,
+                "right" => 2,
+                _ => 0,
+            };
+            data.extend_from_slice(&[0x1B, 0x61, v]); // ESC a n
+        }
+
+        // Bold
+        if let Some(bold) = job.bold {
+            data.extend_from_slice(&[0x1B, 0x45, if bold { 1 } else { 0 }]); // ESC E n
+        }
+
+        // Underline
+        if let Some(underline) = job.underline {
+            data.extend_from_slice(&[0x1B, 0x2D, if underline { 1 } else { 0 }]); // ESC - n
+        }
+
+        // Size
+        if let Some(size) = &job.size {
+            let n = match size.as_str() {
+                "double_height" => 16, // GS ! n (bit 4)
+                "double_width" => 32,  // GS ! n (bit 5)
+                "quad" => 48,          // both bits
+                _ => 0,
+            };
+            data.extend_from_slice(&[0x1D, 0x21, n]); // GS ! n
+        }
+
+        // Content
+        data.extend_from_slice(job.content.as_bytes());
+        data.extend_from_slice(b"\n");
+
+        // Finalize
+        if let Some(cut) = job.cut {
+            if cut {
+                // Feed and cut
+                data.extend_from_slice(b"\n\n\n");
+                data.extend_from_slice(&[0x1D, 0x56, 0x00]); // GS V 0 (full cut)
+            }
+        }
+
+        if let Some(open) = job.open_cash_drawer {
+            if open {
+                // Kick cash drawer: ESC p m t1 t2
+                data.extend_from_slice(&[0x1B, 0x70, 0x00, 0x50, 0x50]);
+            }
+        }
+
+        data
     }
 
     fn generate_printer_commands(&self, job: &PrintJob) -> String {
