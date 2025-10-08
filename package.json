@@ -1,7 +1,7 @@
 {
   "name": "wasla-desktop-app",
   "private": true,
-  "version": "2.2.7",
+  "version": "2.3.0",
   "type": "module",
   "scripts": {
     "build": "tsc && vite build",
@@ -47,7 +47,6 @@
     "lucide-react": "^0.263.1",
     "mqtt": "^5.3.4",
     "next-themes": "^0.2.1",
-    "node-thermal-printer": "^4.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.1",

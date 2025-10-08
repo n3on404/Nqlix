@@ -8,7 +8,7 @@
   },
   "package": {
   "productName": "Wasla",
-  "version": "2.2.7"
+  "version": "2.3.0"
   },
   "tauri": {
     "allowlist": {
@@ -43,9 +43,7 @@
         "icons/icon.icns",
         "icons/icon.ico"
       ],
-      "resources": [
-        "../node_modules/node-thermal-printer/**"
-      ]
+      "resources": []
     },
     "updater": {
       "active": true,
