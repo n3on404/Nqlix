@@ -375,17 +375,11 @@ async fn print_entry_or_daypass_if_needed(license_plate: String, destination_nam
         }
     };
     
-    // Get queue position for the entry ticket
-    let queue_row = client.query_opt(
-        "SELECT queue_position FROM vehicle_queue WHERE vehicle_id = (SELECT id FROM vehicles WHERE license_plate = $1) ORDER BY entered_at DESC LIMIT 1",
-        &[&license_plate]
-    ).await.map_err(|e| e.to_string())?;
+    // Use the destination passed from queue entry function
+    let queue_destination = destination_name.clone();
+    let queue_position = 1; // Default position, will be updated if needed
     
-    let queue_position = if let Some(row) = queue_row {
-        row.get::<_, i32>("queue_position")
-    } else {
-        1 // Fallback if not found
-    };
+    println!("🎯 [ENTRY TICKET DEBUG] Using destination from queue entry: {}", queue_destination);
     
     if let Some(row) = day_pass_row {
         let day_pass_price: f64 = row.get("price");
@@ -402,7 +396,7 @@ async fn print_entry_or_daypass_if_needed(license_plate: String, destination_nam
         let entry_ticket = serde_json::json!({
             "ticketNumber": entry_ticket_number,
             "licensePlate": license_plate,
-            "destinationName": destination_name,
+            "destinationName": queue_destination,
             "queuePosition": queue_position,
             "entryTime": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
             "ticketPrice": "0.00", // 0 TND because day pass is valid
@@ -426,64 +420,33 @@ async fn print_entry_or_daypass_if_needed(license_plate: String, destination_nam
         }
         return Ok(());
     } else {
-        println!("ℹ️ [ENTRY TICKET DEBUG] No existing day pass found for {} - creating new day pass and printing entry ticket with 2 TND", license_plate);
-    }
-    
-    // Create new day pass with Tunisian time
-    let row = client.query_one("SELECT id FROM vehicles WHERE license_plate = $1", &[&license_plate])
-        .await.map_err(|e| e.to_string())?;
-    let vehicle_id: String = row.get("id");
-    let price = 2.0; // Always 2 TND for new day passes
-    
-    // Get current Tunisian time
-    let now_tunisian = chrono::Utc::now().with_timezone(&chrono_tz::Africa::Tunis);
-    let today_start = now_tunisian.date_naive().and_hms_opt(0, 0, 0).unwrap();
-    let today_end = now_tunisian.date_naive().and_hms_opt(23, 59, 59).unwrap();
-    
-    // Convert to UTC for database storage
-    let now_utc = now_tunisian.with_timezone(&chrono::Utc);
-    let today_start_utc = today_start.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
-    let today_end_utc = today_end.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
-    
-    // Get staff ID for database insertion
-    let staff_id = staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string());
-    
-    // Create new day pass in database
-    let day_pass_id = uuid::Uuid::new_v4().to_string();
-    let _ = client.execute(
-        "INSERT INTO day_passes (id, vehicle_id, license_plate, price, purchase_date, valid_from, valid_until, is_active, is_expired, created_by, created_at, updated_at) 
-         VALUES ($1,$2,$3,$4, $5 AT TIME ZONE 'Africa/Tunis', $6 AT TIME ZONE 'Africa/Tunis', $7 AT TIME ZONE 'Africa/Tunis', true, false, $8, $5 AT TIME ZONE 'Africa/Tunis', $5 AT TIME ZONE 'Africa/Tunis')",
-        &[&day_pass_id, &vehicle_id, &license_plate, &price, &now_utc, &today_start_utc, &today_end_utc, &staff_id]
-    ).await;
-    
-    println!("✅ [ENTRY TICKET DEBUG] Created new day pass for {} - printing entry ticket with 2 TND", license_plate);
-    
-    // Print ENTRY TICKET with 2 TND (new day pass purchased)
-    let entry_ticket_number = format!("ENTRY-{}", chrono::Utc::now().timestamp_millis());
-    let entry_ticket = serde_json::json!({
-        "ticketNumber": entry_ticket_number,
-        "licensePlate": license_plate,
-        "destinationName": destination_name,
-        "queuePosition": queue_position,
-        "entryTime": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
-        "ticketPrice": "2.00", // 2 TND because new day pass was purchased
-        "dayPassStatus": "PURCHASED",
-        "dayPassId": day_pass_id,
-        "dayPassPurchaseDate": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
-        "staffName": staff_info.as_ref().map(|s| format!("{} {}", s.firstName, s.lastName)).unwrap_or_else(|| "Staff".to_string()),
-        "staffId": staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string())
-    }).to_string();
-    
-    println!("🎫 [ENTRY TICKET DEBUG] Generated entry ticket data (2 TND): {}", entry_ticket);
-    
-    let print_result = printer_clone.print_entry_ticket(entry_ticket, None).await;
-    match print_result {
-        Ok(result) => {
-            println!("✅ [ENTRY TICKET DEBUG] Entry ticket printed successfully for {}: {}", license_plate, result);
-        },
-        Err(e) => {
-            println!("❌ [ENTRY TICKET DEBUG] Failed to print entry ticket for {}: {}", license_plate, e);
-            eprintln!("❌ [ENTRY TICKET ERROR] Entry ticket print failed for {}: {}", license_plate, e);
+        println!("ℹ️ [DAY PASS DEBUG] No existing day pass found for {} - printing day pass ticket with 2 TND", license_plate);
+        println!("🎯 [DAY PASS DEBUG] Using destination from queue: {}", queue_destination);
+        
+        // Print DAY PASS TICKET with hardcoded 2 TND (for people without valid day pass)
+        let day_pass_ticket_number = format!("DAYPASS-{}", chrono::Utc::now().timestamp_millis());
+        let day_pass_ticket = serde_json::json!({
+            "ticketNumber": day_pass_ticket_number,
+            "licensePlate": license_plate,
+            "destinationName": queue_destination,
+            "amount": 2.0, // Hardcoded 2 TND
+            "purchaseDate": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "validFor": now_tunisian.format("%Y-%m-%d").to_string(),
+            "staffName": staff_info.as_ref().map(|s| format!("{} {}", s.firstName, s.lastName)).unwrap_or_else(|| "Staff".to_string()),
+            "staffId": staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string())
+        }).to_string();
+        
+        println!("🎫 [DAY PASS DEBUG] Generated day pass ticket data (2 TND): {}", day_pass_ticket);
+        
+        let print_result = printer_clone.print_day_pass_ticket(day_pass_ticket, None).await;
+        match print_result {
+            Ok(result) => {
+                println!("✅ [DAY PASS DEBUG] Day pass ticket printed successfully for {}: {}", license_plate, result);
+            },
+            Err(e) => {
+                println!("❌ [DAY PASS DEBUG] Failed to print day pass ticket for {}: {}", license_plate, e);
+                eprintln!("❌ [DAY PASS ERROR] Day pass ticket print failed for {}: {}", license_plate, e);
+            }
         }
     }
     
@@ -2508,10 +2471,16 @@ async fn db_get_vehicle_activity_72h(license_plate: String) -> Result<Vec<Vehicl
         r#"
         SELECT 'ENTRY' AS event_type,
                to_char((purchase_date AT TIME ZONE 'Africa/Tunis'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS ts,
-               'Toutes destinations' AS destination_name
-        FROM day_passes
-        WHERE license_plate = $1
-          AND (purchase_date AT TIME ZONE 'Africa/Tunis') >= (NOW() AT TIME ZONE 'Africa/Tunis') - INTERVAL '72 hours'
+               COALESCE(
+                   (SELECT vq.destination_name FROM vehicle_queue vq 
+                    JOIN vehicles v ON vq.vehicle_id = v.id
+                    WHERE v.license_plate = dp.license_plate 
+                    ORDER BY vq.entered_at DESC LIMIT 1),
+                   'Destination inconnue'
+               ) AS destination_name
+        FROM day_passes dp
+        WHERE dp.license_plate = $1
+          AND (dp.purchase_date AT TIME ZONE 'Africa/Tunis') >= (NOW() AT TIME ZONE 'Africa/Tunis') - INTERVAL '72 hours'
         UNION ALL
         SELECT 'EXIT' AS event_type,
                to_char((current_exit_time AT TIME ZONE 'Africa/Tunis'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS ts,
@@ -3066,6 +3035,23 @@ async fn db_purchase_day_pass(license_plate: String, vehicle_id: String, price: 
         &[&day_pass_id, &vehicle_id, &license_plate, &final_price, &now_utc, &today_start_utc, &today_end_utc, &staff_id]
     ).await.map_err(|e| e.to_string())?;
     
+    // Get destination from vehicle queue table (simple query)
+    let queue_destination_row = client.query_opt(
+        "SELECT vq.destination_name FROM vehicle_queue vq JOIN vehicles v ON vq.vehicle_id = v.id WHERE v.license_plate = $1 ORDER BY vq.entered_at DESC LIMIT 1",
+        &[&license_plate]
+    ).await.map_err(|e| e.to_string())?;
+    
+    let queue_destination = if let Some(row) = queue_destination_row {
+        let dest = row.get::<_, String>("destination_name");
+        println!("🎯 [DAY PASS PURCHASE DEBUG] Found destination in queue: {}", dest);
+        dest
+    } else {
+        println!("❌ [DAY PASS PURCHASE DEBUG] No destination found in queue for vehicle: {}", license_plate);
+        "Destination inconnue".to_string() // Fallback if not found in queue
+    };
+    
+    println!("🎯 [DAY PASS PURCHASE DEBUG] Final destination to use: {}", queue_destination);
+    
     // Print day pass ticket
     let day_pass_number = format!("DP{}", chrono::Utc::now().timestamp_millis().to_string().chars().rev().take(8).collect::<String>().chars().rev().collect::<String>());
     let dp_ticket = serde_json::json!({
@@ -3075,7 +3061,7 @@ async fn db_purchase_day_pass(license_plate: String, vehicle_id: String, price: 
         "amount": final_price.to_string(),
         "purchaseDate": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
         "validFor": now_tunisian.format("%Y-%m-%d").to_string(),
-        "destinationName": "Toutes destinations",
+        "destinationName": queue_destination,
         "isReprint": false,
         "staffName": staff_name_for_print,
         "staffId": staff_id

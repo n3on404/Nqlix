@@ -713,43 +713,11 @@ export default function QueueManagement() {
     setAddVehicleError(null);
     
     try {
-      // Check day pass status and handle day pass purchase in parallel with queue entry
-      console.log('🚗 [QUEUE DEBUG] Checking day pass status for:', selectedVehicle.licensePlate);
-      
-      const [hasDayPass, destinationInfo] = await Promise.all([
-        // Check day pass status
-        dbClient.hasDayPassToday(selectedVehicle.licensePlate).catch(() => 
-          checkDayPassStatus(selectedVehicle.licensePlate)
-        ),
-        // Get destination info
-        Promise.resolve(vehicleDestinations.find(d => d.stationId === selectedVehicleDestination))
-      ]);
-      
-      console.log('🚗 [QUEUE DEBUG] Day pass status:', hasDayPass);
+      // Get destination info
+      const destinationInfo = vehicleDestinations.find(d => d.stationId === selectedVehicleDestination);
       console.log('🚗 [QUEUE DEBUG] Destination info:', destinationInfo);
       
-      // Handle day pass purchase if needed (non-blocking)
-      if (!hasDayPass) {
-        console.log('🚗 [QUEUE DEBUG] Vehicle has no day pass, purchasing...');
-        try {
-          await getDayPassPrice();
-          const dayPassResult = await purchaseDayPass(selectedVehicle.licensePlate);
-          
-          if (!dayPassResult.success) {
-            throw new Error(dayPassResult.message || 'Erreur lors de l\'achat du pass journalier');
-          }
-          
-          // Update UI state
-          setSelectedVehicle((prev: any) => prev && prev.licensePlate === selectedVehicle.licensePlate ? { ...prev, dayPassValid: true } : prev);
-          setVehicles((prev: any[]) => prev.map((v: any) => v.licensePlate === selectedVehicle.licensePlate ? { ...v, dayPassValid: true } : v));
-          console.log('✅ [QUEUE DEBUG] Day pass purchased successfully');
-        } catch (error) {
-          console.error('❌ [QUEUE DEBUG] Day pass purchase failed:', error);
-          throw error;
-        }
-      }
-      
-      // Proceed with queue entry using direct database access
+      // Add vehicle to queue (this will automatically handle day pass printing)
       console.log('🚗 [QUEUE DEBUG] Adding vehicle to queue...');
       const result = await dbClient.addVehicleToQueue(
         selectedVehicle.licensePlate, 
@@ -757,26 +725,28 @@ export default function QueueManagement() {
         destinationInfo?.stationName
       );
       
-      if (result) {
-        console.log('✅ [QUEUE DEBUG] Vehicle successfully added to queue:', result);
-        addNotification({
-          type: 'success',
-          title: 'Véhicule ajouté',
-          message: result,
-          duration: 4000
-        });
-        setShowAddVehicleModal(false);
-        setSelectedVehicle(null);
-        setSelectedVehicleDestination(null);
-        setVehicleDestinations([]);
-        setSearch("");
-        setIsInputFocused(false);
-        
-        // Refresh queue data
-        debouncedRefreshQueues();
-      } else {
+      if (!result) {
         throw new Error('Échec de l\'entrée en file');
       }
+      
+      console.log('✅ [QUEUE DEBUG] Vehicle successfully added to queue:', result);
+      
+      // Show success notification
+      addNotification({
+        type: 'success',
+        title: 'Véhicule ajouté',
+        message: result,
+        duration: 4000
+      });
+      setShowAddVehicleModal(false);
+      setSelectedVehicle(null);
+      setSelectedVehicleDestination(null);
+      setVehicleDestinations([]);
+      setSearch("");
+      setIsInputFocused(false);
+      
+      // Refresh queue data
+      debouncedRefreshQueues();
     } catch (error: any) {
       console.error('❌ [QUEUE DEBUG] Vehicle addition failed:', error);
       setAddVehicleError(error.message || 'Erreur lors de l\'ajout du véhicule');

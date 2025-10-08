@@ -517,6 +517,7 @@ impl PrinterService {
         data.extend_from_slice(&[0x1B, 0x61, 0x00]); // left
         data.extend_from_slice(format!("IP: {}\n", test_printer.ip).as_bytes());
         data.extend_from_slice(format!("Port: {}\nStatus: OK\n", test_printer.port).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]); // cut
 
         match self.send_tcp_bytes(&test_printer, &data).await {
@@ -726,6 +727,7 @@ impl PrinterService {
         data.extend_from_slice(&[0x1B, 0x61, 0x01]);
         let date = chrono::Local::now().format("%d/%m/%Y %H:%M:%S");
         data.extend_from_slice(format!("Date: {}\n", date).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]);
         self.send_tcp_bytes(&printer, &data).await
     }
@@ -751,6 +753,7 @@ impl PrinterService {
         data.extend_from_slice(&[0x1B, 0x61, 0x01]); // center
         let date = chrono::Local::now().format("%d/%m/%Y %H:%M:%S");
         data.extend_from_slice(format!("Date: {}\nMerci de votre confiance!\n", date).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]); // cut
         self.send_tcp_bytes(&printer, &data).await
     }
@@ -788,6 +791,7 @@ impl PrinterService {
         data.extend_from_slice(&[0x1B, 0x61, 0x01]); // center
         let date = chrono::Local::now().format("%d/%m/%Y %H:%M:%S");
         data.extend_from_slice(format!("Date: {}\n", date).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]);
         self.send_tcp_bytes(&printer, &data).await
     }
@@ -799,7 +803,7 @@ impl PrinterService {
         data.extend_from_slice(&[0x1B, 0x40]); // init
         data.extend_from_slice(&[0x1B, 0x61, 0x00]); // left
         data.extend_from_slice(talon_data.as_bytes());
-        data.extend_from_slice(b"\n");
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]); // cut
         self.send_tcp_bytes(&printer, &data).await
     }
@@ -867,6 +871,7 @@ impl PrinterService {
         data.extend_from_slice(b"================================\n");
         data.extend_from_slice(&[0x1B, 0x61, 0x02]); // right
         data.extend_from_slice(format!("{}\n", staff_footer).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]); // cut
         self.send_tcp_bytes(&printer, &data).await
     }
@@ -901,6 +906,7 @@ impl PrinterService {
         data.extend_from_slice(format!("Date: {}\nMerci!\n", date).as_bytes());
         data.extend_from_slice(&[0x1B, 0x61, 0x02]);
         data.extend_from_slice(format!("{}\n", staff_footer).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]);
         self.send_tcp_bytes(&printer, &data).await
     }
@@ -972,17 +978,13 @@ impl PrinterService {
         data.extend_from_slice(b"================================\n");
         data.extend_from_slice(&[0x1B, 0x61, 0x00]);
         data.extend_from_slice(format!("Plaque: {}\n", license_plate).as_bytes());
-        if amount == 0.0 {
-            data.extend_from_slice(b"Pass journalier: VALIDE\n");
-            data.extend_from_slice(format!("Montant: 0.00 TND\nAchat precedent: {}\n", purchase_date).as_bytes());
-        } else {
-            data.extend_from_slice(b"Pass journalier: ACHETE\n");
-            data.extend_from_slice(format!("Montant: {:.2} TND\nDate d'achat: {}\n", amount, purchase_date).as_bytes());
-        }
+        data.extend_from_slice(b"Pass journalier: ACHETE\n");
+        data.extend_from_slice(format!("Montant: 2.00 TND\nDate d'achat: {}\n", purchase_date).as_bytes());
         data.extend_from_slice(format!("Valide pour: {}\nDestination: {}\n", valid_for, destination).as_bytes());
         data.extend_from_slice(b"================================\n");
         data.extend_from_slice(&[0x1B, 0x61, 0x02]);
         data.extend_from_slice(format!("{}\n", staff_footer).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]);
         self.send_tcp_bytes(&printer, &data).await
     }
@@ -1039,6 +1041,7 @@ impl PrinterService {
         data.extend_from_slice(format!("Date: {}\n", date).as_bytes());
         data.extend_from_slice(&[0x1B, 0x61, 0x02]);
         data.extend_from_slice(format!("{}\n", staff_footer).as_bytes());
+        data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]);
         self.send_tcp_bytes(&printer, &data).await
     }
