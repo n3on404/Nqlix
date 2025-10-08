@@ -179,7 +179,13 @@ impl PrinterService {
             Ok(node_modules_path) => {
                 let module_path = node_modules_path.join("node-thermal-printer");
                 println!("🔍 [DEBUG] Using module path: {:?}", module_path);
-                Ok(format!("const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');", module_path.to_string_lossy()))
+                let mut module_str = module_path.to_string_lossy().to_string();
+                // Escape backslashes for JS string literal on Windows
+                #[cfg(windows)]
+                {
+                    module_str = module_str.replace("\\", "\\\\");
+                }
+                Ok(format!("const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');", module_str))
             }
             Err(e) => {
                 println!("⚠️ [DEBUG] Path resolution failed: {}", e);
@@ -187,9 +193,14 @@ impl PrinterService {
                 if let Ok(cwd) = std::env::current_dir() {
                     let rel_module = cwd.join("node_modules").join("node-thermal-printer");
                     println!("🔄 [DEBUG] Trying relative module at: {:?}", rel_module);
+                    let mut rel_str = rel_module.to_string_lossy().to_string();
+                    #[cfg(windows)]
+                    {
+                        rel_str = rel_str.replace("\\", "\\\\");
+                    }
                     Ok(format!(
                         "const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');",
-                        rel_module.to_string_lossy()
+                        rel_str
                     ))
                 } else {
                     println!("🔄 [DEBUG] Falling back to Node.js module resolution");
@@ -224,8 +235,28 @@ impl PrinterService {
             }
         }
 
-        // Execute the script
-        cmd.arg(script_path)
+        // On Windows, ensure PATH includes the app resources dir for packaged node runtime if any
+        #[cfg(windows)]
+        {
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    let resources_dir = exe_dir.join("resources");
+                    if resources_dir.exists() {
+                        if let Ok(path_env) = std::env::var("PATH") {
+                            let mut new_path = resources_dir.to_string_lossy().to_string();
+                            new_path.push(';');
+                            new_path.push_str(&path_env);
+                            cmd.env("PATH", new_path);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Execute the script (quote path for spaces on Windows)
+        let script_str = script_path.to_string_lossy().to_string();
+        let arg = if cfg!(windows) { format!("\"{}\"", script_str) } else { script_str };
+        cmd.arg(arg)
             .output()
             .map_err(|e| format!("Failed to execute script {:?}: {}", script_path, e))
     }
