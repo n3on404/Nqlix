@@ -477,7 +477,7 @@ impl PrinterService {
         // Try to get staff from local node API
         // First, we need to get the current staff from the session
         // Since we can't access localStorage directly from Rust, we'll try to get it from the API
-        let base_url = "http://127.0.0.1:3001"; // Default local node URL
+        let base_url = "http://192.168.192.100:3001"; // Default local node URL
         
         // Try to get current staff from the API
         let response = client

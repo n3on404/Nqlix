@@ -3,25 +3,25 @@
 
 export const SERVER_CONFIG = {
   // Main server IP address
-  SERVER_IP: '127.0.0.1',
+  SERVER_IP: '192.168.192.100',
   
   // API Configuration
   API: {
-    BASE_URL: 'http://127.0.0.1:3001/api',
+    BASE_URL: 'http://192.168.192.100:3001/api',
     TIMEOUT: 10000,
   },
   
   // MQTT Configuration
   MQTT: {
-    BROKER_URL: 'ws://127.0.0.1:8083/mqtt',
-    TCP_URL: 'mqtt://127.0.0.1:1883',
+    BROKER_URL: 'ws://192.168.192.100:8083/mqtt',
+    TCP_URL: 'mqtt://192.168.192.100:1883',
     USERNAME: 'admin',
     PASSWORD: 'transportation2024',
   },
   
   // Database Configuration (for direct connections)
   DATABASE: {
-    HOST: '127.0.0.1',
+    HOST: '192.168.192.100',
     PORT: 5433,
     USERNAME: 'ivan',
     PASSWORD: 'Lost2409',
@@ -30,7 +30,7 @@ export const SERVER_CONFIG = {
   
   // Redis Configuration
   REDIS: {
-    HOST: '127.0.0.1',
+    HOST: '192.168.192.100',
     PORT: 6379,
     PASSWORD: '',
     DB: 0,
@@ -38,7 +38,7 @@ export const SERVER_CONFIG = {
   
   // EMQX Dashboard
   EMQX_DASHBOARD: {
-    URL: 'http://127.0.0.1:18083',
+    URL: 'http://192.168.192.100:18083',
     USERNAME: 'admin',
     PASSWORD: 'transportation2024',
   },

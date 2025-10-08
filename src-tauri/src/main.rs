@@ -33,7 +33,7 @@ static DB_POOL: Lazy<Pool> = Lazy::new(|| {
     // load .env if exists
     let _ = dotenv();
     let db_url = stdenv::var("DATABASE_URL").unwrap_or_else(|_|
-        "postgresql://ivan:Lost2409@127.0.0.1:5432/louaj_node".to_string()
+        "postgresql://ivan:Lost2409@192.168.192.100:5432/louaj_node".to_string()
     );
 
     let mut cfg = deadpool_postgres::Config::new();
@@ -1658,11 +1658,11 @@ async fn proxy_localnode(
                 if let Some(server) = discovery_result.servers.first() {
                     server.url.clone()
                 } else {
-                    "http://127.0.0.1:3001".to_string()
+                    "http://192.168.192.100:3001".to_string()
                 }
             }
             Err(_) => {
-                "http://127.0.0.1:3001".to_string()
+                "http://192.168.192.100:3001".to_string()
             }
         }
     };
@@ -3477,7 +3477,7 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     // HARDCODED: Use the ethernet IP for testing
-    let hardcoded_ip = "127.0.0.1".parse::<IpAddr>()?;
+    let hardcoded_ip = "192.168.192.100".parse::<IpAddr>()?;
     println!("🔍 Using hardcoded ethernet IP: {}", hardcoded_ip);
     return Ok(hardcoded_ip);
     
@@ -3530,7 +3530,7 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
             let mut other_ips = Vec::new();
             
             for line in output_str.lines() {
-                if line.contains("inet ") && !line.contains("127.0.0.1") {
+                if line.contains("inet ") && !line.contains("192.168.192.100") {
                     // Check if this is an ethernet interface
                     let is_ethernet = line.contains("eth") || line.contains("enp") || line.contains("ens");
                     
