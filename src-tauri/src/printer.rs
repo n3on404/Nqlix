@@ -185,6 +185,8 @@ impl PrinterService {
                 {
                     module_str = module_str.replace("\\", "\\\\");
                 }
+                // Use path normalization and require with forward slashes for reliability
+                let module_str = module_str.replace("\\\\", "/");
                 Ok(format!("const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');", module_str))
             }
             Err(e) => {
@@ -198,6 +200,7 @@ impl PrinterService {
                     {
                         rel_str = rel_str.replace("\\", "\\\\");
                     }
+                    let rel_str = rel_str.replace("\\\\", "/");
                     Ok(format!(
                         "const {{ ThermalPrinter, PrinterTypes, CharacterSet, BreakLine }} = require('{}');",
                         rel_str
@@ -253,10 +256,8 @@ impl PrinterService {
             }
         }
 
-        // Execute the script (quote path for spaces on Windows)
-        let script_str = script_path.to_string_lossy().to_string();
-        let arg = if cfg!(windows) { format!("\"{}\"", script_str) } else { script_str };
-        cmd.arg(arg)
+        // Execute the script: pass raw path (Command handles spaces on Windows)
+        cmd.arg(script_path)
             .output()
             .map_err(|e| format!("Failed to execute script {:?}: {}", script_path, e))
     }
