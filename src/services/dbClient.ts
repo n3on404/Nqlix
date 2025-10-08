@@ -170,6 +170,9 @@ export const dbClient = {
   async createVehicle(licensePlate: string, capacity: number, phoneNumber?: string) {
     return invoke<string>('db_create_vehicle', { licensePlate, capacity, phoneNumber });
   },
+  async updateVehiclePhone(vehicleId: string, phoneNumber?: string) {
+    return invoke<string>('db_update_vehicle_phone', { vehicleId, phoneNumber });
+  },
   async getVehicleActivity72h(licensePlate: string) {
     return invoke<Array<{eventType: string; timestamp: string; destinationName?: string}>>('db_get_vehicle_activity_72h', { licensePlate });
   },
@@ -264,6 +267,7 @@ export interface VehicleDto {
   phoneNumber?: string | null;
   defaultDestinationId?: string;
   defaultDestinationName?: string;
+  createdAt?: string;
 }
 
 export interface DestinationDto {

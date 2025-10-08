@@ -33,7 +33,7 @@ static DB_POOL: Lazy<Pool> = Lazy::new(|| {
     // load .env if exists
     let _ = dotenv();
     let db_url = stdenv::var("DATABASE_URL").unwrap_or_else(|_|
-        "postgresql://ivan:Lost2409@192.168.192.100:5432/louaj_node".to_string()
+        "postgresql://ivan:Lost2409@127.0.0.1:5432/louaj_node".to_string()
     );
 
     let mut cfg = deadpool_postgres::Config::new();
@@ -1658,11 +1658,11 @@ async fn proxy_localnode(
                 if let Some(server) = discovery_result.servers.first() {
                     server.url.clone()
                 } else {
-                    "http://192.168.192.100:3001".to_string()
+                    "http://127.0.0.1:3001".to_string()
                 }
             }
             Err(_) => {
-                "http://192.168.192.100:3001".to_string()
+                "http://127.0.0.1:3001".to_string()
             }
         }
     };
@@ -2293,6 +2293,7 @@ struct VehicleDto {
     phoneNumber: Option<String>,
     defaultDestinationId: Option<String>,
     defaultDestinationName: Option<String>,
+    createdAt: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -2385,10 +2386,10 @@ async fn db_get_all_vehicles() -> Result<Vec<VehicleDto>, String> {
     let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let sql = r#"
         SELECT id, license_plate, capacity, is_active, is_available, is_banned, phone_number,
-               default_destination_id, default_destination_name
+               default_destination_id, default_destination_name, to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at
         FROM vehicles
         WHERE is_active = true
-        ORDER BY license_plate
+        ORDER BY created_at DESC
     "#;
     let rows = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
     let vehicles = rows.into_iter().map(|r| VehicleDto {
@@ -2401,6 +2402,7 @@ async fn db_get_all_vehicles() -> Result<Vec<VehicleDto>, String> {
         phoneNumber: r.get("phone_number"),
         defaultDestinationId: r.get("default_destination_id"),
         defaultDestinationName: r.get("default_destination_name"),
+        createdAt: r.get("created_at"),
     }).collect();
     Ok(vehicles)
 }
@@ -2472,6 +2474,23 @@ async fn db_create_vehicle(license_plate: String, capacity: i32, phone_number: O
     tx.commit().await.map_err(|e| e.to_string())?;
     
     Ok(format!("Véhicule {} créé avec succès (ID: {})", license_plate, vehicle_id))
+}
+
+// Update vehicle phone number by vehicle ID
+#[tauri::command]
+async fn db_update_vehicle_phone(vehicle_id: String, phone_number: Option<String>) -> Result<String, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let rows_affected = client
+        .execute(
+            "UPDATE vehicles SET phone_number = $1, updated_at = NOW() WHERE id = $2",
+            &[&phone_number, &vehicle_id],
+        )
+        .await
+        .map_err(|e| format!("Failed to update phone number: {}", e))?;
+    if rows_affected == 0 {
+        return Err("Vehicle not found".to_string());
+    }
+    Ok("Phone number updated".to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -3458,7 +3477,7 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     // HARDCODED: Use the ethernet IP for testing
-    let hardcoded_ip = "192.168.192.100".parse::<IpAddr>()?;
+    let hardcoded_ip = "127.0.0.1".parse::<IpAddr>()?;
     println!("🔍 Using hardcoded ethernet IP: {}", hardcoded_ip);
     return Ok(hardcoded_ip);
     
@@ -3511,7 +3530,7 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
             let mut other_ips = Vec::new();
             
             for line in output_str.lines() {
-                if line.contains("inet ") && !line.contains("192.168.192.100") {
+                if line.contains("inet ") && !line.contains("127.0.0.1") {
                     // Check if this is an ethernet interface
                     let is_ethernet = line.contains("eth") || line.contains("enp") || line.contains("ens");
                     
@@ -4018,6 +4037,7 @@ fn main() {
             db_move_vehicle_to_front,
             db_get_all_vehicles,
             db_create_vehicle,
+            db_update_vehicle_phone,
             db_authorize_vehicle_station,
             db_ban_vehicle,
             db_get_vehicle_daily_report,

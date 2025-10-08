@@ -67,6 +67,12 @@ const SupervisorVehicleManagement: React.FC = () => {
   const [isLoadingMonastir, setIsLoadingMonastir] = useState(false);
   const [licensePlateFirst, setLicensePlateFirst] = useState('');
   const [licensePlateSecond, setLicensePlateSecond] = useState('');
+  const [vehicleSearchTerm, setVehicleSearchTerm] = useState('');
+  const [editingPhoneVehicleId, setEditingPhoneVehicleId] = useState<string | null>(null);
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [isSavingPhone, setIsSavingPhone] = useState(false);
+  const [showActiveOnly, setShowActiveOnly] = useState(false);
+  const [showAvailableOnly, setShowAvailableOnly] = useState(false);
 
   // Helper
   const formatTND = (value: any) => {
@@ -171,6 +177,52 @@ const SupervisorVehicleManagement: React.FC = () => {
   const filteredStations = routes.filter(route =>
     route.stationName.toLowerCase().includes(stationSearchTerm.toLowerCase())
   ).map(route => ({ id: route.stationId, name: route.stationName }));
+
+  // Filter vehicles based on search (license plate or phone)
+  const filteredVehicles = vehicles.filter(v => {
+    if (!vehicleSearchTerm.trim()) return true;
+    const q = vehicleSearchTerm.toLowerCase();
+    return (
+      v.licensePlate.toLowerCase().includes(q) ||
+      (v.phoneNumber || '').toLowerCase().includes(q)
+    );
+  }).filter(v => (showActiveOnly ? v.isActive : true))
+    .filter(v => (showAvailableOnly ? v.isAvailable : true))
+    .sort((a: any, b: any) => {
+      // newest first, fallback to plate if missing
+      const ad = a.createdAt ? Date.parse(a.createdAt) : 0;
+      const bd = b.createdAt ? Date.parse(b.createdAt) : 0;
+      if (ad !== bd) return bd - ad;
+      return a.licensePlate.localeCompare(b.licensePlate);
+    });
+
+  const startEditPhone = (vehicleId: string, currentPhone?: string | null) => {
+    setEditingPhoneVehicleId(vehicleId);
+    setPhoneDraft(currentPhone || '');
+  };
+
+  const cancelEditPhone = () => {
+    setEditingPhoneVehicleId(null);
+    setPhoneDraft('');
+  };
+
+  const savePhone = async (vehicleId: string) => {
+    try {
+      setIsSavingPhone(true);
+      await dbClient.updateVehiclePhone(vehicleId, phoneDraft.trim() ? phoneDraft.trim() : undefined);
+      setVehicles(prev => prev.map(v => v.id === vehicleId ? { ...v, phoneNumber: phoneDraft.trim() || null } : v));
+      if (vehicleDetails && vehicleDetails.id === vehicleId) {
+        setVehicleDetails({ ...vehicleDetails, phoneNumber: phoneDraft.trim() || null });
+      }
+      addNotification({ type: 'success', title: 'Téléphone mis à jour', message: 'Numéro enregistré avec succès.' });
+      setEditingPhoneVehicleId(null);
+      setPhoneDraft('');
+    } catch (e: any) {
+      addNotification({ type: 'error', title: 'Erreur', message: e?.message || "Échec de la mise à jour du numéro." });
+    } finally {
+      setIsSavingPhone(false);
+    }
+  };
 
   // Function to select default destination
   const selectDefaultDestination = (stationId: string) => {
@@ -471,7 +523,7 @@ const SupervisorVehicleManagement: React.FC = () => {
   };
 
   return (
-    <div className="container mx-auto p-6 space-y-8">
+    <div className="container mx-auto p-6 h-screen flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Car className="h-6 w-6" /> Gestion des véhicules
@@ -504,68 +556,247 @@ const SupervisorVehicleManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Vehicles Table */}
-      <Card className="p-4 mb-8">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Car className="h-5 w-5" /> Véhicules
-          </h2>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={async () => {
-              try {
-                const date = todayStr();
-                const res = await api.get(`/api/vehicles/trips/daily?date=${encodeURIComponent(date)}`);
-                if (res.success && res.data) {
-                  try { sessionStorage.setItem(`allVehicleTrips:${date}`, JSON.stringify(res.data)); } catch {}
-                  navigate(`/print-all-vehicle-trips?date=${encodeURIComponent(date)}`);
-                } else {
-                  addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement du rapport' });
-                }
-              } catch (error) {
-                addNotification({ type: 'error', title: 'Erreur', message: 'Fonction d\'impression non disponible' });
-              }
-            }}>
-              <Printer className="h-4 w-4 mr-2" /> Imprimer tous les trajets (A4)
-            </Button>
-            <Button variant="outline" size="sm" onClick={fetchVehicles} disabled={isLoading}>
-              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} /> Rafraîchir
-            </Button>
-          </div>
+      {/* 3-column layout: Filters | Table | Details */}
+      <div className="grid grid-cols-12 gap-4 flex-1 min-h-0">
+        {/* Filters */}
+        <div className="col-span-12 md:col-span-3 lg:col-span-3 min-h-0">
+          <Card className="p-4 h-full flex flex-col">
+            <div className="text-lg font-semibold mb-3">Filtres</div>
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                type="text"
+                placeholder="Rechercher (plaque ou téléphone)"
+                value={vehicleSearchTerm}
+                onChange={(e) => setVehicleSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <div className="flex gap-2 mb-3">
+              <Button type="button" variant={showActiveOnly ? 'default' : 'outline'} size="sm" onClick={() => setShowActiveOnly(v => !v)}>
+                {showActiveOnly ? 'Actifs' : 'Tous statuts'}
+              </Button>
+              <Button type="button" variant={showAvailableOnly ? 'default' : 'outline'} size="sm" onClick={() => setShowAvailableOnly(v => !v)}>
+                {showAvailableOnly ? 'Disponibles' : 'Tous véhicules'}
+              </Button>
+            </div>
+            {/* Sorting controls removed; list now sorted by date de création */}
+            <div className="mt-auto pt-3 border-t">
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={async () => {
+                  try {
+                    const date = todayStr();
+                    const res = await api.get(`/api/vehicles/trips/daily?date=${encodeURIComponent(date)}`);
+                    if (res.success && res.data) {
+                      try { sessionStorage.setItem(`allVehicleTrips:${date}`, JSON.stringify(res.data)); } catch {}
+                      navigate(`/print-all-vehicle-trips?date=${encodeURIComponent(date)}`);
+                    } else {
+                      addNotification({ type: 'error', title: 'Erreur', message: res.message || 'Échec du chargement du rapport' });
+                    }
+                  } catch (error) {
+                    addNotification({ type: 'error', title: 'Erreur', message: 'Fonction d\'impression non disponible' });
+                  }
+                }}>
+                  <Printer className="h-4 w-4 mr-2" /> Imprimer A4
+                </Button>
+                <Button variant="outline" size="sm" onClick={fetchVehicles} disabled={isLoading}>
+                  <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} /> Rafraîchir
+                </Button>
+              </div>
+            </div>
+          </Card>
         </div>
-        <div className="overflow-x-auto">
-          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <th className="text-left py-2 px-3">Plaque d'immatriculation</th>
-                  <th className="text-left py-2 px-3">Capacité</th>
-                  <th className="text-left py-2 px-3">Téléphone</th>
-                  <th className="text-left py-2 px-3">CIN du conducteur</th>
-                  <th className="text-left py-2 px-3">Statut</th>
-                </tr>
-              </thead>
-              <tbody>
-                {vehicles.map(v => (
-                  <tr key={v.id} className="border-b hover:bg-muted cursor-pointer" onClick={async () => { setSelectedVehicle(v); setIsVehicleFloatingOpen(true); fetchVehicleDetails(v.id); }}>
-                    <td className="py-2 px-3 font-medium">{v.licensePlate}</td>
-                    <td className="py-2 px-3">{v.capacity} places</td>
-                    <td className="py-2 px-3">{v.phoneNumber || '-'}</td>
-                    <td className="py-2 px-3">{v.licensePlate || '-'}</td>
-                    <td className="py-2 px-3">
-                      <Badge variant={v.isActive ? 'default' : 'secondary'}>
-                        {v.isActive ? 'Actif' : 'Inactif'}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-                {vehicles.length === 0 && (
-                  <tr><td colSpan={4} className="text-center py-4 text-muted-foreground">Aucun véhicule trouvé.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+
+        {/* Table */}
+        <div className="col-span-12 md:col-span-5 lg:col-span-5 min-h-0">
+          <Card className="p-0 h-full flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <Car className="h-5 w-5" /> Véhicules
+              </h2>
+              <div className="text-sm text-muted-foreground">{filteredVehicles.length} véhicule(s)</div>
+            </div>
+            <div className="overflow-x-auto flex-1 min-h-0">
+              <div className="h-full overflow-y-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <th className="text-left py-2 px-3">Plaque</th>
+                      <th className="text-left py-2 px-3">Capacité</th>
+                      <th className="text-left py-2 px-3">Téléphone</th>
+                      <th className="text-left py-2 px-3">Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredVehicles.map(v => (
+                      <tr key={v.id} className={`border-b hover:bg-muted cursor-pointer ${selectedVehicle?.id === v.id ? 'bg-muted/50' : ''}`} onClick={async () => { setSelectedVehicle(v); fetchVehicleDetails(v.id); }}>
+                        <td className="py-2 px-3 font-medium">{v.licensePlate}</td>
+                        <td className="py-2 px-3">{v.capacity} places</td>
+                        <td className="py-2 px-3" onClick={(e) => e.stopPropagation()}>
+                          {editingPhoneVehicleId === v.id ? (
+                            <div className="flex items-center gap-2">
+                              <Input value={phoneDraft} onChange={(e) => setPhoneDraft(e.target.value)} placeholder="Téléphone" className="w-40" />
+                              <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={isSavingPhone} onClick={() => savePhone(v.id)}>
+                                {isSavingPhone ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={cancelEditPhone}>
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <span>{v.phoneNumber || '-'}</span>
+                              <Button size="sm" variant="outline" onClick={() => startEditPhone(v.id, v.phoneNumber)}>Modifier</Button>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 px-3">
+                          <div className="flex items-center gap-2">
+                            <Badge variant={v.isActive ? 'default' : 'secondary'}>
+                              {v.isActive ? 'Actif' : 'Inactif'}
+                            </Badge>
+                            <Badge variant={v.isAvailable ? 'default' : 'secondary'}>
+                              {v.isAvailable ? 'Disponible' : 'Indispo'}
+                            </Badge>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredVehicles.length === 0 && (
+                      <tr><td colSpan={4} className="text-center py-4 text-muted-foreground">Aucun véhicule trouvé.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Card>
         </div>
-      </Card>
+
+        {/* Details */}
+        <div className="col-span-12 md:col-span-4 lg:col-span-4 min-h-0">
+          <Card className="p-0 h-full flex flex-col">
+            <div className="p-4 border-b">
+              <div className="flex items-center gap-3">
+                <Car className="h-5 w-5 text-primary" />
+                <div className="flex-1">
+                  <div className="text-lg font-semibold">Détails</div>
+                  {vehicleDetails && (
+                    <div className="text-xs text-muted-foreground mt-0.5">{vehicleDetails.licensePlate}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1 min-h-0">
+              {!vehicleDetails ? (
+                <div className="text-sm text-muted-foreground">Sélectionnez un véhicule pour voir les détails.</div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap gap-2">
+                    {vehicleDetails.isBanned && <Badge variant="destructive">Banni</Badge>}
+                    {!vehicleDetails.isBanned && !vehicleDetails.isActive && <Badge variant="secondary">Inactif</Badge>}
+                    {vehicleDetails.isActive && !vehicleDetails.isBanned && <Badge variant="default">Actif</Badge>}
+                    <Badge variant={vehicleDetails.isAvailable ? 'default' : 'secondary'}>
+                      {vehicleDetails.isAvailable ? 'Disponible' : 'Indisponible'}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
+                      <div className="text-xs text-muted-foreground">Capacité</div>
+                      <div className="text-lg font-semibold">{vehicleDetails.capacity} places</div>
+                    </div>
+                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
+                      <div className="text-xs text-muted-foreground">Téléphone</div>
+                      {editingPhoneVehicleId === vehicleDetails.id ? (
+                        <div className="flex items-center gap-2 mt-1">
+                          <Input value={phoneDraft} onChange={(e) => setPhoneDraft(e.target.value)} placeholder="Téléphone" className="w-full" />
+                          <Button size="sm" className="bg-green-600 hover:bg-green-700" disabled={isSavingPhone} onClick={() => savePhone(vehicleDetails.id)}>
+                            {isSavingPhone ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={cancelEditPhone}>
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-sm">{vehicleDetails.phoneNumber || '-'}</span>
+                          <Button size="sm" variant="outline" onClick={() => startEditPhone(vehicleDetails.id, vehicleDetails.phoneNumber)}>Modifier</Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium mb-2">Stations autorisées</div>
+                    <div className="flex flex-wrap gap-2">
+                      {vehicleDetails.authorizedStations && vehicleDetails.authorizedStations.length > 0 ? (
+                        vehicleDetails.authorizedStations.map((s: any) => (
+                          <Badge key={s.id} variant="outline" className="bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200">
+                            {s.stationId.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Aucune station autorisée</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium mb-2 flex items-center gap-2">
+                      <span>Activité (72h)</span>
+                      <span className="text-xs text-muted-foreground">(Entrées/Sorties récentes)</span>
+                    </div>
+                    <div className="space-y-2 max-h-80 overflow-auto">
+                      {vehicleActivity.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">Aucune activité récente.</div>
+                      ) : vehicleActivity.map((it, idx) => (
+                        <div key={idx} className="flex items-start justify-between gap-3 text-sm">
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${it.eventType === 'ENTRY' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                              {it.eventType === 'ENTRY' ? 'Entrée' : 'Sortie'}
+                            </span>
+                            <span className="truncate max-w-[140px]">{it.destinationName || '-'}</span>
+                          </div>
+                          <div className="text-muted-foreground font-mono whitespace-nowrap">{new Date(it.timestamp).toLocaleString('fr-FR')}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-sm font-medium mb-2">Conducteur</div>
+                    {vehicleDetails.driver ? (
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <div className="text-xs text-muted-foreground">Plaque</div>
+                          <div className="font-mono">{vehicleDetails.licensePlate}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground">Statut du compte</div>
+                          <div>{vehicleDetails.driver.accountStatus}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-muted-foreground">Aucun conducteur assigné.</div>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t">
+                    <div className="flex justify-end">
+                      <Button variant="destructive" onClick={async () => {
+                        if (!vehicleDetails) return;
+                        await banVehicle(vehicleDetails.id);
+                      }} disabled={vehicleDetails.isBanned}>
+                        Bannir ce véhicule
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
 
 
       {/* New Vehicle Form Dialog */}
@@ -939,162 +1170,7 @@ const SupervisorVehicleManagement: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Floating Vehicle Details Panel - New Layout */}
-      <Dialog open={isVehicleFloatingOpen} onOpenChange={open => { setIsVehicleFloatingOpen(open); if (!open) { setVehicleDetails(null); setSelectedVehicle(null); setVehicleActivity([]); } }}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <Car className="h-6 w-6 text-primary" />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl font-semibold">Détails du véhicule</span>
-                      {vehicleDetails && (
-                        <>
-                          {vehicleDetails.isBanned && <Badge variant="destructive">Banni</Badge>}
-                          {!vehicleDetails.isBanned && !vehicleDetails.isActive && <Badge variant="secondary">Inactif</Badge>}
-                          {vehicleDetails.isActive && !vehicleDetails.isBanned && <Badge variant="default">Actif</Badge>}
-                          <Badge variant={vehicleDetails.isAvailable ? 'default' : 'secondary'}>
-                            {vehicleDetails.isAvailable ? 'Disponible' : 'Indisponible'}
-                          </Badge>
-                        </>
-                      )}
-                    </div>
-                    {vehicleDetails && (
-                      <div className="text-sm text-muted-foreground mt-1">
-                        Plaque: <span className="font-mono font-medium">{vehicleDetails.licensePlate}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </DialogTitle>
-          </DialogHeader>
-          {isVehicleDetailsLoading ? (
-            <div className="flex items-center justify-center p-8"><Loader2 className="h-6 w-6 animate-spin mr-2" /> Chargement...</div>
-          ) : vehicleDetails ? (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Left column: essentials */}
-              <div className="lg:col-span-2 space-y-4">
-                {/* Overview */}
-                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
-                      <div className="text-xs text-muted-foreground">Capacité</div>
-                      <div className="text-lg font-semibold">{vehicleDetails.capacity} places</div>
-                    </div>
-                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
-                      <div className="text-xs text-muted-foreground">Statut</div>
-                      <div className="text-sm">{vehicleDetails.isActive ? 'Actif' : 'Inactif'}</div>
-                    </div>
-                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
-                      <div className="text-xs text-muted-foreground">Disponibilité</div>
-                      <div className="text-sm">{vehicleDetails.isAvailable ? 'Disponible' : 'Indisponible'}</div>
-                    </div>
-                    <div className="p-3 rounded-md bg-zinc-50 dark:bg-zinc-800 border">
-                      <div className="text-xs text-muted-foreground">Téléphone</div>
-                      <div className="text-sm">{vehicleDetails.phoneNumber || '-'}</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Authorized stations */}
-                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="font-medium">Stations autorisées</div>
-                    <Button size="sm" variant="secondary" onClick={async () => {
-                      try {
-                        if (!vehicleDetails) return;
-                        const date = todayStr();
-                        const report = await dbClient.getVehicleDailyReport(vehicleDetails.id, date);
-                        try { sessionStorage.setItem(`vehicleTrips:${vehicleDetails.id}:${date}`, JSON.stringify(report)); } catch {}
-                        navigate(`/print-vehicle-trips?vehicleId=${encodeURIComponent(vehicleDetails.id)}&date=${encodeURIComponent(date)}`);
-                      } catch (error: any) {
-                        addNotification({ type: 'error', title: 'Erreur', message: error?.message || 'Échec du chargement des trajets' });
-                      }
-                    }}>
-                      <Printer className="h-4 w-4 mr-2" /> Imprimer trajets (A4)
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {vehicleDetails.authorizedStations && vehicleDetails.authorizedStations.length > 0 ? (
-                      vehicleDetails.authorizedStations.map((s: any) => (
-                        <Badge key={s.id} variant="outline" className="bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200">
-                          {s.stationId.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className="text-sm text-muted-foreground">Aucune station autorisée</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Right column: activity and actions */}
-              <div className="space-y-4">
-                {/* Activity */}
-                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
-                  <div className="text-sm font-medium mb-2">Activité des 72 dernières heures</div>
-                  <div className="space-y-2 max-h-80 overflow-auto">
-                    {vehicleActivity.length === 0 ? (
-                      <div className="text-sm text-muted-foreground">Aucune activité récente.</div>
-                    ) : vehicleActivity.map((it, idx) => (
-                      <div key={idx} className="flex items-start justify-between gap-3 text-sm">
-                        <div className="flex items-center gap-2">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${it.eventType === 'ENTRY' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {it.eventType === 'ENTRY' ? 'Entrée' : 'Sortie'}
-                          </span>
-                          <span className="truncate max-w-[160px]">{it.destinationName || '-'}</span>
-                        </div>
-                        <div className="text-muted-foreground font-mono whitespace-nowrap">{new Date(it.timestamp).toLocaleString('fr-FR')}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Driver/contact */}
-                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
-                  <div className="text-sm font-medium mb-2">Conducteur</div>
-                  {vehicleDetails.driver ? (
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <div className="text-xs text-muted-foreground">Plaque</div>
-                        <div className="font-mono">{vehicleDetails.licensePlate}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-muted-foreground">Statut du compte</div>
-                        <div>{vehicleDetails.driver.accountStatus}</div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">Aucun conducteur assigné.</div>
-                  )}
-                  <div className="mt-3">
-                    <div className="text-xs text-muted-foreground">Téléphone</div>
-                    <div className="text-sm">{vehicleDetails.phoneNumber || '-'}</div>
-                  </div>
-                </div>
-
-                {/* Danger zone */}
-                <div className="rounded-lg border p-4 bg-white dark:bg-zinc-900">
-                  <div className="text-sm font-medium mb-3 text-red-600">Actions</div>
-                  <div className="flex justify-end">
-                    <Button variant="destructive" onClick={async () => {
-                      if (!vehicleDetails) return;
-                      await banVehicle(vehicleDetails.id);
-                    }} disabled={vehicleDetails.isBanned}>
-                      Bannir ce véhicule
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center text-muted-foreground">Aucun détail trouvé.</div>
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Floating details dialog removed in favor of inline panel */}
     </div>
   );
 };
