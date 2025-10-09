@@ -420,33 +420,97 @@ async fn print_entry_or_daypass_if_needed(license_plate: String, destination_nam
         }
         return Ok(());
     } else {
-        println!("ℹ️ [DAY PASS DEBUG] No existing day pass found for {} - printing day pass ticket with 2 TND", license_plate);
+        println!("ℹ️ [DAY PASS DEBUG] No existing day pass found for {} - creating and printing day pass ticket with 2 TND", license_plate);
         println!("🎯 [DAY PASS DEBUG] Using destination from queue: {}", queue_destination);
         
-        // Print DAY PASS TICKET with hardcoded 2 TND (for people without valid day pass)
-        let day_pass_ticket_number = format!("DAYPASS-{}", chrono::Utc::now().timestamp_millis());
-        let day_pass_ticket = serde_json::json!({
-            "ticketNumber": day_pass_ticket_number,
-            "licensePlate": license_plate,
-            "destinationName": queue_destination,
-            "amount": 2.0, // Hardcoded 2 TND
-            "purchaseDate": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
-            "validFor": now_tunisian.format("%Y-%m-%d").to_string(),
-            "staffName": staff_info.as_ref().map(|s| format!("{} {}", s.firstName, s.lastName)).unwrap_or_else(|| "Staff".to_string()),
-            "staffId": staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string())
-        }).to_string();
+        // First, get the vehicle ID for the license plate
+        let vehicle_row = client.query_opt(
+            "SELECT id FROM vehicles WHERE license_plate = $1",
+            &[&license_plate]
+        ).await.map_err(|e| e.to_string())?;
         
-        println!("🎫 [DAY PASS DEBUG] Generated day pass ticket data (2 TND): {}", day_pass_ticket);
-        
-        let print_result = printer_clone.print_day_pass_ticket(day_pass_ticket, None).await;
-        match print_result {
-            Ok(result) => {
-                println!("✅ [DAY PASS DEBUG] Day pass ticket printed successfully for {}: {}", license_plate, result);
-            },
-            Err(e) => {
-                println!("❌ [DAY PASS DEBUG] Failed to print day pass ticket for {}: {}", license_plate, e);
-                eprintln!("❌ [DAY PASS ERROR] Day pass ticket print failed for {}: {}", license_plate, e);
+        if let Some(row) = vehicle_row {
+            let vehicle_id: String = row.get("id");
+            
+            // Create the day pass in the database
+            let day_pass_id = uuid::Uuid::new_v4().to_string();
+            
+            // Ensure we use a valid staff ID - validate against database
+            let staff_id = if let Some(staff) = &staff_info {
+                // Verify the staff ID exists in the database
+                let staff_exists = client.query_opt(
+                    "SELECT id FROM staff WHERE id = $1",
+                    &[&staff.id]
+                ).await.map_err(|e| e.to_string())?;
+                
+                if staff_exists.is_some() {
+                    staff.id.clone()
+                } else {
+                    println!("⚠️ [DAY PASS DEBUG] Staff ID {} not found in database, using fallback", staff.id);
+                    "staff_1758995428363_2nhfegsve".to_string()
+                }
+            } else {
+                "staff_1758995428363_2nhfegsve".to_string()
+            };
+            
+            let final_price = 2.0; // Hardcoded 2 TND
+            
+            // Get current Tunisian time
+            let now_tunisian = chrono::Utc::now().with_timezone(&chrono_tz::Africa::Tunis);
+            let today_start = now_tunisian.date_naive().and_hms_opt(0, 0, 0).unwrap();
+            let today_end = now_tunisian.date_naive().and_hms_opt(23, 59, 59).unwrap();
+            
+            // Convert to UTC for database storage
+            let now_utc = now_tunisian.with_timezone(&chrono::Utc);
+            let today_start_utc = today_start.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
+            let today_end_utc = today_end.and_local_timezone(chrono_tz::Africa::Tunis).unwrap().with_timezone(&chrono::Utc);
+            
+            // Insert the day pass into the database
+            let insert_result = client.execute(
+                "INSERT INTO day_passes (id, vehicle_id, license_plate, price, purchase_date, valid_from, valid_until, is_active, is_expired, created_by, created_at, updated_at) 
+                 VALUES ($1,$2,$3,$4, $5 AT TIME ZONE 'Africa/Tunis', $6 AT TIME ZONE 'Africa/Tunis', $7 AT TIME ZONE 'Africa/Tunis', true, false, $8, $5 AT TIME ZONE 'Africa/Tunis', $5 AT TIME ZONE 'Africa/Tunis')",
+                &[&day_pass_id, &vehicle_id, &license_plate, &final_price, &now_utc, &today_start_utc, &today_end_utc, &staff_id]
+            ).await;
+            
+            match insert_result {
+                Ok(_) => {
+                    println!("✅ [DAY PASS DEBUG] Day pass database record created successfully for {}", license_plate);
+                },
+                Err(e) => {
+                    println!("❌ [DAY PASS DEBUG] Failed to create day pass database record for {}: {}", license_plate, e);
+                    eprintln!("❌ [DAY PASS ERROR] Database record creation failed for {}: {}", license_plate, e);
+                    return Err(format!("Failed to create day pass database record: {}", e));
+                }
             }
+            
+            // Print DAY PASS TICKET with hardcoded 2 TND (for people without valid day pass)
+            let day_pass_ticket_number = format!("DAYPASS-{}", chrono::Utc::now().timestamp_millis());
+            let day_pass_ticket = serde_json::json!({
+                "ticketNumber": day_pass_ticket_number,
+                "licensePlate": license_plate,
+                "destinationName": queue_destination,
+                "amount": 2.0, // Hardcoded 2 TND
+                "purchaseDate": now_tunisian.format("%Y-%m-%d %H:%M:%S").to_string(),
+                "validFor": now_tunisian.format("%Y-%m-%d").to_string(),
+                "staffName": staff_info.as_ref().map(|s| format!("{} {}", s.firstName, s.lastName)).unwrap_or_else(|| "Staff".to_string()),
+                "staffId": staff_info.as_ref().map(|s| s.id.clone()).unwrap_or_else(|| "SYSTEM".to_string())
+            }).to_string();
+            
+            println!("🎫 [DAY PASS DEBUG] Generated day pass ticket data (2 TND): {}", day_pass_ticket);
+            
+            let print_result = printer_clone.print_day_pass_ticket(day_pass_ticket, None).await;
+            match print_result {
+                Ok(result) => {
+                    println!("✅ [DAY PASS DEBUG] Day pass ticket printed successfully for {}: {}", license_plate, result);
+                },
+                Err(e) => {
+                    println!("❌ [DAY PASS DEBUG] Failed to print day pass ticket for {}: {}", license_plate, e);
+                    eprintln!("❌ [DAY PASS ERROR] Day pass ticket print failed for {}: {}", license_plate, e);
+                }
+            }
+        } else {
+            println!("❌ [DAY PASS DEBUG] Vehicle not found for license plate: {}", license_plate);
+            return Err(format!("Vehicle not found for license plate: {}", license_plate));
         }
     }
     
@@ -2997,25 +3061,24 @@ async fn db_purchase_day_pass(license_plate: String, vehicle_id: String, price: 
     
     // Create day pass with Tunisian time
     let day_pass_id = uuid::Uuid::new_v4().to_string();
-    let staff_id = created_by.unwrap_or_else(|| "SYSTEM".to_string());
+    let staff_id = created_by.unwrap_or_else(|| {
+        // Use the first available staff ID as fallback
+        "staff_1758995428363_2nhfegsve".to_string()
+    });
     let final_price = if price <= 0.0 { 2.0 } else { price };
 
     // Resolve staff name for printing
     let staff_name_for_print: String = {
-        if staff_id == "SYSTEM" {
-            "Staff".to_string()
+        let staff_row = client.query_opt(
+            "SELECT first_name, last_name FROM staff WHERE id = $1",
+            &[&staff_id]
+        ).await.map_err(|e| e.to_string())?;
+        if let Some(r) = staff_row {
+            let first: String = r.get("first_name");
+            let last: String = r.get("last_name");
+            format!("{} {}", first, last)
         } else {
-            let staff_row = client.query_opt(
-                "SELECT first_name, last_name FROM staff WHERE id = $1",
-                &[&staff_id]
-            ).await.map_err(|e| e.to_string())?;
-            if let Some(r) = staff_row {
-                let first: String = r.get("first_name");
-                let last: String = r.get("last_name");
-                format!("{} {}", first, last)
-            } else {
-                "Staff".to_string()
-            }
+            "Staff".to_string()
         }
     };
     
