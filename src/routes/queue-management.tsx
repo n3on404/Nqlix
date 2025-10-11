@@ -2347,7 +2347,7 @@ export default function QueueManagement() {
                               onConfirmExit={handleConfirmExit}
                               onEmergencyRemove={handleEmergencyRemove}
                               onPrintDayPass={handlePrintDayPass}
-                              hasRecentDayPass={vehiclesWithRecentDayPass.has(queue.licensePlate)}
+                              hasRecentDayPass={queue.licensePlate ? vehiclesWithRecentDayPass.has(queue.licensePlate) : false}
                               actionLoading={actionLoading}
                             />
                           ))}
