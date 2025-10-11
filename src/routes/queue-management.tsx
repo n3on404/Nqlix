@@ -20,6 +20,7 @@ import {
   ArrowUp,
   RotateCcw,
   Printer,
+  Ticket,
   
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
@@ -52,10 +53,12 @@ interface QueueItemProps {
   onRetryExitPass: (queue: any) => void;
   onConfirmExit: (queue: any) => void;
   onEmergencyRemove: (queue: any) => void;
+  onPrintDayPass: (queue: any) => void;
+  hasRecentDayPass: boolean;
   actionLoading: string | null;
 }
 
-function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, onEndTrip, onMoveToFront, onRetryExitPass, onConfirmExit, onEmergencyRemove, actionLoading }: QueueItemProps) {
+function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, onEndTrip, onMoveToFront, onRetryExitPass, onConfirmExit, onEmergencyRemove, onPrintDayPass, hasRecentDayPass, actionLoading }: QueueItemProps) {
   const basePrice = getBasePriceForDestination(queue.destinationName) ?? queue.basePrice;
   const hasBookedSeats = queue.availableSeats < queue.totalSeats;
 
@@ -244,6 +247,27 @@ function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestinati
               )}
             </Button>
           )}
+
+          {/* Day Pass Button - only show if vehicle has recently purchased day pass and is WAITING or LOADING */}
+          {hasRecentDayPass && (queue.status === 'WAITING' || queue.status === 'LOADING') && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="text-green-600 border-green-300 hover:bg-green-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPrintDayPass(queue);
+              }}
+              disabled={actionLoading === queue.licensePlate}
+              title="Imprimer le pass journalier (2 TND)"
+            >
+              {actionLoading === queue.licensePlate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Ticket className="h-4 w-4" />
+              )}
+            </Button>
+          )}
           
           <Button 
             variant="outline" 
@@ -319,7 +343,35 @@ export default function QueueManagement() {
   } = usePaymentNotifications();
   const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [actionLoading, setActionLoading] = useState<string | null>(null); // vehicle id or action
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [vehiclesWithRecentDayPass, setVehiclesWithRecentDayPass] = useState<Set<string>>(new Set());
+
+  // Check for recent day passes for all vehicles in queue
+  const checkRecentDayPasses = async () => {
+    try {
+      const allQueueItems = Object.values(queues).flat();
+      const dayPassChecks = allQueueItems.map(async (queue: any) => {
+        try {
+          const hasRecentDayPass = await dbClient.hasRecentlyPurchasedDayPass(queue.licensePlate);
+          return { licensePlate: queue.licensePlate, hasRecentDayPass };
+        } catch (error) {
+          console.error(`Error checking day pass for ${queue.licensePlate}:`, error);
+          return { licensePlate: queue.licensePlate, hasRecentDayPass: false };
+        }
+      });
+      
+      const results = await Promise.all(dayPassChecks);
+      const recentDayPassSet = new Set(
+        results
+          .filter(result => result.hasRecentDayPass)
+          .map(result => result.licensePlate)
+      );
+      
+      setVehiclesWithRecentDayPass(recentDayPassSet);
+    } catch (error) {
+      console.error('Error checking recent day passes:', error);
+    }
+  };
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshTimeout, setRefreshTimeout] = useState<NodeJS.Timeout | null>(null);
   const [dbOk, setDbOk] = useState<boolean | null>(null);
@@ -345,6 +397,11 @@ export default function QueueManagement() {
     // Execute lightweight refresh (summaries only) via QueueProvider.refreshQueues
     refreshQueues();
     setLastUpdated(new Date());
+
+    // Check for recent day passes after queue refresh
+    setTimeout(() => {
+      checkRecentDayPasses();
+    }, 500);
 
     // Clear refreshing state after a short delay
     const timeout = setTimeout(() => {
@@ -1443,6 +1500,43 @@ export default function QueueManagement() {
     }
   };
 
+  // Print day pass for vehicle
+  const handlePrintDayPass = async (queue: any) => {
+    const confirmed = window.confirm(
+      `Imprimer le pass journalier pour ${queue.licensePlate} ?\n\n` +
+      `Cette action va:\n` +
+      `• Imprimer un nouveau pass journalier (2 TND)\n` +
+      `• Le pass sera valide pour toutes les destinations\n\n` +
+      `Confirmer l'impression ?`
+    );
+    
+    if (!confirmed) return;
+    
+    setActionLoading(queue.licensePlate);
+    
+    try {
+      // Call day pass printing function
+      const result = await dbClient.printDayPassForVehicle(queue.licensePlate);
+      
+      addNotification({
+        type: 'success',
+        title: 'Pass journalier imprimé',
+        message: result,
+        duration: 4000
+      });
+      
+    } catch (error: any) {
+      addNotification({
+        type: 'error',
+        title: 'Échec de l\'impression',
+        message: `Impossible d'imprimer le pass journalier: ${error?.message || 'Erreur inconnue'}`,
+        duration: 4000
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleUpdateVehicleStatus = async (licensePlate: string, status: string) => {
     setActionLoading(licensePlate + status);
     const result = await updateVehicleStatus(licensePlate, status);
@@ -2252,6 +2346,8 @@ export default function QueueManagement() {
                               onRetryExitPass={handleRetryExitPass}
                               onConfirmExit={handleConfirmExit}
                               onEmergencyRemove={handleEmergencyRemove}
+                              onPrintDayPass={handlePrintDayPass}
+                              hasRecentDayPass={vehiclesWithRecentDayPass.has(queue.licensePlate)}
                               actionLoading={actionLoading}
                             />
                           ))}

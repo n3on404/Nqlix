@@ -89,11 +89,11 @@ export const COMMON_SHORTCUTS = {
   },
   F2: {
     key: 'F2',
-    description: 'Aller au pass journalier',
+    description: 'Aller à la gestion de file',
     category: 'navigation' as const,
     action: () => {
       if (keyboardShortcuts.navigate) {
-        keyboardShortcuts.navigate('/day-pass');
+        keyboardShortcuts.navigate('/queue-management');
       }
     }
   },
@@ -129,23 +129,6 @@ export const COMMON_SHORTCUTS = {
           const addButton = document.querySelector('[data-shortcut="add-vehicle"]') as HTMLButtonElement;
           if (addButton) {
             addButton.click();
-          }
-        }, 100);
-      }
-    }
-  },
-  F7: {
-    key: 'F7',
-    description: 'Pass journalier + Acheter pass',
-    category: 'modal' as const,
-    action: () => {
-      if (keyboardShortcuts.navigate) {
-        keyboardShortcuts.navigate('/day-pass');
-        // Trigger first purchase button after navigation
-        setTimeout(() => {
-          const purchaseButton = document.querySelector('[data-shortcut="purchase-day-pass"]') as HTMLButtonElement;
-          if (purchaseButton) {
-            purchaseButton.click();
           }
         }, 100);
       }

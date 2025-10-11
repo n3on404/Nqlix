@@ -205,6 +205,16 @@ export const dbClient = {
     return invoke<{cancelledBookings: number, totalRefund: number, message: string}>('db_emergency_remove_vehicle', { licensePlate });
   },
 
+  // Check if vehicle has a recently purchased day pass (within last 10 minutes)
+  async hasRecentlyPurchasedDayPass(licensePlate: string) {
+    return invoke<boolean>('db_has_recently_purchased_day_pass', { licensePlate });
+  },
+
+  // Print day pass for vehicle in queue
+  async printDayPassForVehicle(licensePlate: string) {
+    return invoke<string>('db_print_day_pass_for_vehicle', { licensePlate });
+  },
+
   // Realtime functionality
   async startRealtimeListening() {
     return invoke<void>('start_realtime_listening');

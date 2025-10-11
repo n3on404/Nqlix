@@ -54,7 +54,6 @@ export default function Layout() {
   // Different nav items based on mode
   const regularNavItems = [
     { path: "/", icon: UserPlus, label: "Réservation Principale" },
-    { path: "/day-pass", icon: Ticket, label: "Pass Journalier" },
     { path: "/queue-management", icon: Users, label: "Gestion de File" },
   ];
 

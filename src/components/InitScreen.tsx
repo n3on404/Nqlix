@@ -28,7 +28,7 @@ export const InitScreen: React.FC<InitScreenProps> = ({ onInitComplete }) => {
   const [isConnecting, setIsConnecting] = useState(true);
   
   // Fixed server URL - no configuration needed
-  const FIXED_SERVER_URL = 'http://127.0.0.1:3001';
+  const FIXED_SERVER_URL = 'http://192.168.192.100:3001';
   
   // Load app version on component mount
   useEffect(() => {

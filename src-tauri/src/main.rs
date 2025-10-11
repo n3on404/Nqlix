@@ -35,7 +35,7 @@ static DB_POOL: Lazy<Pool> = Lazy::new(|| {
     // load .env if exists
     let _ = dotenv();
     let db_url = stdenv::var("DATABASE_URL").unwrap_or_else(|_|
-        "postgresql://ivan:Lost2409@127.0.0.1:5432/louaj_node".to_string()
+        "postgresql://ivan:Lost2409@192.168.192.100:5432/louaj_node".to_string()
     );
 
     let mut cfg = deadpool_postgres::Config::new();
@@ -1725,11 +1725,11 @@ async fn proxy_localnode(
                 if let Some(server) = discovery_result.servers.first() {
                     server.url.clone()
                 } else {
-                    "http://127.0.0.1:3001".to_string()
+                    "http://192.168.192.100:3001".to_string()
                 }
             }
             Err(_) => {
-                "http://127.0.0.1:3001".to_string()
+                "http://192.168.192.100:3001".to_string()
             }
         }
     };
@@ -3574,7 +3574,7 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     // HARDCODED: Use the ethernet IP for testing
-    let hardcoded_ip = "127.0.0.1".parse::<IpAddr>()?;
+    let hardcoded_ip = "192.168.192.100".parse::<IpAddr>()?;
     println!("🔍 Using hardcoded ethernet IP: {}", hardcoded_ip);
     return Ok(hardcoded_ip);
     
@@ -3627,7 +3627,7 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
             let mut other_ips = Vec::new();
             
             for line in output_str.lines() {
-                if line.contains("inet ") && !line.contains("127.0.0.1") {
+                if line.contains("inet ") && !line.contains("192.168.192.100") {
                     // Check if this is an ethernet interface
                     let is_ethernet = line.contains("eth") || line.contains("enp") || line.contains("ens");
                     
@@ -4173,6 +4173,141 @@ async fn db_emergency_remove_vehicle(license_plate: String) -> Result<serde_json
     }))
 }
 
+// Check if vehicle has a recently purchased day pass (within last 10 minutes)
+#[tauri::command]
+async fn db_has_recently_purchased_day_pass(license_plate: String) -> Result<bool, String> {
+    println!("🔍 Checking for recently purchased day pass for vehicle: {}", license_plate);
+    
+    let client = DB_POOL.get().await.map_err(|e| format!("Database pool error: {}", e))?;
+    
+    // Check if there's a day pass created within the last 10 minutes
+    let row = client.query_opt(
+        "SELECT id FROM day_passes 
+         WHERE license_plate = $1 
+         AND created_at > NOW() - INTERVAL '10 minutes'
+         AND is_active = true
+         ORDER BY created_at DESC 
+         LIMIT 1",
+        &[&license_plate]
+    )
+    .await
+    .map_err(|e| format!("Error checking recent day pass: {}", e))?;
+    
+    let has_recent_day_pass = row.is_some();
+    println!("📋 Vehicle {} has recent day pass: {}", license_plate, has_recent_day_pass);
+    
+    Ok(has_recent_day_pass)
+}
+
+// Print day pass for vehicle in queue
+#[tauri::command]
+async fn db_print_day_pass_for_vehicle(license_plate: String) -> Result<String, String> {
+    println!("🎫 Printing day pass for vehicle: {}", license_plate);
+    
+    let mut client = DB_POOL.get().await.map_err(|e| format!("Database pool error: {}", e))?;
+    let tx = client.build_transaction().start().await.map_err(|e| format!("Transaction start error: {}", e))?;
+    
+    // Get the most recent day pass for this vehicle
+    let day_pass_row = tx.query_opt(
+        "SELECT id, price, created_at, created_by 
+         FROM day_passes 
+         WHERE license_plate = $1 
+         AND created_at > NOW() - INTERVAL '10 minutes'
+         AND is_active = true
+         ORDER BY created_at DESC 
+         LIMIT 1",
+        &[&license_plate]
+    )
+    .await
+    .map_err(|e| format!("Error fetching recent day pass: {}", e))?
+    .ok_or("No recent day pass found for this vehicle")?;
+    
+    let day_pass_id: String = day_pass_row.get("id");
+    let price: f64 = day_pass_row.get("price");
+    let created_by: String = day_pass_row.get("created_by");
+    let created_at: chrono::NaiveDateTime = day_pass_row.get("created_at");
+    
+    // Convert NaiveDateTime to UTC DateTime
+    let created_at_utc = chrono::Utc.from_utc_datetime(&created_at);
+    
+    // Get the queued destination for this vehicle
+    let queue_row = tx.query_opt(
+        "SELECT destination_name FROM vehicle_queue 
+         WHERE license_plate = $1 
+         ORDER BY created_at DESC 
+         LIMIT 1",
+        &[&license_plate]
+    )
+    .await
+    .map_err(|e| format!("Error fetching queue destination: {}", e))?;
+    
+    let destination_name = if let Some(row) = queue_row {
+        row.get::<_, String>("destination_name")
+    } else {
+        "Toutes destinations".to_string()
+    };
+    
+    // Convert purchase date to Tunis timezone
+    let tunis_tz = chrono_tz::Africa::Tunis;
+    let purchase_date_tunis = created_at_utc.with_timezone(&tunis_tz);
+    let purchase_date_formatted = purchase_date_tunis.format("%d/%m/%Y %H:%M").to_string();
+    
+    println!("📋 Found day pass {} with price {} TND", day_pass_id, price);
+    println!("🎯 Queue destination: {}", destination_name);
+    println!("📅 Purchase date (Tunis): {}", purchase_date_formatted);
+    
+    // Get staff information for printing
+    let staff_row = tx.query_opt(
+        "SELECT first_name, last_name FROM staff WHERE id = $1",
+        &[&created_by]
+    )
+    .await
+    .map_err(|e| format!("Error fetching staff info: {}", e))?;
+    
+    let staff_name = if let Some(row) = staff_row {
+        format!("{} {}", row.get::<_, String>("first_name"), row.get::<_, String>("last_name"))
+    } else {
+        "Staff".to_string()
+    };
+    
+    // Prepare day pass ticket data for printing
+    let day_pass_ticket_data = serde_json::json!({
+        "licensePlate": license_plate,
+        "amount": price,
+        "staffName": staff_name,
+        "destinationName": destination_name,
+        "purchaseDate": purchase_date_formatted,
+        "validFor": "Toutes destinations",
+        "dayPassId": day_pass_id
+    });
+    
+    println!("🎫 Day pass ticket data: {}", day_pass_ticket_data);
+    
+    tx.commit().await.map_err(|e| format!("Commit error: {}", e))?;
+    
+    // Print the day pass ticket
+    let printer = PRINTER_SERVICE.clone();
+    let printer_clone = {
+        let guard = printer.lock().map_err(|e| e.to_string())?;
+        guard.clone()
+    };
+    
+    let print_result = printer_clone.print_day_pass_ticket(day_pass_ticket_data.to_string(), Some(staff_name.clone())).await;
+    
+    match print_result {
+        Ok(result) => {
+            println!("✅ Day pass printed successfully for {}: {}", license_plate, result);
+            Ok(format!("Pass journalier imprimé avec succès pour {}", license_plate))
+        },
+        Err(e) => {
+            println!("❌ Failed to print day pass for {}: {}", license_plate, e);
+            println!("🔍 Debug info - Ticket data: {}", day_pass_ticket_data);
+            println!("🔍 Debug info - Staff name: {}", staff_name);
+            Err(format!("Erreur d'impression du pass journalier: {}", e))
+        }
+    }
+}
+
 fn main() {
     let system_tray = create_system_tray();
     
@@ -4276,6 +4411,8 @@ fn main() {
             debug_printer_status,
             db_transfer_seats_and_remove_vehicle,
             db_emergency_remove_vehicle,
+            db_has_recently_purchased_day_pass,
+            db_print_day_pass_for_vehicle,
             db_get_vehicle_activity_72h,
             open_vehicle_window,
             // Realtime commands

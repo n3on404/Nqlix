@@ -15,7 +15,6 @@ import OvernightQueueManagement from "./routes/overnight-queue";
 import RoutesPage from "./routes/routes";
 import SupervisorVehicleManagement from './routes/supervisor-vehicle-management';
 import DriverTicketsPage from './routes/driver-tickets';
-import DayPassPage from './routes/day-pass';
 import PreviewTicket from './routes/preview-ticket';
 import LogoShowcasePage from './routes/logo-showcase';
 import Dashboard from './routes/dashboard';
@@ -158,10 +157,6 @@ const router = createBrowserRouter([
       {
         path: "/driver-tickets",
         element: <DriverTicketsPage />,
-      },
-      {
-        path: "/day-pass",
-        element: <DayPassPage />,
       },
       {
         path: "/preview-ticket",

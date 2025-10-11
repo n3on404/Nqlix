@@ -61,7 +61,7 @@ impl RealtimeService {
     pub fn new() -> Self {
         let _ = dotenv();
         let db_url = stdenv::var("DATABASE_URL").unwrap_or_else(|_|
-            "postgresql://ivan:Lost2409@127.0.0.1:5432/louaj_node".to_string()
+            "postgresql://ivan:Lost2409@192.168.192.100:5432/louaj_node".to_string()
         );
 
         let mut cfg = deadpool_postgres::Config::new();
@@ -118,7 +118,7 @@ impl RealtimeService {
         // Create a dedicated connection for LISTEN/NOTIFY
         let _ = dotenv();
         let db_url = stdenv::var("DATABASE_URL").unwrap_or_else(|_|
-            "postgresql://ivan:Lost2409@127.0.0.1:5432/louaj_node".to_string()
+            "postgresql://ivan:Lost2409@192.168.192.100:5432/louaj_node".to_string()
         );
 
         let (client, connection) = tokio_postgres::connect(&db_url, NoTls).await.map_err(|e| e.to_string())?;
