@@ -739,6 +739,11 @@ Date: ${paymentData.date}
       ticketContent += `Départ estimé: ${date.toLocaleString('fr-FR')}\n`;
     }
     
+    // Staff information
+    if (booking.staffName) {
+      ticketContent += `Agent: ${booking.staffName}\n`;
+    }
+    
     console.log('📄 Formatted main ticket content:', ticketContent);
     return ticketContent;
   }
@@ -877,7 +882,8 @@ Date: ${paymentData.date}
       amount: dayPassData.amount ? dayPassData.amount.toFixed(2) : '0.00',
       purchaseDate: purchaseDate.toLocaleString('fr-FR'),
       validFor: purchaseDate.toLocaleDateString('fr-FR'),
-      destinationName: dayPassData.destinationName || 'Toutes destinations'
+      destinationName: dayPassData.destinationName || 'Toutes destinations',
+      staffName: dayPassData.staffName || 'Staff'
     };
     
     return JSON.stringify(ticketData);
@@ -908,7 +914,8 @@ Date: ${paymentData.date}
       previousExitTime: exitPassData.previousExitTime ? new Date(exitPassData.previousExitTime).toLocaleString('fr-FR') : null,
       basePricePerSeat: exitPassData.basePricePerSeat || 0,
       totalSeats: exitPassData.totalSeats || 8,
-      totalBasePrice: exitPassData.totalBasePrice || 0
+      totalBasePrice: exitPassData.totalBasePrice || 0,
+      staffName: exitPassData.staffName || 'Staff'
     };
     
     console.log('📄 Formatted exit pass ticket data:', ticketData);

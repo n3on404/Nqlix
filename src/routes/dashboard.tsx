@@ -7,6 +7,7 @@ import { useDashboard } from '../context/DashboardProvider';
 import { useNotifications } from '../context/NotificationProvider';
 import { usePaymentNotifications } from '../components/NotificationToast';
 import { useSupervisorMode } from "../context/SupervisorModeProvider";
+import { Navigate } from 'react-router-dom';
 import { 
   DollarSign, TrendingUp, BarChart3, MapPin, User, Clock, RefreshCw, Car, Users, 
   Calendar, Bell, Loader2, AlertCircle, CheckCircle, XCircle, Activity, 
@@ -96,6 +97,11 @@ export default function Dashboard() {
 
   if (!currentStaff) {
     return <div>Loading...</div>;
+  }
+
+  // Redirect regular staff to main booking page
+  if (!isSupervisorMode || (!isSupervisor && !isAdmin)) {
+    return <Navigate to="/" replace />;
   }
 
   if (isSupervisorMode && (isSupervisor || isAdmin)) {

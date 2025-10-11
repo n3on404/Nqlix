@@ -18,6 +18,8 @@ import {
   X,
   MapPin,
   ArrowUp,
+  RotateCcw,
+  Printer,
   
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
@@ -47,10 +49,13 @@ interface QueueItemProps {
   onExitQueue: (licensePlate: string) => void;
   onEndTrip: (queueId: string, licensePlate: string, availableSeats: number, totalSeats: number) => void;
   onMoveToFront: (queueId: string, destinationId: string) => void;
+  onRetryExitPass: (queue: any) => void;
+  onConfirmExit: (queue: any) => void;
+  onEmergencyRemove: (queue: any) => void;
   actionLoading: string | null;
 }
 
-function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, onEndTrip, onMoveToFront, actionLoading }: QueueItemProps) {
+function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestination, onVehicleClick, onExitQueue, onEndTrip, onMoveToFront, onRetryExitPass, onConfirmExit, onEmergencyRemove, actionLoading }: QueueItemProps) {
   const basePrice = getBasePriceForDestination(queue.destinationName) ?? queue.basePrice;
   const hasBookedSeats = queue.availableSeats < queue.totalSeats;
 
@@ -156,8 +161,8 @@ function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestinati
             </Button>
           )}
 
-          {/* End Trip Button - only show if vehicle has booked seats */}
-          {hasBookedSeats && (
+          {/* End Trip Button - only show if vehicle has booked seats but not READY */}
+          {hasBookedSeats && queue.status !== 'READY' && (
             <Button 
               variant="outline" 
               size="sm"
@@ -173,6 +178,69 @@ function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestinati
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <CheckCircle className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+
+          {/* Retry Exit Pass Button - only show if vehicle is READY (fully booked) */}
+          {queue.status === 'READY' && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="text-orange-600 border-orange-300 hover:bg-orange-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetryExitPass(queue);
+              }}
+              disabled={actionLoading === queue.licensePlate}
+              title="Réessayer l'impression du ticket de sortie"
+            >
+              {actionLoading === queue.licensePlate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RotateCcw className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+
+          {/* Confirm Exit Button - only show if vehicle is READY (fully booked) */}
+          {queue.status === 'READY' && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="text-blue-600 border-blue-300 hover:bg-blue-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onConfirmExit(queue);
+              }}
+              disabled={actionLoading === queue.licensePlate}
+              title="Confirmer la sortie et supprimer de la file"
+            >
+              {actionLoading === queue.licensePlate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Printer className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+
+          {/* Emergency Remove Button - only show if vehicle has booked seats but not READY */}
+          {hasBookedSeats && queue.status !== 'READY' && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="text-red-600 border-red-300 hover:bg-red-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEmergencyRemove(queue);
+              }}
+              disabled={actionLoading === queue.licensePlate}
+              title="Suppression d'urgence - annule toutes les réservations"
+            >
+              {actionLoading === queue.licensePlate ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <AlertCircle className="h-4 w-4" />
               )}
             </Button>
           )}
@@ -1242,6 +1310,139 @@ export default function QueueManagement() {
     }
   };
 
+  // Retry exit pass printing for READY vehicles
+  const handleRetryExitPass = async (queue: any) => {
+    setActionLoading(queue.licensePlate);
+    
+    try {
+      // Get base price for the destination
+      const basePricePerSeat = getBasePriceForDestination(queue.destinationName) || 2.0;
+      const totalBasePrice = basePricePerSeat * queue.totalSeats;
+      
+      // Prepare exit pass data
+      const thermalExitPassData = {
+        licensePlate: queue.licensePlate,
+        destinationName: queue.destinationName,
+        previousLicensePlate: null, // Could be enhanced to get previous vehicle
+        previousExitTime: null,
+        currentExitTime: new Date().toISOString(),
+        totalSeats: queue.totalSeats,
+        basePricePerSeat: basePricePerSeat,
+        totalBasePrice: totalBasePrice,
+        staffName: currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'Staff'
+      };
+      
+      // Print exit pass
+      const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
+      const exitPassTicketData = thermalPrinter.formatExitPassTicketData(thermalExitPassData);
+      await thermalPrinter.printExitPassTicket(exitPassTicketData, staffName);
+      
+      addNotification({
+        type: 'success',
+        title: 'Ticket de sortie réimprimé',
+        message: `Le ticket de sortie pour ${queue.licensePlate} a été réimprimé avec succès`,
+        duration: 4000
+      });
+      
+    } catch (error: any) {
+      addNotification({
+        type: 'error',
+        title: 'Échec de l\'impression',
+        message: `Impossible de réimprimer le ticket de sortie: ${error?.message || 'Erreur inconnue'}`,
+        duration: 4000
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Confirm exit and remove vehicle from queue
+  const handleConfirmExit = async (queue: any) => {
+    const confirmed = window.confirm(
+      `Confirmer la sortie de ${queue.licensePlate} ?\n\n` +
+      `Cette action va:\n` +
+      `• Supprimer définitivement le véhicule de la file\n` +
+      `• Considérer que le ticket de sortie a été imprimé\n` +
+      `• Libérer la position dans la file d'attente\n\n` +
+      `Êtes-vous sûr de vouloir continuer ?`
+    );
+    
+    if (!confirmed) return;
+    
+    setActionLoading(queue.licensePlate);
+    
+    try {
+      // Remove vehicle from queue
+      const result = await dbClient.exitQueue(queue.licensePlate);
+      
+      addNotification({
+        type: 'success',
+        title: 'Véhicule retiré',
+        message: `${queue.licensePlate} a été retiré de la file d'attente`,
+        duration: 4000
+      });
+      
+      // Refresh the queue to show updated data
+      debouncedRefreshQueues();
+      
+    } catch (error: any) {
+      addNotification({
+        type: 'error',
+        title: 'Échec de la suppression',
+        message: `Impossible de retirer le véhicule: ${error?.message || 'Erreur inconnue'}`,
+        duration: 4000
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Emergency remove vehicle with booked seats (cancel all bookings)
+  const handleEmergencyRemove = async (queue: any) => {
+    const bookedSeats = queue.totalSeats - queue.availableSeats;
+    
+    const confirmed = window.confirm(
+      `🚨 SUPPRESSION D'URGENCE 🚨\n\n` +
+      `Véhicule: ${queue.licensePlate}\n` +
+      `Sièges réservés: ${bookedSeats}\n\n` +
+      `Cette action va:\n` +
+      `• Supprimer le véhicule de la file\n` +
+      `• ANNULER toutes les réservations\n` +
+      `• Calculer le remboursement total\n\n` +
+      `⚠️ Cette action est IRRÉVERSIBLE!\n\n` +
+      `Confirmer la suppression d'urgence ?`
+    );
+    
+    if (!confirmed) return;
+    
+    setActionLoading(queue.licensePlate);
+    
+    try {
+      // Call emergency removal function
+      const result = await dbClient.emergencyRemoveVehicle(queue.licensePlate);
+      
+      addNotification({
+        type: 'success',
+        title: 'Véhicule supprimé d\'urgence',
+        message: `${queue.licensePlate} supprimé - ${result.cancelledBookings} réservations annulées - Remboursement: ${result.totalRefund.toFixed(3)} TND`,
+        duration: 6000
+      });
+      
+      // Refresh the queue to show updated data
+      debouncedRefreshQueues();
+      
+    } catch (error: any) {
+      addNotification({
+        type: 'error',
+        title: 'Échec de la suppression d\'urgence',
+        message: `Impossible de supprimer le véhicule: ${error?.message || 'Erreur inconnue'}`,
+        duration: 4000
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleUpdateVehicleStatus = async (licensePlate: string, status: string) => {
     setActionLoading(licensePlate + status);
     const result = await updateVehicleStatus(licensePlate, status);
@@ -2048,6 +2249,9 @@ export default function QueueManagement() {
                               onExitQueue={handleExitQueue}
                               onEndTrip={handleEndTrip}
                               onMoveToFront={handleMoveToFront}
+                              onRetryExitPass={handleRetryExitPass}
+                              onConfirmExit={handleConfirmExit}
+                              onEmergencyRemove={handleEmergencyRemove}
                               actionLoading={actionLoading}
                             />
                           ))}

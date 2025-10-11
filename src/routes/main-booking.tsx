@@ -32,7 +32,7 @@ import {
   Keyboard
 } from 'lucide-react';
 import api from '../lib/api';
-import { dbClient } from '../services/dbClient';
+import { dbClient, BookingUpdateEvent, QueueUpdateEvent } from '../services/dbClient';
 import { useMQTT } from '../lib/useMQTT';
 import { usePaymentNotifications } from '../components/NotificationToast';
 import { TicketPrintout } from '../components/TicketPrintout';
@@ -96,6 +96,8 @@ export default function MainBooking() {
   const [ticketsPrinted, setTicketsPrinted] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [basePrice, setBasePrice] = useState<number>(0);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [lastUpdateTime, setLastUpdateTime] = useState<string>('');
   
   // Track current destination ID to maintain focus after refresh
   const [currentDestinationId, setCurrentDestinationId] = useState<string | null>(null);
@@ -160,7 +162,6 @@ export default function MainBooking() {
   
   // Test exit pass state
   const [showTestExitPass, setShowTestExitPass] = useState(false);
-  const [lastUpdateTime, setLastUpdateTime] = useState(new Date());
   const [dbOk, setDbOk] = useState<boolean | null>(null);
   
   // Helper functions
@@ -369,7 +370,8 @@ export default function MainBooking() {
         currentExitTime: new Date().toISOString(),
         totalSeats: vehicle.totalSeats || 8,
         basePricePerSeat: basePricePerSeat,
-        totalBasePrice: totalBasePrice
+        totalBasePrice: totalBasePrice,
+        staffName: currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'Staff'
       };
       
       // Print exit pass automatically
@@ -454,7 +456,8 @@ export default function MainBooking() {
         currentExitTime: new Date().toISOString(),
         totalSeats: exitPassVehicleData.totalSeats,
         basePricePerSeat: basePricePerSeat,
-        totalBasePrice: totalBasePrice
+        totalBasePrice: totalBasePrice,
+        staffName: currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'Staff'
       };
       
       const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
@@ -621,7 +624,7 @@ export default function MainBooking() {
           delegationAr: d.delegationAr,
         }));
         setDestinations(availableDestinations);
-        setLastUpdateTime(new Date());
+        setLastUpdateTime(new Date().toLocaleTimeString());
         console.log(`📍 Fetched ${availableDestinations.length} available destinations`);
         
         // Restore previous selection or auto-select first destination
@@ -800,6 +803,47 @@ export default function MainBooking() {
     fetchDestinations();
     fetchRoutes();
 
+    // Start realtime listening
+    const initializeRealtime = async () => {
+      try {
+        await dbClient.startRealtimeListening();
+        setRealtimeConnected(true);
+        console.log('✅ Realtime listening started');
+      } catch (error) {
+        console.error('❌ Failed to start realtime listening:', error);
+        setRealtimeConnected(false);
+      }
+    };
+
+    initializeRealtime();
+
+    // Set up realtime event listeners
+    const bookingUpdateUnlisten = dbClient.onBookingUpdate((event: BookingUpdateEvent) => {
+      console.log('📊 Booking update received:', event);
+      setLastUpdateTime(new Date().toLocaleTimeString());
+      
+      // Update destinations if this affects the current destination
+      if (selectedDestination && event.destination_id === selectedDestination.destinationId) {
+        fetchAvailableSeats(selectedDestination.destinationId);
+        // Update the destination in the list
+        setDestinations(prev => prev.map(dest => 
+          dest.destinationId === event.destination_id 
+            ? { ...dest, totalAvailableSeats: event.available_seats, vehicleCount: event.vehicle_count }
+            : dest
+        ));
+      }
+    });
+
+    const queueUpdateUnlisten = dbClient.onQueueUpdate((event: QueueUpdateEvent) => {
+      console.log('🚗 Queue update received:', event);
+      setLastUpdateTime(new Date().toLocaleTimeString());
+      
+      // Refresh queue data if this affects the current destination
+      if (selectedDestination && event.destination_id === selectedDestination.destinationId) {
+        fetchAvailableSeats(selectedDestination.destinationId);
+      }
+    });
+
     // Reduced refresh interval from 15s to 30s to improve performance
     const refreshInterval = setInterval(() => {
       debouncedFetchDestinations(1000); // Debounce the refresh
@@ -810,6 +854,9 @@ export default function MainBooking() {
     return () => { 
       if (refreshInterval) clearInterval(refreshInterval as any);
       if (fetchDestinationsTimeout) clearTimeout(fetchDestinationsTimeout);
+      bookingUpdateUnlisten.then(unlisten => unlisten());
+      queueUpdateUnlisten.then(unlisten => unlisten());
+      dbClient.stopRealtimeListening().catch(console.error);
     };
   }, []); // Removed dependencies to prevent unnecessary re-runs
 
@@ -1539,7 +1586,10 @@ export default function MainBooking() {
                 <div className={`w-2 h-2 rounded-full ${dbOk === false ? 'bg-red-500' : 'bg-green-500'}`}></div>
                 <span>DB {dbOk === false ? 'Fail' : 'OK'}</span>
                 <span>•</span>
-                <span>Dernière mise à jour: {lastUpdateTime.toLocaleTimeString()}</span>
+                <div className={`w-2 h-2 rounded-full ${realtimeConnected ? 'bg-blue-500' : 'bg-gray-400'}`}></div>
+                <span>Temps réel {realtimeConnected ? 'ON' : 'OFF'}</span>
+                <span>•</span>
+                <span>Dernière mise à jour: {lastUpdateTime || 'Jamais'}</span>
               </div>
             </div>
             

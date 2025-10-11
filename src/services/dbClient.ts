@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/tauri';
+import { listen } from '@tauri-apps/api/event';
 
 export interface QueueSummaryDto {
   destinationId: string;
@@ -198,6 +199,43 @@ export const dbClient = {
   async transferSeatsAndRemoveVehicle(licensePlate: string, destinationId: string) {
     return invoke<string>('db_transfer_seats_and_remove_vehicle', { licensePlate, destinationId });
   },
+
+  // Emergency remove vehicle with booked seats (cancel all bookings)
+  async emergencyRemoveVehicle(licensePlate: string) {
+    return invoke<{cancelledBookings: number, totalRefund: number, message: string}>('db_emergency_remove_vehicle', { licensePlate });
+  },
+
+  // Realtime functionality
+  async startRealtimeListening() {
+    return invoke<void>('start_realtime_listening');
+  },
+
+  async stopRealtimeListening() {
+    return invoke<void>('stop_realtime_listening');
+  },
+
+  async getRealtimeStatus() {
+    return invoke<boolean>('get_realtime_status');
+  },
+
+  // Event listeners
+  onRealtimeEvent(callback: (event: RealtimeEvent) => void) {
+    return listen<RealtimeEvent>('realtime-event', (event) => {
+      callback(event.payload);
+    });
+  },
+
+  onBookingUpdate(callback: (event: BookingUpdateEvent) => void) {
+    return listen<BookingUpdateEvent>('booking-update', (event) => {
+      callback(event.payload);
+    });
+  },
+
+  onQueueUpdate(callback: (event: QueueUpdateEvent) => void) {
+    return listen<QueueUpdateEvent>('queue-update', (event) => {
+      callback(event.payload);
+    });
+  }
 };
 
 // Report interfaces
@@ -290,5 +328,39 @@ export interface VehicleQueueStatusDto {
   totalSeats: number;
   basePrice: number;
   enteredAt: string;
+}
+
+// Realtime event interfaces
+export interface RealtimeEvent {
+  event_type: string;
+  table: string;
+  id: string;
+  timestamp: string;
+  data?: any;
+}
+
+export interface BookingUpdateEvent {
+  event_type: string;
+  destination_id: string;
+  destination_name: string;
+  available_seats: number;
+  total_seats: number;
+  vehicle_count: number;
+  timestamp: string;
+}
+
+export interface QueueUpdateEvent {
+  event_type: string;
+  destination_id: string;
+  destination_name: string;
+  queue_changes: QueueChange[];
+  timestamp: string;
+}
+
+export interface QueueChange {
+  license_plate: string;
+  status: string;
+  available_seats: number;
+  queue_position: number;
 }
 

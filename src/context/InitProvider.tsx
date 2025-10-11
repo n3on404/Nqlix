@@ -57,13 +57,13 @@ export const InitProvider: React.FC<InitProviderProps> = ({ children }) => {
     authValid: false,
     printerConnected: false,
     appUpToDate: false,
-    localNodeUrl: 'http://192.168.192.100:3001' // Hardcoded to localhost
+    localNodeUrl: 'http://127.0.0.1:3001' // Hardcoded to localhost
   });
 
   // Initialize API with hardcoded localhost on startup
   useEffect(() => {
-    // Always use 192.168.192.100:3001 - hardcoded
-    api.setConfig({ baseUrl: 'http://192.168.192.100:3001/api' });
+    // Always use 127.0.0.1:3001 - hardcoded
+    api.setConfig({ baseUrl: 'http://127.0.0.1:3001/api' });
   }, []);
 
   const updateServerUrl = async (url: string): Promise<boolean> => {

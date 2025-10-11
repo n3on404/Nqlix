@@ -419,7 +419,7 @@ impl PrinterService {
         // Try to get staff from local node API
         // First, we need to get the current staff from the session
         // Since we can't access localStorage directly from Rust, we'll try to get it from the API
-        let base_url = "http://192.168.192.100:3001"; // Default local node URL
+        let base_url = "http://127.0.0.1:3001"; // Default local node URL
         
         // Try to get current staff from the API
         let response = client
@@ -765,11 +765,20 @@ impl PrinterService {
         }
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
-        // Use provided staff name or fallback
+        // Use provided staff name or extract from ticket data or fallback
         let staff_footer = if let Some(name) = staff_name {
             format!("Émis par: {}", name)
         } else {
-            "Émis par: Staff".to_string()
+            // Try to extract staff name from ticket data JSON
+            if let Ok(parsed_data) = serde_json::from_str::<serde_json::Value>(&ticket_data) {
+                if let Some(staff_name_from_data) = parsed_data.get("staffName").and_then(|v| v.as_str()) {
+                    format!("Émis par: {}", staff_name_from_data)
+                } else {
+                    "Émis par: Staff".to_string()
+                }
+            } else {
+                "Émis par: Staff".to_string()
+            }
         };
         let mut data: Vec<u8> = Vec::new();
         // Init & header
@@ -796,13 +805,37 @@ impl PrinterService {
         self.send_tcp_bytes(&printer, &data).await
     }
 
-    pub async fn print_talon(&self, talon_data: String, _staff_name: Option<String>) -> Result<String, String> {
+    pub async fn print_talon(&self, talon_data: String, staff_name: Option<String>) -> Result<String, String> {
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
+        
+        // Use provided staff name or extract from talon data or fallback
+        let staff_footer = if let Some(name) = staff_name {
+            format!("Émis par: {}", name)
+        } else {
+            // Try to extract staff name from talon data JSON
+            if let Ok(parsed_data) = serde_json::from_str::<serde_json::Value>(&talon_data) {
+                if let Some(staff_name_from_data) = parsed_data.get("staffName").and_then(|v| v.as_str()) {
+                    format!("Émis par: {}", staff_name_from_data)
+                } else {
+                    "Émis par: Staff".to_string()
+                }
+            } else {
+                "Émis par: Staff".to_string()
+            }
+        };
+        
         let mut data: Vec<u8> = Vec::new();
         data.extend_from_slice(&[0x1B, 0x40]); // init
         data.extend_from_slice(&[0x1B, 0x61, 0x00]); // left
         data.extend_from_slice(talon_data.as_bytes());
+        data.extend_from_slice(b"\n");
+        data.extend_from_slice(b"================================\n");
+        data.extend_from_slice(&[0x1B, 0x61, 0x02]); // right
+        data.extend_from_slice(format!("{}\n", staff_footer).as_bytes());
+        data.extend_from_slice(&[0x1B, 0x61, 0x01]); // center
+        let date = chrono::Local::now().format("%d/%m/%Y %H:%M:%S");
+        data.extend_from_slice(format!("Date: {}\n", date).as_bytes());
         data.extend_from_slice(b"\n\n\n"); // Feed paper before cut
         data.extend_from_slice(&[0x1D, 0x56, 0x00]); // cut
         self.send_tcp_bytes(&printer, &data).await
@@ -955,11 +988,20 @@ impl PrinterService {
         }
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
-        // Use provided staff name or fallback
+        // Use provided staff name or extract from ticket data or fallback
         let staff_footer = if let Some(name) = staff_name {
             format!("Émis par: {}", name)
         } else {
-            "Émis par: Staff".to_string()
+            // Try to extract staff name from ticket data JSON
+            if let Ok(parsed_data) = serde_json::from_str::<serde_json::Value>(&ticket_data) {
+                if let Some(staff_name_from_data) = parsed_data.get("staffName").and_then(|v| v.as_str()) {
+                    format!("Émis par: {}", staff_name_from_data)
+                } else {
+                    "Émis par: Staff".to_string()
+                }
+            } else {
+                "Émis par: Staff".to_string()
+            }
         };
         // parse
         let v: serde_json::Value = serde_json::from_str(&ticket_data).unwrap_or(serde_json::json!({}));
@@ -992,11 +1034,20 @@ impl PrinterService {
     pub async fn print_exit_pass_ticket(&self, ticket_data: String, staff_name: Option<String>) -> Result<String, String> {
         let printer = self.get_current_printer()?;
         let printer = printer.ok_or("No printer selected")?;
-        // Use provided staff name or fallback
+        // Use provided staff name or extract from ticket data or fallback
         let staff_footer = if let Some(name) = staff_name {
             format!("Émis par: {}", name)
         } else {
-            "Émis par: Staff".to_string()
+            // Try to extract staff name from ticket data JSON
+            if let Ok(parsed_data) = serde_json::from_str::<serde_json::Value>(&ticket_data) {
+                if let Some(staff_name_from_data) = parsed_data.get("staffName").and_then(|v| v.as_str()) {
+                    format!("Émis par: {}", staff_name_from_data)
+                } else {
+                    "Émis par: Staff".to_string()
+                }
+            } else {
+                "Émis par: Staff".to_string()
+            }
         };
         // parse
         let v: serde_json::Value = serde_json::from_str(&ticket_data).unwrap_or(serde_json::json!({}));

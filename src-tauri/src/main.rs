@@ -21,7 +21,9 @@ use crate::printer::StaffInfo;
 use chrono::TimeZone;
 
 mod printer;
+mod realtime;
 use printer::{PrinterService, PrinterConfig, PrintJob, PrinterStatus};
+use realtime::{start_realtime_listening, stop_realtime_listening, get_realtime_status};
 
 // WebSocket relay removed
 
@@ -33,7 +35,7 @@ static DB_POOL: Lazy<Pool> = Lazy::new(|| {
     // load .env if exists
     let _ = dotenv();
     let db_url = stdenv::var("DATABASE_URL").unwrap_or_else(|_|
-        "postgresql://ivan:Lost2409@192.168.192.100:5432/louaj_node".to_string()
+        "postgresql://ivan:Lost2409@127.0.0.1:5432/louaj_node".to_string()
     );
 
     let mut cfg = deadpool_postgres::Config::new();
@@ -826,6 +828,26 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
     let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
 
+    // Get staff name for display purposes
+    let staff_name = if let Some(staff_id) = &created_by {
+        let staff_row = tx.query_opt(
+            "SELECT first_name, last_name FROM staff WHERE id = $1",
+            &[staff_id]
+        ).await.map_err(|e| e.to_string())?;
+        
+        if let Some(row) = staff_row {
+            let first_name: String = row.get("first_name");
+            let last_name: String = row.get("last_name");
+            Some(format!("{} {}", first_name, last_name))
+        } else {
+            Some("Unknown Staff".to_string())
+        }
+    } else {
+        Some("System".to_string())
+    };
+    
+    println!("🎫 [BOOKING DEBUG] Staff name for display: {:?}", staff_name);
+
     let mut remaining = seats_requested;
     let mut bookings: Vec<serde_json::Value> = Vec::new();
     let mut total_amount: f64 = 0.0;
@@ -932,6 +954,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
             "destinationId": destination_id,
             "destinationName": destination_name,
             "vehicleCapacity": vehicle_capacity,
+            "staffName": staff_name.clone(),
+            "staffId": created_by.clone(),
         }));
 
         // Check if this vehicle became fully booked and needs exit pass
@@ -942,6 +966,11 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
         ).await.map_err(|e| e.to_string())?;
         let avail_after: i32 = row_after.get("available_seats");
         if avail_after == 0 {
+            // Update vehicle status to READY when fully booked
+            println!("🚌 [STATUS CHANGE] Changing vehicle {} from LOADING to READY (fully booked)", license_plate);
+            tx.execute("UPDATE vehicle_queue SET status = 'READY' WHERE id = $1", &[&qid])
+                .await.map_err(|e| e.to_string())?;
+            
             let destination_id_row: String = row_after.get("destination_id");
             let destination_name_row: String = row_after.get("destination_name");
             let vehicle_id_row: String = row_after.get("vehicle_id");
@@ -984,6 +1013,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
                 "vehicleCapacity": vehicle_capacity,
                 "basePrice": base_price,
                 "totalPrice": total_price,
+                "staffName": staff_name.clone(),
+                "staffId": created_by.clone(),
                 "previousVehicle": prev_exit_row.map(|r| serde_json::json!({
                     "licensePlate": r.get::<_, String>("license_plate"),
                     "exitTime": r.get::<_, String>("current_exit_time")
@@ -1064,6 +1095,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
                 "destinationId": destination_id,
                 "destinationName": destination_name,
                 "vehicleCapacity": vehicle_capacity,
+                "staffName": staff_name.clone(),
+                "staffId": created_by.clone(),
             }));
 
             remaining -= take;
@@ -1076,6 +1109,11 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
             ).await.map_err(|e| e.to_string())?;
             let avail_after: i32 = row_after.get("available_seats");
             if avail_after == 0 {
+                // Update vehicle status to READY when fully booked
+                println!("🚌 [STATUS CHANGE] Changing vehicle {} from LOADING to READY (fully booked)", license_plate);
+                tx.execute("UPDATE vehicle_queue SET status = 'READY' WHERE id = $1", &[&qid])
+                    .await.map_err(|e| e.to_string())?;
+                
                 let destination_id_row: String = row_after.get("destination_id");
                 let destination_name_row: String = row_after.get("destination_name");
                 let vehicle_id_row: String = row_after.get("vehicle_id");
@@ -1118,6 +1156,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
                     "vehicleCapacity": vehicle_capacity,
                     "basePrice": base_price,
                     "totalPrice": total_price,
+                    "staffName": staff_name.clone(),
+                    "staffId": created_by.clone(),
                     "previousVehicle": prev_exit_row.map(|r| serde_json::json!({
                         "licensePlate": r.get::<_, String>("license_plate"),
                         "exitTime": r.get::<_, String>("current_exit_time")
@@ -1685,11 +1725,11 @@ async fn proxy_localnode(
                 if let Some(server) = discovery_result.servers.first() {
                     server.url.clone()
                 } else {
-                    "http://192.168.192.100:3001".to_string()
+                    "http://127.0.0.1:3001".to_string()
                 }
             }
             Err(_) => {
-                "http://192.168.192.100:3001".to_string()
+                "http://127.0.0.1:3001".to_string()
             }
         }
     };
@@ -1999,7 +2039,15 @@ async fn print_booking_ticket(ticket_data: String, staff_name: Option<String>) -
     let seats_booked = booking_data["seatsBooked"].as_i64().unwrap_or(1) as i32;
     let total_amount = booking_data["totalAmount"].as_f64().unwrap_or(0.0);
     let verification_code = booking_data["verificationCode"].as_str().unwrap_or("");
-    let created_by = staff_name.as_ref().map(|s| s.as_str()).unwrap_or("SYSTEM");
+    
+    // Use staff name from JSON data if available, otherwise use provided staff_name parameter
+    let final_staff_name = booking_data["staffName"].as_str()
+        .or_else(|| staff_name.as_ref().map(|s| s.as_str()))
+        .unwrap_or("Staff");
+    
+    let created_by = booking_data["staffId"].as_str()
+        .or_else(|| staff_name.as_ref().map(|s| s.as_str()))
+        .unwrap_or("SYSTEM");
     
     println!("🎫 [BOOKING DEBUG] Extracted data - Queue ID: {}, Seats: {}, Amount: {}, Code: {}, Staff: {}", 
              queue_id, seats_booked, total_amount, verification_code, created_by);
@@ -2042,7 +2090,7 @@ async fn print_booking_ticket(ticket_data: String, staff_name: Option<String>) -
     };
     
     println!("🎫 [BOOKING DEBUG] Printing booking ticket...");
-    let print_result = printer_clone.print_booking_ticket(ticket_data, staff_name).await;
+    let print_result = printer_clone.print_booking_ticket(ticket_data, Some(final_staff_name.to_string())).await;
     
     match print_result {
         Ok(result) => {
@@ -3526,7 +3574,7 @@ async fn scan_ip(ip: &str, port: u16, client: &Client) -> Result<Option<Discover
 
 fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
     // HARDCODED: Use the ethernet IP for testing
-    let hardcoded_ip = "192.168.192.100".parse::<IpAddr>()?;
+    let hardcoded_ip = "127.0.0.1".parse::<IpAddr>()?;
     println!("🔍 Using hardcoded ethernet IP: {}", hardcoded_ip);
     return Ok(hardcoded_ip);
     
@@ -3579,7 +3627,7 @@ fn get_local_ip() -> Result<IpAddr, Box<dyn std::error::Error>> {
             let mut other_ips = Vec::new();
             
             for line in output_str.lines() {
-                if line.contains("inet ") && !line.contains("192.168.192.100") {
+                if line.contains("inet ") && !line.contains("127.0.0.1") {
                     // Check if this is an ethernet interface
                     let is_ethernet = line.contains("eth") || line.contains("enp") || line.contains("ens");
                     
@@ -4009,6 +4057,122 @@ async fn db_transfer_seats_and_remove_vehicle(license_plate: String, destination
     ))
 }
 
+// Emergency remove vehicle with booked seats (cancel all bookings and calculate refund)
+#[tauri::command]
+async fn db_emergency_remove_vehicle(license_plate: String) -> Result<serde_json::Value, String> {
+    println!("🚨 Starting emergency removal for vehicle: {}", license_plate);
+    
+    let mut client = DB_POOL.get().await.map_err(|e| format!("Database pool error: {}", e))?;
+    let tx = client.build_transaction().start().await.map_err(|e| format!("Transaction start error: {}", e))?;
+    
+    // First, get the vehicle to remove and its booked seats
+    println!("🔍 Looking for vehicle to remove...");
+    let vehicle_row = tx.query_opt(
+        "SELECT q.id, q.available_seats, q.total_seats, q.queue_position, q.destination_id, q.destination_name
+         FROM vehicle_queue q
+         JOIN vehicles v ON v.id = q.vehicle_id
+         WHERE v.license_plate = $1 AND q.status IN ('WAITING', 'LOADING')",
+        &[&license_plate]
+    )
+    .await
+    .map_err(|e| format!("Error fetching vehicle to remove: {}", e))?
+    .ok_or("Vehicle not found in queue")?;
+    
+    let vehicle_id: String = vehicle_row.get("id");
+    let available_seats: i32 = vehicle_row.get("available_seats");
+    let total_seats: i32 = vehicle_row.get("total_seats");
+    let queue_position: i32 = vehicle_row.get("queue_position");
+    let destination_id: String = vehicle_row.get("destination_id");
+    let destination_name: String = vehicle_row.get("destination_name");
+    let booked_seats = total_seats - available_seats;
+    
+    println!("📊 Vehicle found - ID: {}, Available: {}, Total: {}, Booked: {}, Position: {}", 
+             vehicle_id, available_seats, total_seats, booked_seats, queue_position);
+    
+    if booked_seats == 0 {
+        println!("✅ No booked seats, removing vehicle directly...");
+        // No booked seats, just remove the vehicle
+        tx.execute("DELETE FROM vehicle_queue WHERE id = $1", &[&vehicle_id])
+            .await.map_err(|e| format!("Error removing vehicle: {}", e))?;
+        
+        // Update queue positions for remaining vehicles
+        tx.execute(
+            "UPDATE vehicle_queue SET queue_position = queue_position - 1 
+             WHERE destination_id = $1 AND queue_position > $2",
+            &[&destination_id, &queue_position]
+        )
+        .await.map_err(|e| format!("Error updating queue positions: {}", e))?;
+        
+        tx.commit().await.map_err(|e| format!("Commit error: {}", e))?;
+        println!("✅ Vehicle removed successfully");
+        return Ok(serde_json::json!({
+            "cancelledBookings": 0,
+            "totalRefund": 0.0,
+            "message": format!("Véhicule {} retiré de la file (aucune réservation)", license_plate)
+        }));
+    }
+    
+    // Get all bookings for this vehicle to calculate refund
+    println!("💰 Calculating refund for {} booked seats...", booked_seats);
+    let bookings_rows = tx.query(
+        "SELECT id, seats_booked, total_amount, verification_code 
+         FROM bookings 
+         WHERE queue_id = $1 AND payment_status = 'PAID'",
+        &[&vehicle_id]
+    )
+    .await
+    .map_err(|e| format!("Error fetching bookings: {}", e))?;
+    
+    let mut total_refund = 0.0;
+    let mut cancelled_bookings = 0;
+    
+    for row in bookings_rows {
+        let booking_id: String = row.get("id");
+        let seats_booked: i32 = row.get("seats_booked");
+        let total_amount: f64 = row.get("total_amount");
+        let verification_code: String = row.get("verification_code");
+        
+        println!("📋 Cancelling booking {} - {} seats, {} TND", verification_code, seats_booked, total_amount);
+        
+        // Cancel the booking
+        tx.execute(
+            "UPDATE bookings SET payment_status = 'CANCELLED', verification_code = $1 WHERE id = $2",
+            &[&format!("CANCELLED_{}", verification_code), &booking_id]
+        )
+        .await
+        .map_err(|e| format!("Error cancelling booking {}: {}", booking_id, e))?;
+        
+        total_refund += total_amount;
+        cancelled_bookings += 1;
+    }
+    
+    println!("💰 Total refund calculated: {} TND for {} bookings", total_refund, cancelled_bookings);
+    
+    // Remove the vehicle from queue
+    println!("🗑️ Removing vehicle {} from queue...", vehicle_id);
+    tx.execute("DELETE FROM vehicle_queue WHERE id = $1", &[&vehicle_id])
+        .await.map_err(|e| format!("Error removing vehicle: {}", e))?;
+    
+    // Update queue positions for remaining vehicles
+    println!("🔄 Updating queue positions...");
+    tx.execute(
+        "UPDATE vehicle_queue SET queue_position = queue_position - 1 
+         WHERE destination_id = $1 AND queue_position > $2",
+        &[&destination_id, &queue_position]
+    )
+    .await.map_err(|e| format!("Error updating queue positions: {}", e))?;
+    
+    tx.commit().await.map_err(|e| format!("Commit error: {}", e))?;
+    
+    println!("✅ Emergency removal completed successfully");
+    Ok(serde_json::json!({
+        "cancelledBookings": cancelled_bookings,
+        "totalRefund": total_refund,
+        "message": format!("Véhicule {} supprimé d'urgence - {} réservations annulées - Remboursement: {:.3} TND", 
+                          license_plate, cancelled_bookings, total_refund)
+    }))
+}
+
 fn main() {
     let system_tray = create_system_tray();
     
@@ -4111,8 +4275,13 @@ fn main() {
             check_vehicle_day_passes,
             debug_printer_status,
             db_transfer_seats_and_remove_vehicle,
+            db_emergency_remove_vehicle,
             db_get_vehicle_activity_72h,
-            open_vehicle_window
+            open_vehicle_window,
+            // Realtime commands
+            start_realtime_listening,
+            stop_realtime_listening,
+            get_realtime_status
         ])
         .setup(|app| {
             let app_handle = app.handle();

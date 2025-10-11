@@ -150,7 +150,8 @@ export default function DayPassPage() {
         try {
           const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
             licensePlate: driver.vehicle.licensePlate,
-            amount: 0 // 0 TND because day pass is already valid
+            amount: 0, // 0 TND because day pass is already valid
+            staffName: currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'Staff'
           });
           
           console.log('🖨️ Printing day pass ticket (0 TND) for:', driver.vehicle.licensePlate);
@@ -178,7 +179,8 @@ export default function DayPassPage() {
         try {
           const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
             licensePlate: driver.vehicle.licensePlate,
-            amount: 2 // 2 TND for new day pass
+            amount: 2, // 2 TND for new day pass
+            staffName: currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'Staff'
           });
           
           console.log('🖨️ Printing day pass ticket (2 TND) for:', driver.vehicle.licensePlate);
@@ -481,7 +483,8 @@ export default function DayPassPage() {
                               try {
                                 const dayPassTicketData = thermalPrinter.formatDayPassTicketData({
                                   licensePlate: dayPass.licensePlate,
-                                  amount: dayPass.price
+                                  amount: dayPass.price,
+                                  staffName: currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : 'Staff'
                                 });
                                 const staffName = currentStaff ? `${currentStaff.firstName} ${currentStaff.lastName}` : undefined;
                                 await thermalPrinter.printDayPassTicket(dayPassTicketData, staffName);
