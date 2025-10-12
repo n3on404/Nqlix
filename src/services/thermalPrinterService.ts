@@ -28,6 +28,25 @@ export interface PrinterStatus {
   error?: string;
 }
 
+export interface PrintQueueStatus {
+  queue_length: number;
+  is_processing: boolean;
+  last_printed_at?: string;
+  failed_jobs: number;
+}
+
+export enum PrintJobType {
+  BookingTicket = "BookingTicket",
+  EntryTicket = "EntryTicket",
+  ExitTicket = "ExitTicket",
+  DayPassTicket = "DayPassTicket",
+  ExitPassTicket = "ExitPassTicket",
+  Talon = "Talon",
+  StandardTicket = "StandardTicket",
+  Receipt = "Receipt",
+  QRCode = "QRCode",
+}
+
 export class ThermalPrinterService {
   private static instance: ThermalPrinterService;
   private config: PrinterConfig;
@@ -1005,6 +1024,77 @@ Date: ${paymentData.date}
                    '\n\n\n\n\n';
     
     return this.printDirectTcp(printerId, content);
+  }
+
+  // Print Queue Methods
+  async getPrintQueueStatus(): Promise<PrintQueueStatus> {
+    try {
+      console.log('📋 Getting print queue status...');
+      const status = await invoke<PrintQueueStatus>('get_print_queue_status');
+      console.log('📊 Print queue status:', status);
+      return status;
+    } catch (error) {
+      console.error('❌ Failed to get print queue status:', error);
+      throw error;
+    }
+  }
+
+  async getPrintQueueLength(): Promise<number> {
+    try {
+      const length = await invoke<number>('get_print_queue_length');
+      console.log(`📏 Print queue length: ${length}`);
+      return length;
+    } catch (error) {
+      console.error('❌ Failed to get print queue length:', error);
+      throw error;
+    }
+  }
+
+  async queuePrintJob(
+    jobType: PrintJobType,
+    content: string,
+    staffName?: string,
+    priority: number = 0
+  ): Promise<string> {
+    try {
+      console.log(`📋 Queuing print job: ${jobType} with priority ${priority}`);
+      const result = await invoke<string>('queue_print_job', {
+        jobType,
+        content,
+        staffName,
+        priority
+      });
+      console.log('✅ Print job queued successfully:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to queue print job:', error);
+      throw error;
+    }
+  }
+
+  // Updated print methods to use queue system
+  async printBookingTicketQueued(ticketData: string, staffName?: string): Promise<string> {
+    return this.queuePrintJob(PrintJobType.BookingTicket, ticketData, staffName, 0);
+  }
+
+  async printEntryTicketQueued(ticketData: string, staffName?: string): Promise<string> {
+    return this.queuePrintJob(PrintJobType.EntryTicket, ticketData, staffName, 0);
+  }
+
+  async printExitTicketQueued(ticketData: string, staffName?: string): Promise<string> {
+    return this.queuePrintJob(PrintJobType.ExitTicket, ticketData, staffName, 0);
+  }
+
+  async printDayPassTicketQueued(ticketData: string, staffName?: string): Promise<string> {
+    return this.queuePrintJob(PrintJobType.DayPassTicket, ticketData, staffName, 0);
+  }
+
+  async printExitPassTicketQueued(ticketData: string, staffName?: string): Promise<string> {
+    return this.queuePrintJob(PrintJobType.ExitPassTicket, ticketData, staffName, 0);
+  }
+
+  async printTalonQueued(talonData: string, staffName?: string): Promise<string> {
+    return this.queuePrintJob(PrintJobType.Talon, talonData, staffName, 0);
   }
 }
 

@@ -249,7 +249,11 @@ function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestinati
           )}
 
           {/* Day Pass Button - only show if vehicle has recently purchased day pass and is WAITING or LOADING */}
-          {hasRecentDayPass && (queue.status === 'WAITING' || queue.status === 'LOADING') && (
+          {(() => {
+            const shouldShow = hasRecentDayPass && (queue.status === 'WAITING' || queue.status === 'LOADING');
+            console.log('🎫 [DAY PASS BUTTON DEBUG] Vehicle:', queue.licensePlate, 'hasRecentDayPass:', hasRecentDayPass, 'status:', queue.status, 'shouldShow:', shouldShow);
+            return shouldShow;
+          })() && (
             <Button 
               variant="outline" 
               size="sm"
@@ -346,13 +350,46 @@ export default function QueueManagement() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [vehiclesWithRecentDayPass, setVehiclesWithRecentDayPass] = useState<Set<string>>(new Set());
 
+  // Test function to create a day pass for testing (expose to window for debugging)
+  const testCreateDayPass = async (licensePlate: string) => {
+    console.log('🧪 [TEST] Creating test day pass for:', licensePlate);
+    try {
+      // First, let's create a day pass record in the database
+      const result = await dbClient.purchaseDayPass(licensePlate, 'test-vehicle-id', 2.0, currentStaff?.id);
+      console.log('🧪 [TEST] Day pass created:', result);
+      
+      // Then check if it's detected as recent
+      const hasRecent = await dbClient.hasRecentlyPurchasedDayPass(licensePlate);
+      console.log('🧪 [TEST] Has recent day pass:', hasRecent);
+      
+      // Refresh the day pass checks
+      await checkRecentDayPasses();
+      
+      return { success: true, result, hasRecent };
+    } catch (error) {
+      console.error('🧪 [TEST] Error creating day pass:', error);
+      return { success: false, error };
+    }
+  };
+
+  // Expose test function to window for debugging
+  React.useEffect(() => {
+    (window as any).testCreateDayPass = testCreateDayPass;
+    (window as any).checkRecentDayPasses = checkRecentDayPasses;
+    (window as any).vehiclesWithRecentDayPass = vehiclesWithRecentDayPass;
+  }, [vehiclesWithRecentDayPass]);
+
   // Check for recent day passes for all vehicles in queue
   const checkRecentDayPasses = async () => {
     try {
       const allQueueItems = Object.values(queues).flat();
+      console.log('🔍 [DAY PASS DEBUG] Checking day passes for', allQueueItems.length, 'vehicles');
+      
       const dayPassChecks = allQueueItems.map(async (queue: any) => {
         try {
+          console.log('🔍 [DAY PASS DEBUG] Checking vehicle:', queue.licensePlate);
           const hasRecentDayPass = await dbClient.hasRecentlyPurchasedDayPass(queue.licensePlate);
+          console.log('🔍 [DAY PASS DEBUG] Vehicle', queue.licensePlate, 'has recent day pass:', hasRecentDayPass);
           return { licensePlate: queue.licensePlate, hasRecentDayPass };
         } catch (error) {
           console.error(`Error checking day pass for ${queue.licensePlate}:`, error);
@@ -367,6 +404,7 @@ export default function QueueManagement() {
           .map(result => result.licensePlate)
       );
       
+      console.log('🔍 [DAY PASS DEBUG] Vehicles with recent day passes:', Array.from(recentDayPassSet));
       setVehiclesWithRecentDayPass(recentDayPassSet);
     } catch (error) {
       console.error('Error checking recent day passes:', error);
@@ -1502,6 +1540,8 @@ export default function QueueManagement() {
 
   // Print day pass for vehicle
   const handlePrintDayPass = async (queue: any) => {
+    console.log('🎫 [DAY PASS PRINT DEBUG] Starting print for vehicle:', queue.licensePlate);
+    
     const confirmed = window.confirm(
       `Imprimer le pass journalier pour ${queue.licensePlate} ?\n\n` +
       `Cette action va:\n` +
@@ -1510,13 +1550,19 @@ export default function QueueManagement() {
       `Confirmer l'impression ?`
     );
     
-    if (!confirmed) return;
+    if (!confirmed) {
+      console.log('🎫 [DAY PASS PRINT DEBUG] User cancelled print');
+      return;
+    }
     
+    console.log('🎫 [DAY PASS PRINT DEBUG] User confirmed, calling print function');
     setActionLoading(queue.licensePlate);
     
     try {
       // Call day pass printing function
+      console.log('🎫 [DAY PASS PRINT DEBUG] Calling dbClient.printDayPassForVehicle...');
       const result = await dbClient.printDayPassForVehicle(queue.licensePlate);
+      console.log('🎫 [DAY PASS PRINT DEBUG] Print result:', result);
       
       addNotification({
         type: 'success',
@@ -1526,6 +1572,7 @@ export default function QueueManagement() {
       });
       
     } catch (error: any) {
+      console.error('🎫 [DAY PASS PRINT DEBUG] Print error:', error);
       addNotification({
         type: 'error',
         title: 'Échec de l\'impression',

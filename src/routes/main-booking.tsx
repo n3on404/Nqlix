@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { dbClient, BookingUpdateEvent, QueueUpdateEvent } from '../services/dbClient';
+import { websocketDbClient } from '../services/websocketRealtimeService';
 import { useMQTT } from '../lib/useMQTT';
 import { usePaymentNotifications } from '../components/NotificationToast';
 import { TicketPrintout } from '../components/TicketPrintout';
@@ -97,6 +98,9 @@ export default function MainBooking() {
   const [isLoading, setIsLoading] = useState(true);
   const [basePrice, setBasePrice] = useState<number>(0);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [websocketConnected, setWebsocketConnected] = useState(false);
+  const [discoveredApps, setDiscoveredApps] = useState(0);
+  const [bestServer, setBestServer] = useState<string | null>(null);
   const [lastUpdateTime, setLastUpdateTime] = useState<string>('');
   
   // Track current destination ID to maintain focus after refresh
@@ -803,23 +807,112 @@ export default function MainBooking() {
     fetchDestinations();
     fetchRoutes();
 
-    // Start realtime listening
+    // Start WebSocket realtime listening
     const initializeRealtime = async () => {
       try {
-        await dbClient.startRealtimeListening();
+        // Initialize WebSocket connection
+        await websocketDbClient.initializeWebSocket('Main Booking App');
+        setWebsocketConnected(true);
         setRealtimeConnected(true);
-        console.log('✅ Realtime listening started');
+        console.log('✅ WebSocket realtime listening started');
+        
+        // Set up WebSocket connection status monitoring
+        const statusInterval = setInterval(() => {
+          const status = websocketDbClient.getWebSocketStatus();
+          setWebsocketConnected(status.connected);
+        }, 1000);
+        
+        // Set up network discovery status monitoring
+        const discoveryInterval = setInterval(async () => {
+          try {
+            const discoveryStatus = await websocketDbClient.getNetworkDiscoveryStatus();
+            setDiscoveredApps(discoveryStatus.discoveredApps);
+            setBestServer(discoveryStatus.bestServer);
+          } catch (error) {
+            console.warn('⚠️ Failed to get network discovery status:', error);
+          }
+        }, 5000); // Check every 5 seconds
+        
+        // Store intervals for cleanup
+        (window as any).websocketStatusInterval = statusInterval;
+        (window as any).discoveryStatusInterval = discoveryInterval;
+        
+        // Also start the old realtime listening as fallback
+        try {
+          await dbClient.startRealtimeListening();
+          console.log('✅ Fallback realtime listening started');
+        } catch (fallbackError) {
+          console.warn('⚠️ Fallback realtime listening failed:', fallbackError);
+        }
       } catch (error) {
-        console.error('❌ Failed to start realtime listening:', error);
+        console.error('❌ Failed to start WebSocket realtime listening:', error);
         setRealtimeConnected(false);
+        
+        // Try fallback
+        try {
+          await dbClient.startRealtimeListening();
+          setRealtimeConnected(true);
+          console.log('✅ Fallback realtime listening started');
+        } catch (fallbackError) {
+          console.error('❌ Fallback realtime listening also failed:', fallbackError);
+        }
       }
     };
 
     initializeRealtime();
 
-    // Set up realtime event listeners
+    // Set up WebSocket realtime event listeners
+    const websocketBookingUnlisten = websocketDbClient.onWebSocketEvent('booking-change', (event: any) => {
+      console.log('📊 WebSocket booking change received:', event);
+      setLastUpdateTime(new Date().toLocaleTimeString());
+      
+      // Update destinations if this affects the current destination
+      if (selectedDestination && event.destination_id === selectedDestination.destinationId) {
+        fetchAvailableSeats(selectedDestination.destinationId);
+        // Refresh destinations to get updated seat counts
+        fetchDestinations();
+      }
+    });
+
+    const websocketVehicleUnlisten = websocketDbClient.onWebSocketEvent('vehicle-change', (event: any) => {
+      console.log('🚗 WebSocket vehicle change received:', event);
+      setLastUpdateTime(new Date().toLocaleTimeString());
+      
+      // Refresh queue data if this affects the current destination
+      if (selectedDestination && event.destination_id === selectedDestination.destinationId) {
+        fetchAvailableSeats(selectedDestination.destinationId);
+        fetchQueueForDestination(selectedDestination.destinationId);
+      }
+    });
+
+    const websocketRealtimeUnlisten = websocketDbClient.onWebSocketEvent('realtime-event', (event: any) => {
+      console.log('🔔 WebSocket realtime event received:', event);
+      setLastUpdateTime(new Date().toLocaleTimeString());
+      
+      // Handle different event types
+      switch (event.event_type) {
+        case 'INSERT':
+        case 'UPDATE':
+        case 'DELETE':
+          if (event.table === 'bookings') {
+            // Refresh destinations when bookings change
+            fetchDestinations();
+            if (selectedDestination) {
+              fetchAvailableSeats(selectedDestination.destinationId);
+            }
+          } else if (event.table === 'vehicle_queue') {
+            // Refresh queue when vehicle queue changes
+            if (selectedDestination) {
+              fetchQueueForDestination(selectedDestination.destinationId);
+            }
+          }
+          break;
+      }
+    });
+
+    // Set up fallback realtime event listeners
     const bookingUpdateUnlisten = dbClient.onBookingUpdate((event: BookingUpdateEvent) => {
-      console.log('📊 Booking update received:', event);
+      console.log('📊 Fallback booking update received:', event);
       setLastUpdateTime(new Date().toLocaleTimeString());
       
       // Update destinations if this affects the current destination
@@ -835,7 +928,7 @@ export default function MainBooking() {
     });
 
     const queueUpdateUnlisten = dbClient.onQueueUpdate((event: QueueUpdateEvent) => {
-      console.log('🚗 Queue update received:', event);
+      console.log('🚗 Fallback queue update received:', event);
       setLastUpdateTime(new Date().toLocaleTimeString());
       
       // Refresh queue data if this affects the current destination
@@ -854,9 +947,29 @@ export default function MainBooking() {
     return () => { 
       if (refreshInterval) clearInterval(refreshInterval as any);
       if (fetchDestinationsTimeout) clearTimeout(fetchDestinationsTimeout);
+      
+      // Cleanup WebSocket status monitoring
+      if ((window as any).websocketStatusInterval) {
+        clearInterval((window as any).websocketStatusInterval);
+      }
+      
+      // Cleanup network discovery status monitoring
+      if ((window as any).discoveryStatusInterval) {
+        clearInterval((window as any).discoveryStatusInterval);
+      }
+      
+      // Cleanup WebSocket listeners
+      websocketBookingUnlisten();
+      websocketVehicleUnlisten();
+      websocketRealtimeUnlisten();
+      
+      // Cleanup fallback listeners
       bookingUpdateUnlisten.then(unlisten => unlisten());
       queueUpdateUnlisten.then(unlisten => unlisten());
+      
+      // Stop realtime listening
       dbClient.stopRealtimeListening().catch(console.error);
+      websocketDbClient.disconnectWebSocket();
     };
   }, []); // Removed dependencies to prevent unnecessary re-runs
 
@@ -1586,10 +1699,22 @@ export default function MainBooking() {
                 <div className={`w-2 h-2 rounded-full ${dbOk === false ? 'bg-red-500' : 'bg-green-500'}`}></div>
                 <span>DB {dbOk === false ? 'Fail' : 'OK'}</span>
                 <span>•</span>
-                <div className={`w-2 h-2 rounded-full ${realtimeConnected ? 'bg-blue-500' : 'bg-gray-400'}`}></div>
+                <div className={`w-2 h-2 rounded-full ${websocketConnected ? 'bg-blue-500' : 'bg-gray-400'}`}></div>
+                <span>WebSocket {websocketConnected ? 'ON' : 'OFF'}</span>
+                <span>•</span>
+                <div className={`w-2 h-2 rounded-full ${discoveredApps > 0 ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                <span>Network {discoveredApps} app{discoveredApps !== 1 ? 's' : ''}</span>
+                <span>•</span>
+                <div className={`w-2 h-2 rounded-full ${realtimeConnected ? 'bg-green-500' : 'bg-gray-400'}`}></div>
                 <span>Temps réel {realtimeConnected ? 'ON' : 'OFF'}</span>
                 <span>•</span>
                 <span>Dernière mise à jour: {lastUpdateTime || 'Jamais'}</span>
+                {bestServer && (
+                  <>
+                    <span>•</span>
+                    <span className="text-blue-600">Serveur: {bestServer.replace('ws://', '')}</span>
+                  </>
+                )}
               </div>
             </div>
             

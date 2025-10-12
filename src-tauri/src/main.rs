@@ -22,8 +22,23 @@ use chrono::TimeZone;
 
 mod printer;
 mod realtime;
+mod websocket_realtime;
+mod network_discovery;
 use printer::{PrinterService, PrinterConfig, PrintJob, PrinterStatus};
 use realtime::{start_realtime_listening, stop_realtime_listening, get_realtime_status};
+use websocket_realtime::{
+    start_websocket_realtime_listening, 
+    stop_websocket_realtime_listening, 
+    get_websocket_realtime_status,
+    get_connected_clients,
+    broadcast_custom_event
+};
+use network_discovery::{
+    start_network_discovery,
+    stop_network_discovery,
+    get_discovered_apps,
+    get_best_websocket_server
+};
 
 // WebSocket relay removed
 
@@ -4308,6 +4323,33 @@ async fn db_print_day_pass_for_vehicle(license_plate: String) -> Result<String, 
     }
 }
 
+// Print Queue Commands
+#[tauri::command]
+async fn get_print_queue_status() -> Result<printer::PrintQueueStatus, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_service = printer.lock().map_err(|e| e.to_string())?.clone();
+    printer_service.get_print_queue_status()
+}
+
+#[tauri::command]
+async fn get_print_queue_length() -> Result<usize, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_service = printer.lock().map_err(|e| e.to_string())?.clone();
+    printer_service.get_print_queue_length()
+}
+
+#[tauri::command]
+async fn queue_print_job(
+    job_type: printer::PrintJobType,
+    content: String,
+    staff_name: Option<String>,
+    priority: u8,
+) -> Result<String, String> {
+    let printer = PRINTER_SERVICE.clone();
+    let printer_service = printer.lock().map_err(|e| e.to_string())?.clone();
+    printer_service.queue_print_job(job_type, content, staff_name, priority).await
+}
+
 fn main() {
     let system_tray = create_system_tray();
     
@@ -4415,10 +4457,25 @@ fn main() {
             db_print_day_pass_for_vehicle,
             db_get_vehicle_activity_72h,
             open_vehicle_window,
+            // Print queue commands
+            get_print_queue_status,
+            get_print_queue_length,
+            queue_print_job,
             // Realtime commands
             start_realtime_listening,
             stop_realtime_listening,
-            get_realtime_status
+            get_realtime_status,
+            // WebSocket realtime commands
+            start_websocket_realtime_listening,
+            stop_websocket_realtime_listening,
+            get_websocket_realtime_status,
+            get_connected_clients,
+            broadcast_custom_event,
+            // Network discovery commands
+            start_network_discovery,
+            stop_network_discovery,
+            get_discovered_apps,
+            get_best_websocket_server
         ])
         .setup(|app| {
             let app_handle = app.handle();
@@ -4515,9 +4572,36 @@ fn main() {
                 println!("Update error: {:?}", event.payload());
             });
             
+            // Start network discovery first
+            let app_handle_discovery = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait a bit to ensure the application is fully loaded
+                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                
+                if let Err(e) = start_network_discovery("Wasla App".to_string(), 8765).await {
+                    println!("⚠️ Failed to start network discovery: {}", e);
+                } else {
+                    println!("🔍 Network discovery started successfully");
+                }
+            });
+
+            // Start WebSocket real-time server
+            let app_handle_ws = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait a bit to ensure the application is fully loaded
+                tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+                
+                if let Err(e) = start_websocket_realtime_listening(app_handle_ws).await {
+                    println!("⚠️ Failed to start WebSocket real-time server: {}", e);
+                } else {
+                    println!("🌐 WebSocket real-time server started successfully");
+                }
+            });
+            
             println!("🎯 Nqlix started in fullscreen mode with system tray support");
             println!("📋 System tray controls: Left-click to show/hide, Right-click for menu");
             println!("⌨️  Shortcuts: F11 (fullscreen), Ctrl+Shift+H (hide/show)");
+            println!("🌐 WebSocket server will start on port 8765 for inter-app communication");
             
             Ok(())
         })
