@@ -88,7 +88,7 @@ interface DashboardStats {
 }
 
 export default function Dashboard() {
-  const { currentStaff } = useAuth();
+  const { currentStaff, selectedRoute } = useAuth();
   const { isSupervisorMode } = useSupervisorMode();
   const { isSocketConnected } = useDashboard();
   
@@ -108,10 +108,10 @@ export default function Dashboard() {
     return <SupervisorDashboard />;
   }
 
-  return <StaffDashboard />;
+  return <StaffDashboard selectedRoute={selectedRoute} />;
 }
 
-function StaffDashboard() {
+function StaffDashboard({ selectedRoute }: { selectedRoute: string | null }) {
   const { addNotification } = useNotifications();
   const { 
     notifyPaymentSuccess, 
@@ -180,7 +180,7 @@ function StaffDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }, [addNotification]);
+  }, [addNotification, selectedRoute]);
 
   // Real-time disabled: periodic refresh only
   useEffect(() => {

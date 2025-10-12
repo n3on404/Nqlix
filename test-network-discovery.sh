@@ -70,7 +70,7 @@ fi
 echo "🔍 Test 6: Testing UDP broadcast capability"
 if command -v nc &> /dev/null; then
     # Try to send a test UDP broadcast
-    echo '{"message_type":"test","app_info":{"app_id":"test-script","app_name":"Test Script","ip_address":"127.0.0.1","websocket_port":8765,"capabilities":["test"]},"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' | nc -u -b 255.255.255.255 8766 &
+    echo '{"message_type":"test","app_info":{"app_id":"test-script","app_name":"Test Script","ip_address":"192.168.192.100","websocket_port":8765,"capabilities":["test"]},"timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' | nc -u -b 255.255.255.255 8766 &
     NC_PID=$!
     sleep 1
     kill $NC_PID 2>/dev/null
@@ -83,12 +83,12 @@ fi
 echo "🔍 Test 7: Checking network interfaces"
 if command -v ip &> /dev/null; then
     echo "📡 Available network interfaces:"
-    ip addr show | grep -E "inet [0-9]" | grep -v "127.0.0.1" | while read line; do
+    ip addr show | grep -E "inet [0-9]" | grep -v "192.168.192.100" | while read line; do
         echo "  → $line"
     done
 elif command -v ifconfig &> /dev/null; then
     echo "📡 Available network interfaces:"
-    ifconfig | grep -E "inet [0-9]" | grep -v "127.0.0.1" | while read line; do
+    ifconfig | grep -E "inet [0-9]" | grep -v "192.168.192.100" | while read line; do
         echo "  → $line"
     done
 else

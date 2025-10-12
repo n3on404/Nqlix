@@ -344,8 +344,8 @@ impl PrinterService {
             println!("✅ [CONFIG] Configuration loaded successfully from file");
         }
 
-        // Start the print queue processor
-        service.start_print_queue_processor();
+        // Note: Print queue processor will be started later when runtime is available
+        // service.start_print_queue_processor();
 
         service
     }
@@ -1022,7 +1022,7 @@ try {{
     }
 
     // Print Queue Management Methods
-    fn start_print_queue_processor(&self) {
+    pub fn start_print_queue_processor(&self) {
         let (tx, mut rx) = mpsc::unbounded_channel::<QueuedPrintJob>();
         
         // Store the sender for adding jobs to the queue

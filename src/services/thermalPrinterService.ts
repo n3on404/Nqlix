@@ -726,6 +726,8 @@ Date: ${paymentData.date}
     // Vehicle information
     if (booking.vehicleLicensePlate) {
       ticketContent += `Véhicule: ${booking.vehicleLicensePlate}\n`;
+    } else if (booking.licensePlate) {
+      ticketContent += `Véhicule: ${booking.licensePlate}\n`;
     }
     
     // Seat information - removed as requested
@@ -788,6 +790,8 @@ Date: ${paymentData.date}
     // Vehicle license plate
     if (booking.vehicleLicensePlate) {
       talonContent += `Véhicule: ${booking.vehicleLicensePlate}\n`;
+    } else if (booking.licensePlate) {
+      talonContent += `Véhicule: ${booking.licensePlate}\n`;
     } else {
       console.warn('⚠️ No vehicle license plate found in booking:', booking);
       talonContent += `Véhicule: N/A\n`;

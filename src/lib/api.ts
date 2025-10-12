@@ -394,14 +394,19 @@ class ApiService {
   /**
    * Login with CIN only (no password required)
    */
-  public async login(cin: string): Promise<AuthResponse> {
+  public async login(cin: string, route?: string): Promise<AuthResponse> {
     try {
-      console.log('🔍 Logging in via proxy for CIN:', cin);
+      console.log('🔍 Logging in via proxy for CIN:', cin, 'Route:', route);
+      
+      const requestBody: any = { cin };
+      if (route) {
+        requestBody.route = route;
+      }
       
       const response = await this.requestViaProxy<any>(
         '/api/auth/login',
         'POST',
-        { cin },
+        requestBody,
         false
       );
       

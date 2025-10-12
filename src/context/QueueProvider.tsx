@@ -89,7 +89,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [lastManualRefresh, setLastManualRefresh] = useState<number>(0);
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, selectedRoute } = useAuth();
   const { addNotification } = useNotifications();
   const [suppressedPlates, setSuppressedPlates] = useState<Record<string, number>>({});
   
@@ -162,7 +162,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
       let summaries: any[] = [];
       
       try {
-        const summariesPromise = dbClient.getQueueSummaries();
+        const summariesPromise = dbClient.getQueueSummaries(selectedRoute || undefined);
         const summariesTimeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error('Queue summaries fetch timeout')), 10000)
         );
@@ -271,7 +271,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [isAuthenticated, addNotification]);
+  }, [isAuthenticated, selectedRoute, addNotification]);
   
   // MQTT integration for real-time updates
   const { isConnected: mqttConnected, subscribe, unsubscribe } = useMQTT();
@@ -310,7 +310,7 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
       console.log('👤 User authenticated, loading initial queue data');
       refreshQueues();
     }
-  }, [isAuthenticated, refreshQueues]);
+  }, [isAuthenticated, selectedRoute, refreshQueues]);
 
   // MQTT event handlers for real-time updates
   useEffect(() => {

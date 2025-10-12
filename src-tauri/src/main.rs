@@ -108,9 +108,11 @@ async fn map_queue_row(row: &Row) -> QueueItemDto {
 }
 
 #[tauri::command]
-async fn db_get_queue_summaries() -> Result<Vec<QueueSummaryDto>, String> {
+async fn db_get_queue_summaries(route_filter: Option<String>) -> Result<Vec<QueueSummaryDto>, String> {
     let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
-    let sql = r#"
+    
+    let mut sql = String::from(
+        r#"
         SELECT 
           destination_id AS destinationId,
           MAX(destination_name) AS destinationName,
@@ -121,10 +123,61 @@ async fn db_get_queue_summaries() -> Result<Vec<QueueSummaryDto>, String> {
           NULL::text AS governorate,
           NULL::text AS delegation
         FROM vehicle_queue
-        GROUP BY destination_id
-        ORDER BY destinationName
-    "#;
-    let rows = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
+        "#
+    );
+    
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+    let mut param_idx = 1;
+    let mut route_patterns: Vec<String> = Vec::new();
+    
+    // Apply route filtering
+    if let Some(route) = &route_filter {
+        if route != "ALL" {
+            sql.push_str(" WHERE (");
+            let mut conditions = Vec::new();
+            
+            match route.as_str() {
+                "JEMMAL" => {
+                    // Match Jemmal stations exactly
+                    conditions.push(format!("destination_name ILIKE ${}", param_idx));
+                    route_patterns.push("%JEMMAL%".to_string());
+                    param_idx += 1;
+                },
+                "MOKNIN_TEBOULBA" => {
+                    // Match Moknin and Teboulba stations
+                    conditions.push(format!("(destination_name ILIKE ${} OR destination_name ILIKE ${})", 
+                        param_idx, param_idx + 1));
+                    route_patterns.push("%MOKNIN%".to_string());
+                    route_patterns.push("%TEBOULBA%".to_string());
+                    param_idx += 2;
+                },
+                "KSAR_HLEL" => {
+                    // Match Ksar Hlel stations exactly
+                    conditions.push(format!("destination_name ILIKE ${}", param_idx));
+                    route_patterns.push("%KSAR HLEL%".to_string());
+                    param_idx += 1;
+                },
+                _ => {
+                    // Fallback to generic pattern matching
+                    conditions.push(format!("destination_name ILIKE ${}", param_idx));
+                    route_patterns.push(format!("%{}%", route));
+                    param_idx += 1;
+                }
+            }
+            
+            sql.push_str(&conditions.join(" OR "));
+            sql.push_str(")");
+            
+            // Add all route patterns to params
+            for pattern in &route_patterns {
+                params.push(pattern);
+            }
+        }
+    }
+    
+    sql.push_str(" GROUP BY destination_id ORDER BY destinationName");
+    
+    let rows = client.query(&sql, &params).await.map_err(|e| e.to_string())?;
     let data = rows.into_iter().map(|r| QueueSummaryDto {
         destinationId: r.get("destinationid"),
         destinationName: r.get("destinationname"),
@@ -764,7 +817,7 @@ struct BookingCreatedDto {
 }
 
 #[tauri::command]
-async fn db_get_available_booking_destinations(governorate: Option<String>, delegation: Option<String>) -> Result<Vec<BookingDestinationDto>, String> {
+async fn db_get_available_booking_destinations(governorate: Option<String>, delegation: Option<String>, route_filter: Option<String>) -> Result<Vec<BookingDestinationDto>, String> {
     let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let mut sql = String::from(
         r#"
@@ -783,6 +836,8 @@ async fn db_get_available_booking_destinations(governorate: Option<String>, dele
     );
     let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
     let mut _idx = 1;
+    let mut route_patterns: Vec<String> = Vec::new();
+    
     if let Some(g) = &governorate {
         sql.push_str(&format!(" AND r.governorate = ${}", _idx));
         params.push(g);
@@ -793,6 +848,52 @@ async fn db_get_available_booking_destinations(governorate: Option<String>, dele
         params.push(d);
         _idx += 1;
     }
+    
+    // Apply route filtering
+    if let Some(route) = &route_filter {
+        if route != "ALL" {
+            sql.push_str(" AND (");
+            let mut conditions = Vec::new();
+            
+            match route.as_str() {
+                "JEMMAL" => {
+                    // Match Jemmal stations exactly
+                    conditions.push(format!("q.destination_name ILIKE ${}", _idx));
+                    route_patterns.push("%JEMMAL%".to_string());
+                    _idx += 1;
+                },
+                "MOKNIN_TEBOULBA" => {
+                    // Match Moknin and Teboulba stations
+                    conditions.push(format!("(q.destination_name ILIKE ${} OR q.destination_name ILIKE ${})", 
+                        _idx, _idx + 1));
+                    route_patterns.push("%MOKNIN%".to_string());
+                    route_patterns.push("%TEBOULBA%".to_string());
+                    _idx += 2;
+                },
+                "KSAR_HLEL" => {
+                    // Match Ksar Hlel stations exactly
+                    conditions.push(format!("q.destination_name ILIKE ${}", _idx));
+                    route_patterns.push("%KSAR HLEL%".to_string());
+                    _idx += 1;
+                },
+                _ => {
+                    // Fallback to generic pattern matching
+                    conditions.push(format!("q.destination_name ILIKE ${}", _idx));
+                    route_patterns.push(format!("%{}%", route));
+                    _idx += 1;
+                }
+            }
+            
+            sql.push_str(&conditions.join(" OR "));
+            sql.push_str(")");
+            
+            // Add all route patterns to params
+            for pattern in &route_patterns {
+                params.push(pattern);
+            }
+        }
+    }
+    
     sql.push_str(" GROUP BY q.destination_id ORDER BY destinationName");
     let rows = client.query(&sql, &params).await.map_err(|e| e.to_string())?;
     let list = rows.into_iter().map(|r| BookingDestinationDto {
@@ -937,8 +1038,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
         total_amount += amount;
         
         tx.execute(
-            r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
-                VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW())"#,
+            r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, booking_status, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
+                VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','ACTIVE','PAID','CASH',$5,false,$6,NOW())"#,
             &[&bid, &qid, &take, &amount, &verification_code, &created_by]
         ).await.map_err(|e| e.to_string())?;
 
@@ -1318,8 +1419,8 @@ async fn db_create_vehicle_specific_booking(queue_id: String, seats_requested: i
     total_amount += amount;
     
     tx.execute(
-        r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
-            VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW())"#,
+        r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, booking_status, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
+            VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','ACTIVE','PAID','CASH',$5,false,$6,NOW())"#,
         &[&bid, &qid, &take, &amount, &verification_code, &created_by]
     ).await.map_err(|e| e.to_string())?;
 
@@ -1411,13 +1512,39 @@ async fn db_create_vehicle_specific_booking(queue_id: String, seats_requested: i
 async fn db_cancel_queue_booking(booking_id: String) -> Result<(), String> {
     let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
-    let row = tx.query_one("SELECT queue_id, seats_booked FROM bookings WHERE id = $1", &[&booking_id])
-        .await.map_err(|e| e.to_string())?;
+    
+    // Get booking details
+    let row = tx.query_one(
+        "SELECT queue_id, seats_booked, total_amount, booking_status FROM bookings WHERE id = $1", 
+        &[&booking_id]
+    )
+    .await.map_err(|e| e.to_string())?;
+    
     let qid: String = row.get("queue_id");
     let seats: i32 = row.get("seats_booked");
-    tx.execute("UPDATE vehicle_queue SET available_seats = available_seats + $1 WHERE id = $2", &[&seats, &qid])
-        .await.map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM bookings WHERE id = $1", &[&booking_id]).await.map_err(|e| e.to_string())?;
+    let total_amount: f64 = row.get("total_amount");
+    let current_status: String = row.get("booking_status");
+    
+    // Check if booking is already cancelled
+    if current_status == "CANCELLED" {
+        tx.commit().await.map_err(|e| e.to_string())?;
+        return Err("Booking is already cancelled".to_string());
+    }
+    
+    // Update booking status to CANCELLED instead of deleting
+    tx.execute(
+        "UPDATE bookings SET booking_status = 'CANCELLED', cancelled_at = NOW(), refund_amount = $1 WHERE id = $2", 
+        &[&total_amount, &booking_id]
+    )
+    .await.map_err(|e| e.to_string())?;
+    
+    // Update available seats in the queue
+    tx.execute(
+        "UPDATE vehicle_queue SET available_seats = available_seats + $1 WHERE id = $2", 
+        &[&seats, &qid]
+    )
+    .await.map_err(|e| e.to_string())?;
+    
     tx.commit().await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1440,26 +1567,26 @@ async fn db_cancel_seat_from_destination(destination_id: String, created_by: Opt
         return Err("Accès refusé! Le véhicule n'est plus dans la file d'attente. Vous ne pouvez pas annuler cette réservation.".to_string());
     }
     
-    // Find the most recent booking for this destination by the specific staff member
+    // Find the most recent ACTIVE booking for this destination by the specific staff member
     let booking_query = if let Some(ref _staff_id) = created_by {
         // Find booking by specific staff member
         r#"
-        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate
+        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate, b.booking_status
         FROM bookings b
         JOIN vehicle_queue vq ON b.queue_id = vq.id
         JOIN vehicles v ON vq.vehicle_id = v.id
-        WHERE vq.destination_id = $1 AND b.created_by = $2
+        WHERE vq.destination_id = $1 AND b.created_by = $2 AND b.booking_status = 'ACTIVE'
         ORDER BY b.created_at DESC
         LIMIT 1
         "#
     } else {
         // Find any booking for this destination (fallback)
         r#"
-        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate
+        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate, b.booking_status
         FROM bookings b
         JOIN vehicle_queue vq ON b.queue_id = vq.id
         JOIN vehicles v ON vq.vehicle_id = v.id
-        WHERE vq.destination_id = $1
+        WHERE vq.destination_id = $1 AND b.booking_status = 'ACTIVE'
         ORDER BY b.created_at DESC
         LIMIT 1
         "#
@@ -1501,10 +1628,11 @@ async fn db_cancel_seat_from_destination(destination_id: String, created_by: Opt
             let new_seats = seats_booked - 1;
             let seat_price = total_amount / seats_booked as f64;
             let new_total = seat_price * new_seats as f64;
+            let refund_amount = seat_price; // Amount refunded for 1 seat
             
             tx.execute(
-                "UPDATE bookings SET seats_booked = $1, total_amount = $2 WHERE id = $3",
-                &[&new_seats, &new_total, &booking_id]
+                "UPDATE bookings SET seats_booked = $1, total_amount = $2, refund_amount = COALESCE(refund_amount, 0) + $3 WHERE id = $4",
+                &[&new_seats, &new_total, &refund_amount, &booking_id]
             )
             .await.map_err(|e| e.to_string())?;
             
@@ -1518,9 +1646,12 @@ async fn db_cancel_seat_from_destination(destination_id: String, created_by: Opt
             tx.commit().await.map_err(|e| e.to_string())?;
             Ok(format!("1 place annulée de la réservation {} pour {} (véhicule {})", verification_code, destination_name, license_plate))
         } else {
-            // Cancel the entire booking if only 1 seat
-            tx.execute("DELETE FROM bookings WHERE id = $1", &[&booking_id])
-                .await.map_err(|e| e.to_string())?;
+            // Cancel the entire booking if only 1 seat - UPDATE STATUS instead of DELETE
+            tx.execute(
+                "UPDATE bookings SET booking_status = 'CANCELLED', cancelled_at = NOW(), refund_amount = $1 WHERE id = $2", 
+                &[&total_amount, &booking_id]
+            )
+            .await.map_err(|e| e.to_string())?;
             
             // Update available seats in the queue
             tx.execute(
@@ -2498,15 +2629,69 @@ async fn db_get_all_vehicles() -> Result<Vec<VehicleDto>, String> {
 }
 
 #[tauri::command]
-async fn db_get_available_destinations() -> Result<Vec<DestinationDto>, String> {
+async fn db_get_available_destinations(route_filter: Option<String>) -> Result<Vec<DestinationDto>, String> {
     let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
-    let sql = r#"
+    
+    let mut sql = String::from(
+        r#"
         SELECT station_id, station_name, base_price, governorate, delegation
         FROM routes
         WHERE is_active = true
-        ORDER BY station_name
-    "#;
-    let rows = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
+        "#
+    );
+    
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+    let mut param_idx = 1;
+    let mut route_patterns: Vec<String> = Vec::new();
+    
+    // Apply route filtering
+    if let Some(route) = &route_filter {
+        if route != "ALL" {
+            sql.push_str(" AND (");
+            let mut conditions = Vec::new();
+            
+            match route.as_str() {
+                "JEMMAL" => {
+                    // Match Jemmal stations exactly
+                    conditions.push(format!("station_name ILIKE ${}", param_idx));
+                    route_patterns.push("%JEMMAL%".to_string());
+                    param_idx += 1;
+                },
+                "MOKNIN_TEBOULBA" => {
+                    // Match Moknin and Teboulba stations
+                    conditions.push(format!("(station_name ILIKE ${} OR station_name ILIKE ${})", 
+                        param_idx, param_idx + 1));
+                    route_patterns.push("%MOKNIN%".to_string());
+                    route_patterns.push("%TEBOULBA%".to_string());
+                    param_idx += 2;
+                },
+                "KSAR_HLEL" => {
+                    // Match Ksar Hlel stations exactly
+                    conditions.push(format!("station_name ILIKE ${}", param_idx));
+                    route_patterns.push("%KSAR HLEL%".to_string());
+                    param_idx += 1;
+                },
+                _ => {
+                    // Fallback to generic pattern matching
+                    conditions.push(format!("station_name ILIKE ${}", param_idx));
+                    route_patterns.push(format!("%{}%", route));
+                    param_idx += 1;
+                }
+            }
+            
+            sql.push_str(&conditions.join(" OR "));
+            sql.push_str(")");
+            
+            // Add all route patterns to params
+            for pattern in &route_patterns {
+                params.push(pattern);
+            }
+        }
+    }
+    
+    sql.push_str(" ORDER BY station_name");
+    
+    let rows = client.query(&sql, &params).await.map_err(|e| e.to_string())?;
     let destinations = rows.into_iter().map(|r| DestinationDto {
         stationId: r.get("station_id"),
         stationName: r.get("station_name"),
@@ -4595,6 +4780,20 @@ fn main() {
                     println!("⚠️ Failed to start WebSocket real-time server: {}", e);
                 } else {
                     println!("🌐 WebSocket real-time server started successfully");
+                }
+            });
+
+            // Start printer queue processor
+            let printer_service = PRINTER_SERVICE.clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait a bit to ensure the application is fully loaded
+                tokio::time::sleep(tokio::time::Duration::from_millis(4000)).await;
+                
+                if let Ok(printer_guard) = printer_service.lock() {
+                    printer_guard.start_print_queue_processor();
+                    println!("🖨️ Print queue processor started successfully");
+                } else {
+                    println!("⚠️ Failed to start print queue processor: could not acquire lock");
                 }
             });
             

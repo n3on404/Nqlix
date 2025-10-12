@@ -15,7 +15,8 @@ interface Staff {
 interface AuthContextInterface {
   isAuthenticated: boolean;
   currentStaff: Staff | null;
-  login: (cin: string) => Promise<any>;
+  selectedRoute: string | null;
+  login: (cin: string, route?: string) => Promise<any>;
   logout: () => Promise<void>;
   isLoading: boolean;
   restoreSession: () => Promise<boolean>;
@@ -24,6 +25,7 @@ interface AuthContextInterface {
 const AuthContext = createContext<AuthContextInterface>({
   isAuthenticated: false,
   currentStaff: null,
+  selectedRoute: null,
   login: async () => ({}),
   logout: async () => {},
   isLoading: true,
@@ -35,6 +37,7 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
+  const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const sessionManager = SessionManager.getInstance();
 
@@ -50,6 +53,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (validationResult.isValid && validationResult.session) {
         console.log('✅ Session restored successfully');
         setCurrentStaff(validationResult.session.staff);
+        setSelectedRoute(validationResult.session.selectedRoute || null);
         setIsAuthenticated(true);
         return true;
       } else {
@@ -57,6 +61,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         sessionManager.clearSession();
         setIsAuthenticated(false);
         setCurrentStaff(null);
+        setSelectedRoute(null);
         return false;
       }
     } catch (error) {
@@ -64,6 +69,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       sessionManager.clearSession();
       setIsAuthenticated(false);
       setCurrentStaff(null);
+      setSelectedRoute(null);
       return false;
     }
   };
@@ -79,6 +85,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         sessionManager.clearSession();
         setIsAuthenticated(false);
         setCurrentStaff(null);
+        setSelectedRoute(null);
       } finally {
         setIsLoading(false);
       }
@@ -87,20 +94,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     initializeAuth();
   }, []);
 
-  const login = async (cin: string) => {
+  const login = async (cin: string, route?: string) => {
     try {
-      const response = await api.login(cin);
+      const response = await api.login(cin, route);
       
       if (response.success && response.staff) {
         console.log('✅ Login successful, saving session...');
         setIsAuthenticated(true);
         setCurrentStaff(response.staff);
+        setSelectedRoute(route || null);
         
-        // Save session
+        // Save session with route information
         if (response.token) {
           sessionManager.saveSession({
             token: response.token,
             staff: response.staff,
+            selectedRoute: route || null,
             expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
           });
         }
@@ -127,6 +136,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Clear local state regardless of API response
       setIsAuthenticated(false);
       setCurrentStaff(null);
+      setSelectedRoute(null);
       sessionManager.clearSession();
     }
   };
@@ -135,6 +145,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     <AuthContext.Provider value={{
       isAuthenticated,
       currentStaff,
+      selectedRoute,
       login,
       logout,
       isLoading,

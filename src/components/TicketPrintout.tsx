@@ -339,7 +339,7 @@ export function TicketPrintout({ booking }: { booking: any }) {
           <span style={printStyles.arabicTitle}>المركبة</span>
         </div>
         <div style={printStyles.vehiclePlate}>
-          {booking.vehicleLicensePlate}
+          {booking.vehicleLicensePlate || booking.licensePlate}
         </div>
       </div>
 

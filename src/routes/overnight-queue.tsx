@@ -6,6 +6,7 @@ import { Badge } from '../components/ui/badge';
 import { Loader2, Plus, Trash2, Car, Users, MapPin, Clock, AlertCircle, CheckCircle } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../context/AuthProvider';
+import { dbClient } from '../services/dbClient';
 
 interface OvernightQueueEntry {
   id: string;
@@ -44,7 +45,7 @@ export default function OvernightQueuePage() {
   const [selectedVehicleData, setSelectedVehicleData] = useState<any>(null);
   const [destinations, setDestinations] = useState<any[]>([]);
   const [selectedDestination, setSelectedDestination] = useState<string>('');
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, selectedRoute } = useAuth();
 
   // Real-time disabled
 
@@ -72,19 +73,28 @@ export default function OvernightQueuePage() {
   // Load available destinations for overnight queue
   const loadDestinations = async () => {
     try {
-      const response = await api.getAllRoutes();
-      if (response.success && response.data) {
-        // Handle nested response structure
-        const routes = response.data?.data || response.data;
-        // Convert routes to destinations format
-        const destinations = routes.map((route: any) => ({
-          id: route.stationId,
-          name: route.stationName
-        }));
-        setDestinations(destinations);
-      }
+      const destinations = await dbClient.getAvailableDestinations(selectedRoute || undefined);
+      const mappedDestinations = destinations.map((dest: any) => ({
+        id: dest.stationId,
+        name: dest.stationName
+      }));
+      setDestinations(mappedDestinations);
     } catch (error: any) {
       console.error('Error loading destinations:', error);
+      // Fallback to API if dbClient fails
+      try {
+        const response = await api.getAllRoutes();
+        if (response.success && response.data) {
+          const routes = response.data?.data || response.data;
+          const destinations = routes.map((route: any) => ({
+            id: route.stationId,
+            name: route.stationName
+          }));
+          setDestinations(destinations);
+        }
+      } catch (apiError) {
+        console.error('API fallback also failed:', apiError);
+      }
     }
   };
 

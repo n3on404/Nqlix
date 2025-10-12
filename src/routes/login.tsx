@@ -6,12 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input';
 import { Loader2, Shield, AlertCircle, Settings } from "lucide-react";
 import { useInit } from "../context/InitProvider";
+import RouteSelection from '../components/RouteSelection';
 
-type LoginStep = 'login' | 'success' | 'config';
+type LoginStep = 'route-selection' | 'login' | 'success' | 'config';
 
 export default function LoginScreen() {
-  const [step, setStep] = useState<LoginStep>('login');
+  const [step, setStep] = useState<LoginStep>('route-selection');
   const [cin, setCin] = useState("");
+  const [selectedRoute, setSelectedRoute] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -25,6 +27,11 @@ export default function LoginScreen() {
     setServerUrl(systemStatus.localNodeUrl.replace(/\/api$/, ''));
   }, [systemStatus.localNodeUrl]);
 
+  const handleRouteSelected = (routeId: string) => {
+    setSelectedRoute(routeId);
+    setStep('login');
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -37,7 +44,7 @@ export default function LoginScreen() {
     }
 
     try {
-      const response = await login(cin);
+      const response = await login(cin, selectedRoute);
       
       if (response.success) {
         setShowSuccess(true);
@@ -66,6 +73,10 @@ export default function LoginScreen() {
     setCin(value);
     setError(null);
   };
+
+  if (step === 'route-selection') {
+    return <RouteSelection onRouteSelected={handleRouteSelected} isLoading={isLoading} />;
+  }
 
   if (showSuccess) {
     return (
@@ -142,6 +153,13 @@ export default function LoginScreen() {
           </CardTitle>
           <CardDescription>
             Connectez-vous avec votre numéro CIN
+            {selectedRoute && (
+              <div className="mt-2">
+                <span className="text-sm text-blue-600 font-medium">
+                  Route sélectionnée: {selectedRoute}
+                </span>
+              </div>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -185,7 +203,13 @@ export default function LoginScreen() {
             </Button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-gray-200">
+          <div className="mt-6 pt-4 border-t border-gray-200 space-y-2">
+            <button
+              onClick={() => setStep('route-selection')}
+              className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
+            >
+              ← Retour à la sélection de route
+            </button>
             <button
               onClick={() => setStep('config')}
               className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"

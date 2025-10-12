@@ -33,8 +33,8 @@ export interface AuthorizedDestinationDto {
 }
 
 export const dbClient = {
-  async getQueueSummaries(): Promise<QueueSummaryDto[]> {
-    return invoke<QueueSummaryDto[]>('db_get_queue_summaries');
+  async getQueueSummaries(routeFilter?: string): Promise<QueueSummaryDto[]> {
+    return invoke<QueueSummaryDto[]>('db_get_queue_summaries', { routeFilter });
   },
 
   async getQueueByDestination(destinationId: string): Promise<QueueItemDto[]> {
@@ -58,10 +58,11 @@ export const dbClient = {
   },
 
   // Booking flows
-  async getAvailableBookingDestinations(filters?: { governorate?: string; delegation?: string }) {
+  async getAvailableBookingDestinations(filters?: { governorate?: string; delegation?: string; routeFilter?: string }) {
     return invoke<any>('db_get_available_booking_destinations', {
       governorate: filters?.governorate,
       delegation: filters?.delegation,
+      routeFilter: filters?.routeFilter,
     });
   },
 
@@ -134,8 +135,8 @@ export const dbClient = {
     return invoke<VehicleDto[]>('db_get_all_vehicles');
   },
 
-  async getAvailableDestinations() {
-    return invoke<DestinationDto[]>('db_get_available_destinations');
+  async getAvailableDestinations(routeFilter?: string) {
+    return invoke<DestinationDto[]>('db_get_available_destinations', { routeFilter });
   },
 
   async getStationsByGovernorate(governorate: string) {

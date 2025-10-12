@@ -63,7 +63,7 @@ interface Government {
 }
 
 export default function MainBooking() {
-  const { currentStaff } = useAuth();
+  const { currentStaff, selectedRoute } = useAuth();
   const { systemStatus } = useInit();
   const { 
     notifyPaymentSuccess, 
@@ -118,7 +118,9 @@ export default function MainBooking() {
     totalSeats: number;
     totalAmount: number;
   } | null>(null);
-  const [isCancelling, setIsCancelling] = useState(false);
+  
+  // Seat cancellation state
+  const [isCancelingSeat, setIsCancelingSeat] = useState(false);
   
   // Filter states
   const [governments, setGovernments] = useState<Government[]>([]);
@@ -201,6 +203,56 @@ export default function MainBooking() {
       setAvailableSeats(1);
     }
     setBookingData({ seats: 1 });
+  };
+
+  // Handle seat cancellation
+  const handleCancelSeat = async () => {
+    if (!selectedDestination || !currentStaff) return;
+    
+    setIsCancelingSeat(true);
+    try {
+      console.log('🚫 Canceling seat for destination:', selectedDestination.destinationId);
+      
+      const result = await dbClient.cancelSeatFromDestination(
+        selectedDestination.destinationId,
+        currentStaff.id
+      );
+      
+      console.log('✅ Seat cancellation result:', result);
+      
+      // Show success notification
+      notifyPaymentSuccess({
+        seatsTaken: 1,
+        destinationName: selectedDestination.destinationName,
+        vehicleLicensePlate: selectedVehicle?.licensePlate || 'N/A',
+        availableSeats: (selectedVehicle?.availableSeats || 0) + 1,
+        totalSeats: selectedVehicle?.totalSeats || 8
+      });
+      
+      // Refresh the queue data to reflect the cancellation
+      await refreshQueues();
+      await fetchDestinations();
+      if (selectedDestination) {
+        await fetchQueueForDestination(selectedDestination.destinationId);
+      }
+      
+      // Update selected vehicle data if it's still selected
+      if (selectedVehicle) {
+        const updatedVehicle = {
+          ...selectedVehicle,
+          availableSeats: selectedVehicle.availableSeats + 1
+        };
+        setSelectedVehicle(updatedVehicle);
+      }
+      
+    } catch (error) {
+      console.error('❌ Failed to cancel seat:', error);
+      notifyPaymentFailed({
+        error: error instanceof Error ? error.message : 'Failed to cancel seat'
+      });
+    } finally {
+      setIsCancelingSeat(false);
+    }
   };
 
   const getBasePriceForDestination = (destinationName: string) => {
@@ -603,12 +655,15 @@ export default function MainBooking() {
         throw new Error('Database connection is not healthy');
       }
       
-      const filters: { governorate?: string; delegation?: string } = {};
+      const filters: { governorate?: string; delegation?: string; routeFilter?: string } = {};
       if (selectedGovernment) {
         filters.governorate = selectedGovernment;
       }
       if (selectedDelegation) {
         filters.delegation = selectedDelegation;
+      }
+      if (selectedRoute) {
+        filters.routeFilter = selectedRoute;
       }
       
       console.log('🔍 [MAIN BOOKING DEBUG] Fetching destinations with filters:', filters);
@@ -1534,9 +1589,9 @@ export default function MainBooking() {
             );
             
             if (vehicleInQueue && vehicleInQueue.totalSeats && vehicleInQueue.availableSeats !== undefined) {
-              // Calculate seats already booked: total capacity - available seats
-              // Note: availableSeats is AFTER the booking, so we need to add back the seats we just booked
-              seatsAlreadyBooked = vehicleInQueue.totalSeats - vehicleInQueue.availableSeats - seatsToBook;
+              // Calculate seats already booked BEFORE this booking
+              // availableSeats is AFTER the booking, so seats already booked = total - (available + just booked)
+              seatsAlreadyBooked = vehicleInQueue.totalSeats - (vehicleInQueue.availableSeats + seatsToBook);
               console.log(`🚗 Vehicle ${vehicleLicensePlate} info:`, {
                 totalSeats: vehicleInQueue.totalSeats,
                 availableSeats: vehicleInQueue.availableSeats,
@@ -2124,6 +2179,69 @@ export default function MainBooking() {
           </div>
         )}
                     </div>
+
+            {/* Selected Vehicle Seat Management - Show when vehicle is selected */}
+            {selectedVehicle && selectedDestination && activeTab === 'bookings' && (
+              <div className="mb-6">
+                <Card className="border-orange-200 bg-orange-50 dark:bg-orange-900/20">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-orange-800 dark:text-orange-200">
+                      <Users className="h-5 w-5" />
+                      Gestion des Places - Véhicule {selectedVehicle.licensePlate}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Vehicle Info */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border">
+                          <span className="font-medium">Places Réservées:</span>
+                          <Badge variant="outline" className="text-lg font-bold">
+                            {selectedVehicle.totalSeats - selectedVehicle.availableSeats}/{selectedVehicle.totalSeats}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border">
+                          <span className="font-medium">Places Disponibles:</span>
+                          <Badge variant="outline" className="text-lg font-bold text-green-600">
+                            {selectedVehicle.availableSeats}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      {/* Seat Cancellation */}
+                      <div className="space-y-3">
+                        <div className="text-center">
+                          <h4 className="font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                            Annuler une Place
+                          </h4>
+                          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                            Annule la dernière réservation pour cette destination
+                          </p>
+                          <Button
+                            onClick={handleCancelSeat}
+                            disabled={isCancelingSeat || (selectedVehicle.totalSeats - selectedVehicle.availableSeats) === 0}
+                            variant="outline"
+                            className="w-full border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+                          >
+                            {isCancelingSeat ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Annulation...
+                              </>
+                            ) : (
+                              <>
+                                <X className="w-4 h-4 mr-2" />
+                                Annuler 1 Place
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
 
             {/* Bottom Booking Panel - Only show when destination is selected */}
       {selectedDestination && activeTab === 'bookings' && (

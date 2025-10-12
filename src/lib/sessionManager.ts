@@ -11,6 +11,7 @@ export interface SessionData {
     role: string;
     phoneNumber?: string;
   };
+  selectedRoute?: string | null;
   expiresAt?: Date;
 }
 
@@ -43,6 +44,10 @@ class SessionManager {
       setLocalStorage('auth', { token: session.token });
       setLocalStorage('staff', session.staff);
       
+      if (session.selectedRoute) {
+        setLocalStorage('selectedRoute', session.selectedRoute);
+      }
+      
       if (session.expiresAt) {
         setLocalStorage('session_expires', session.expiresAt.toISOString());
       }
@@ -60,6 +65,7 @@ class SessionManager {
     try {
       const authData = getLocalStorage('auth');
       const staffData = getLocalStorage('staff');
+      const selectedRouteData = getLocalStorage('selectedRoute');
       const expiresData = getLocalStorage('session_expires');
 
       if (!authData?.token || !staffData) {
@@ -69,6 +75,7 @@ class SessionManager {
       const session: SessionData = {
         token: authData.token,
         staff: staffData,
+        selectedRoute: selectedRouteData || null,
         expiresAt: expiresData ? new Date(expiresData) : undefined
       };
 
@@ -149,6 +156,7 @@ class SessionManager {
       this.currentSession = null;
       removeLocalStorage('auth');
       removeLocalStorage('staff');
+      removeLocalStorage('selectedRoute');
       removeLocalStorage('session_expires');
       console.log('🧹 Session cleared from localStorage');
     } catch (error) {
