@@ -1038,8 +1038,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
         total_amount += amount;
         
         tx.execute(
-            r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, booking_status, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
-                VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','ACTIVE','PAID','CASH',$5,false,$6,NOW())"#,
+            r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
+                VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW())"#,
             &[&bid, &qid, &take, &amount, &verification_code, &created_by]
         ).await.map_err(|e| e.to_string())?;
 
@@ -1419,8 +1419,8 @@ async fn db_create_vehicle_specific_booking(queue_id: String, seats_requested: i
     total_amount += amount;
     
     tx.execute(
-        r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, booking_status, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
-            VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','ACTIVE','PAID','CASH',$5,false,$6,NOW())"#,
+        r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
+            VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW())"#,
         &[&bid, &qid, &take, &amount, &verification_code, &created_by]
     ).await.map_err(|e| e.to_string())?;
 
@@ -1515,7 +1515,7 @@ async fn db_cancel_queue_booking(booking_id: String) -> Result<(), String> {
     
     // Get booking details
     let row = tx.query_one(
-        "SELECT queue_id, seats_booked, total_amount, booking_status FROM bookings WHERE id = $1", 
+        "SELECT queue_id, seats_booked, total_amount FROM bookings WHERE id = $1", 
         &[&booking_id]
     )
     .await.map_err(|e| e.to_string())?;
@@ -1523,18 +1523,11 @@ async fn db_cancel_queue_booking(booking_id: String) -> Result<(), String> {
     let qid: String = row.get("queue_id");
     let seats: i32 = row.get("seats_booked");
     let total_amount: f64 = row.get("total_amount");
-    let current_status: String = row.get("booking_status");
     
-    // Check if booking is already cancelled
-    if current_status == "CANCELLED" {
-        tx.commit().await.map_err(|e| e.to_string())?;
-        return Err("Booking is already cancelled".to_string());
-    }
-    
-    // Update booking status to CANCELLED instead of deleting
+    // Delete the booking record
     tx.execute(
-        "UPDATE bookings SET booking_status = 'CANCELLED', cancelled_at = NOW(), refund_amount = $1 WHERE id = $2", 
-        &[&total_amount, &booking_id]
+        "DELETE FROM bookings WHERE id = $1", 
+        &[&booking_id]
     )
     .await.map_err(|e| e.to_string())?;
     
@@ -1571,22 +1564,22 @@ async fn db_cancel_seat_from_destination(destination_id: String, created_by: Opt
     let booking_query = if let Some(ref _staff_id) = created_by {
         // Find booking by specific staff member
         r#"
-        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate, b.booking_status
+        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate
         FROM bookings b
         JOIN vehicle_queue vq ON b.queue_id = vq.id
         JOIN vehicles v ON vq.vehicle_id = v.id
-        WHERE vq.destination_id = $1 AND b.created_by = $2 AND b.booking_status = 'ACTIVE'
+        WHERE vq.destination_id = $1 AND b.created_by = $2
         ORDER BY b.created_at DESC
         LIMIT 1
         "#
     } else {
         // Find any booking for this destination (fallback)
         r#"
-        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate, b.booking_status
+        SELECT b.id, b.queue_id, b.seats_booked, b.total_amount, b.verification_code, vq.destination_name, v.license_plate
         FROM bookings b
         JOIN vehicle_queue vq ON b.queue_id = vq.id
         JOIN vehicles v ON vq.vehicle_id = v.id
-        WHERE vq.destination_id = $1 AND b.booking_status = 'ACTIVE'
+        WHERE vq.destination_id = $1
         ORDER BY b.created_at DESC
         LIMIT 1
         "#
@@ -1646,10 +1639,10 @@ async fn db_cancel_seat_from_destination(destination_id: String, created_by: Opt
             tx.commit().await.map_err(|e| e.to_string())?;
             Ok(format!("1 place annulée de la réservation {} pour {} (véhicule {})", verification_code, destination_name, license_plate))
         } else {
-            // Cancel the entire booking if only 1 seat - UPDATE STATUS instead of DELETE
+            // Cancel the entire booking if only 1 seat - DELETE the booking
             tx.execute(
-                "UPDATE bookings SET booking_status = 'CANCELLED', cancelled_at = NOW(), refund_amount = $1 WHERE id = $2", 
-                &[&total_amount, &booking_id]
+                "DELETE FROM bookings WHERE id = $1", 
+                &[&booking_id]
             )
             .await.map_err(|e| e.to_string())?;
             

@@ -1410,7 +1410,18 @@ export default function MainBooking() {
 
     } catch (error: any) {
       console.error('❌ Cancel booking error:', error);
-      alert(`❌ Network Error!\n\nFailed to cancel booking: ${error.message}\n\nPlease check your connection and try again.`);
+      
+      // Extract meaningful error message
+      let errorMessage = 'Unknown error occurred';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error?.toString) {
+        errorMessage = error.toString();
+      }
+      
+      alert(`❌ Network Error!\n\nFailed to cancel booking: ${errorMessage}\n\nPlease check your connection and try again.`);
     } finally {
       setIsCancelingSeat(false);
     }
@@ -1444,13 +1455,23 @@ export default function MainBooking() {
     } catch (error: any) {
       console.error('❌ Failed to cancel seat:', error);
       
+      // Extract meaningful error message
+      let errorMessage = 'Erreur inconnue';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error?.toString) {
+        errorMessage = error.toString();
+      }
+      
       // Handle specific access denied errors
-      if (error.message?.includes('Accès refusé') || error.message?.includes('n\'est plus dans la file d\'attente')) {
-        alert(`❌ ${error.message}`);
-      } else if (error.message?.includes('Aucune réservation trouvée')) {
-        alert(`❌ ${error.message}`);
+      if (errorMessage.includes('Accès refusé') || errorMessage.includes('n\'est plus dans la file d\'attente')) {
+        alert(`❌ ${errorMessage}`);
+      } else if (errorMessage.includes('Aucune réservation trouvée')) {
+        alert(`❌ ${errorMessage}`);
       } else {
-        alert(`❌ Erreur lors de l'annulation: ${error.message || 'Erreur inconnue'}`);
+        alert(`❌ Erreur lors de l'annulation: ${errorMessage}`);
       }
     }
   };
@@ -1734,7 +1755,18 @@ export default function MainBooking() {
       }
     } catch (error: any) {
       console.error('❌ Booking error:', error);
-      alert(`❌ Network Error!\n\nFailed to process booking: ${error.message}\n\nPlease check your connection and try again.`);
+      
+      // Extract meaningful error message
+      let errorMessage = 'Unknown error occurred';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error?.toString) {
+        errorMessage = error.toString();
+      }
+      
+      alert(`❌ Network Error!\n\nFailed to process booking: ${errorMessage}\n\nPlease check your connection and try again.`);
     } finally {
       setIsProcessing(false);
     }
