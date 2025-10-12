@@ -44,7 +44,7 @@ export default function LoginScreen() {
     }
 
     try {
-      const response = await login(cin, selectedRoute);
+      const response = await login(cin, selectedRoute ?? undefined);
       
       if (response.success) {
         setShowSuccess(true);

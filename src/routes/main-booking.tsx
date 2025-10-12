@@ -222,11 +222,12 @@ export default function MainBooking() {
       
       // Show success notification
       notifyPaymentSuccess({
-        seatsTaken: 1,
+        verificationCode: 'CANCELLED',
+        totalAmount: 0,
+        seatsBooked: 1,
         destinationName: selectedDestination.destinationName,
         vehicleLicensePlate: selectedVehicle?.licensePlate || 'N/A',
-        availableSeats: (selectedVehicle?.availableSeats || 0) + 1,
-        totalSeats: selectedVehicle?.totalSeats || 8
+        paymentReference: 'SEAT_CANCELLATION'
       });
       
       // Refresh the queue data to reflect the cancellation
@@ -248,7 +249,9 @@ export default function MainBooking() {
     } catch (error) {
       console.error('❌ Failed to cancel seat:', error);
       notifyPaymentFailed({
-        error: error instanceof Error ? error.message : 'Failed to cancel seat'
+        verificationCode: 'CANCELLATION_FAILED',
+        totalAmount: 0,
+        destinationName: selectedDestination?.destinationName || 'Unknown'
       });
     } finally {
       setIsCancelingSeat(false);
@@ -1309,7 +1312,7 @@ export default function MainBooking() {
       return;
     }
 
-    setIsCancelling(true);
+      setIsCancelingSeat(true);
 
     try {
       // Cancel bookings one by one (since each booking might be on different vehicles)
@@ -1409,7 +1412,7 @@ export default function MainBooking() {
       console.error('❌ Cancel booking error:', error);
       alert(`❌ Network Error!\n\nFailed to cancel booking: ${error.message}\n\nPlease check your connection and try again.`);
     } finally {
-      setIsCancelling(false);
+      setIsCancelingSeat(false);
     }
   };
 
