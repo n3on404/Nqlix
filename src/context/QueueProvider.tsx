@@ -16,6 +16,8 @@ interface QueueItem {
   licensePlate?: string;
   totalSeats?: number;
   status?: string;
+  subRoute?: string | null;
+  subRouteName?: string | null;
   vehicle: {
     licensePlate: string;
     driver: {
@@ -218,6 +220,8 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
                 licensePlate: it.licensePlate,
                 totalSeats: it.totalSeats,
                 status: it.status,
+                subRoute: (it as any).subRoute ?? null,
+                subRouteName: (it as any).subRouteName ?? null,
                 vehicle: {
                   licensePlate: it.licensePlate,
                   driver: { cin: '' },
@@ -465,6 +469,8 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
           licensePlate: it.licensePlate,
           totalSeats: it.totalSeats,
           status: it.status,
+          subRoute: (it as any).subRoute ?? null,
+          subRouteName: (it as any).subRouteName ?? null,
           vehicle: {
             licensePlate: it.licensePlate,
             driver: { cin: '' },

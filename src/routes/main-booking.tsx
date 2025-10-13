@@ -51,6 +51,8 @@ interface Destination {
   governorateAr?: string;
   delegation?: string;
   delegationAr?: string;
+  subRouteName?: string;
+  baseDestinationName?: string;
 }
 
 interface Government {
@@ -106,6 +108,68 @@ export default function MainBooking() {
   // Track current destination ID to maintain focus after refresh
   const [currentDestinationId, setCurrentDestinationId] = useState<string | null>(null);
   
+  // Persistent selection state keys
+  const SELECTED_DESTINATION_KEY = 'mainBooking_selectedDestination';
+  const SELECTED_VEHICLE_KEY = 'mainBooking_selectedVehicle';
+
+  // Save selection state to localStorage
+  const saveSelectionState = (destination: Destination | null, vehicle: any | null) => {
+    try {
+      if (destination) {
+        localStorage.setItem(SELECTED_DESTINATION_KEY, JSON.stringify({
+          destinationId: destination.destinationId,
+          destinationName: destination.destinationName,
+          baseDestinationName: destination.baseDestinationName,
+          subRouteName: destination.subRouteName,
+          totalAvailableSeats: destination.totalAvailableSeats
+        }));
+      } else {
+        localStorage.removeItem(SELECTED_DESTINATION_KEY);
+      }
+
+      if (vehicle) {
+        localStorage.setItem(SELECTED_VEHICLE_KEY, JSON.stringify({
+          queueId: vehicle.queueId,
+          licensePlate: vehicle.licensePlate,
+          availableSeats: vehicle.availableSeats,
+          totalSeats: vehicle.totalSeats,
+          queuePosition: vehicle.queuePosition
+        }));
+      } else {
+        localStorage.removeItem(SELECTED_VEHICLE_KEY);
+      }
+      
+      console.log('💾 Selection state saved to localStorage');
+    } catch (error) {
+      console.warn('⚠️ Failed to save selection state:', error);
+    }
+  };
+
+  // Restore selection state from localStorage
+  const restoreSelectionState = () => {
+    try {
+      const savedDestination = localStorage.getItem(SELECTED_DESTINATION_KEY);
+      const savedVehicle = localStorage.getItem(SELECTED_VEHICLE_KEY);
+      
+      if (savedDestination) {
+        const destinationData = JSON.parse(savedDestination);
+        console.log('🔄 Restoring destination from localStorage:', destinationData);
+        setCurrentDestinationId(destinationData.destinationId);
+      }
+      
+      if (savedVehicle) {
+        const vehicleData = JSON.parse(savedVehicle);
+        console.log('🔄 Restoring vehicle from localStorage:', vehicleData);
+        setSelectedVehicle(vehicleData);
+      }
+      
+      return { destinationData: savedDestination ? JSON.parse(savedDestination) : null, vehicleData: savedVehicle ? JSON.parse(savedVehicle) : null };
+    } catch (error) {
+      console.warn('⚠️ Failed to restore selection state:', error);
+      return { destinationData: null, vehicleData: null };
+    }
+  };
+  
   // Debounced fetch destinations to prevent excessive calls
   const [fetchDestinationsTimeout, setFetchDestinationsTimeout] = useState<NodeJS.Timeout | null>(null);
   
@@ -118,6 +182,11 @@ export default function MainBooking() {
     totalSeats: number;
     totalAmount: number;
   } | null>(null);
+  // Transform/cancel action panel state
+  const [showTransformPanel, setShowTransformPanel] = useState(false);
+  const [transformQuery, setTransformQuery] = useState<string>("");
+  const [transformSelectedPlates, setTransformSelectedPlates] = useState<Set<string>>(new Set());
+  const [transformTargetQueueId, setTransformTargetQueueId] = useState<string | null>(null);
   
   // Seat cancellation state
   const [isCancelingSeat, setIsCancelingSeat] = useState(false);
@@ -181,16 +250,23 @@ export default function MainBooking() {
   
   // Vehicle selection handler
   const handleVehicleSelect = (queue: any) => {
-    setSelectedVehicle({
+    const vehicleData = {
       queueId: queue.id,
       licensePlate: queue.licensePlate,
       availableSeats: queue.availableSeats,
       totalSeats: queue.totalSeats,
       queuePosition: queue.queuePosition
-    });
+    };
+    
+    setSelectedVehicle(vehicleData);
     // Set the available seats to the vehicle's actual available seats
     setAvailableSeats(queue.availableSeats);
     setBookingData({ seats: 1 }); // Start with 1 seat selected by default
+    
+    // Save selection state
+    saveSelectionState(selectedDestination, vehicleData);
+    
+    console.log('🚗 Vehicle selected and saved:', vehicleData.licensePlate);
   };
 
   // Clear vehicle selection
@@ -203,6 +279,60 @@ export default function MainBooking() {
       setAvailableSeats(1);
     }
     setBookingData({ seats: 1 });
+    
+    // Save selection state (clear vehicle)
+    saveSelectionState(selectedDestination, null);
+    
+    console.log('🚗 Vehicle selection cleared and saved');
+  };
+
+  // Validate and restore vehicle selection after queue updates
+  const validateVehicleSelection = () => {
+    if (selectedVehicle && selectedDestination) {
+      const baseDestinationName = selectedDestination.baseDestinationName || selectedDestination.destinationName;
+      const normalizedDestination = normalizeDestinationName(baseDestinationName);
+      const destinationQueues = queues[normalizedDestination] || [];
+      
+      // Filter by sub-route if needed
+      let filteredQueues = destinationQueues;
+      if (selectedDestination.subRouteName) {
+        filteredQueues = destinationQueues.filter((q: any) => {
+          const queueSubRoute = (q.subRouteName || q.subRoute || '').toString().toUpperCase().trim();
+          return queueSubRoute === selectedDestination.subRouteName!.toUpperCase();
+        });
+      }
+      
+      const vehicleStillExists = filteredQueues.some((q: any) => q.id === selectedVehicle.queueId);
+      
+      if (!vehicleStillExists) {
+        console.log('🚗 Selected vehicle no longer exists, clearing selection');
+        setSelectedVehicle(null);
+        // Reset available seats to destination total
+        setAvailableSeats(selectedDestination.totalAvailableSeats);
+        setBookingData({ seats: 1 });
+        
+        // Save cleared vehicle selection
+        saveSelectionState(selectedDestination, null);
+      } else {
+        console.log('🚗 Vehicle selection validated and maintained:', selectedVehicle.licensePlate);
+        // Update vehicle data with latest information
+        const updatedVehicle = filteredQueues.find((q: any) => q.id === selectedVehicle.queueId);
+        if (updatedVehicle && updatedVehicle.licensePlate && updatedVehicle.availableSeats !== undefined && updatedVehicle.totalSeats !== undefined && updatedVehicle.queuePosition !== undefined) {
+          const updatedVehicleData = {
+            queueId: updatedVehicle.id,
+            licensePlate: updatedVehicle.licensePlate,
+            availableSeats: updatedVehicle.availableSeats,
+            totalSeats: updatedVehicle.totalSeats,
+            queuePosition: updatedVehicle.queuePosition
+          };
+          setSelectedVehicle(updatedVehicleData);
+          setAvailableSeats(updatedVehicle.availableSeats);
+          
+          // Save updated vehicle data
+          saveSelectionState(selectedDestination, updatedVehicleData);
+        }
+      }
+    }
   };
 
   // Handle seat cancellation
@@ -638,8 +768,11 @@ export default function MainBooking() {
     setFetchDestinationsTimeout(timeout);
   };
 
-  // Fetch available destinations from API (only destinations with available seats)
-  const fetchDestinations = async () => {
+  // Flag to prevent auto-selection during data updates
+  const [isUpdatingData, setIsUpdatingData] = useState(false);
+
+  // Fetch destinations without auto-selection (for post-booking updates)
+  const fetchDestinationsWithoutAutoSelect = async () => {
     // Prevent multiple simultaneous calls
     if (isFetchingDestinations) {
       console.log('🔄 Fetch destinations already in progress, skipping...');
@@ -673,18 +806,156 @@ export default function MainBooking() {
       const response = await dbClient.getAvailableBookingDestinations(filters);
       console.log('🔍 [MAIN BOOKING DEBUG] Raw destinations response:', response);
       
-      const availableDestinations: Destination[] = (response || [])
+      // Group destinations by base name to avoid duplicates
+      const destinationMap = new Map<string, any>();
+      
+      (response || [])
         .filter((d: any) => (d.totalAvailableSeats || 0) > 0)
-        .map((d: any) => ({
-          destinationId: d.destinationId,
-          destinationName: d.destinationName,
-          totalAvailableSeats: d.totalAvailableSeats,
-          vehicleCount: d.vehicleCount,
-          governorate: d.governorate,
-          governorateAr: d.governorateAr,
-          delegation: d.delegation,
-          delegationAr: d.delegationAr,
-        }));
+        .forEach((d: any) => {
+          const baseName = d.destinationName;
+          const subRoute = d.subRouteName;
+          
+          if (subRoute) {
+            // For destinations with sub-routes, create separate entries
+            const key = `${baseName} (${subRoute})`;
+            destinationMap.set(key, {
+              destinationId: d.destinationId,
+              destinationName: key,
+              totalAvailableSeats: d.totalAvailableSeats,
+              vehicleCount: d.vehicleCount,
+              governorate: d.governorate,
+              governorateAr: d.governorateAr,
+              delegation: d.delegation,
+              delegationAr: d.delegationAr,
+              subRouteName: subRoute,
+              baseDestinationName: baseName,
+            });
+          } else {
+            // For destinations without sub-routes, check if we already have this base name
+            const existingKey = Array.from(destinationMap.keys()).find(k => k.startsWith(baseName));
+            if (!existingKey) {
+              destinationMap.set(baseName, {
+                destinationId: d.destinationId,
+                destinationName: baseName,
+                totalAvailableSeats: d.totalAvailableSeats,
+                vehicleCount: d.vehicleCount,
+                governorate: d.governorate,
+                governorateAr: d.governorateAr,
+                delegation: d.delegation,
+                delegationAr: d.delegationAr,
+                subRouteName: null,
+                baseDestinationName: baseName,
+              });
+            }
+          }
+        });
+      
+      const availableDestinations: Destination[] = Array.from(destinationMap.values());
+      setDestinations(availableDestinations);
+      setLastUpdateTime(new Date().toLocaleTimeString());
+      console.log(`📍 Fetched ${availableDestinations.length} available destinations (without auto-selection)`);
+      
+      // Only restore if we have a current selection, don't auto-select
+      if (currentDestinationId) {
+        const previousDestination = availableDestinations.find(d => d.destinationId === currentDestinationId);
+        if (previousDestination) {
+          console.log('🎯 Restoring previous destination selection:', previousDestination.destinationName);
+          setSelectedDestination(previousDestination);
+          setSelectedQueueDestination(previousDestination.destinationId);
+          fetchQueueForDestination(previousDestination.destinationId);
+        }
+      }
+      
+    } catch (error: any) {
+      console.error('❌ [MAIN BOOKING DEBUG] Error fetching destinations:', error);
+      setDestinations([]);
+    } finally {
+      setIsLoading(false);
+      setIsFetchingDestinations(false);
+    }
+  };
+
+  // Fetch available destinations from API (only destinations with available seats)
+  const fetchDestinations = async () => {
+    // Prevent multiple simultaneous calls
+    if (isFetchingDestinations) {
+      console.log('🔄 Fetch destinations already in progress, skipping...');
+      return;
+    }
+    
+    setIsFetchingDestinations(true);
+    setIsLoading(true);
+    setIsUpdatingData(true);
+    
+    try {
+      // Check database health first
+      const dbHealthy = await dbClient.health();
+      console.log('🔍 [MAIN BOOKING DEBUG] Database health:', dbHealthy);
+      
+      if (!dbHealthy) {
+        throw new Error('Database connection is not healthy');
+      }
+      
+      const filters: { governorate?: string; delegation?: string; routeFilter?: string } = {};
+      if (selectedGovernment) {
+        filters.governorate = selectedGovernment;
+      }
+      if (selectedDelegation) {
+        filters.delegation = selectedDelegation;
+      }
+      if (selectedRoute) {
+        filters.routeFilter = selectedRoute;
+      }
+      
+      console.log('🔍 [MAIN BOOKING DEBUG] Fetching destinations with filters:', filters);
+      const response = await dbClient.getAvailableBookingDestinations(filters);
+      console.log('🔍 [MAIN BOOKING DEBUG] Raw destinations response:', response);
+      
+      // Group destinations by base name to avoid duplicates
+      const destinationMap = new Map<string, any>();
+      
+      (response || [])
+        .filter((d: any) => (d.totalAvailableSeats || 0) > 0)
+        .forEach((d: any) => {
+          const baseName = d.destinationName;
+          const subRoute = d.subRouteName;
+          
+          if (subRoute) {
+            // For destinations with sub-routes, create separate entries
+            const key = `${baseName} (${subRoute})`;
+            destinationMap.set(key, {
+              destinationId: d.destinationId,
+              destinationName: key,
+              totalAvailableSeats: d.totalAvailableSeats,
+              vehicleCount: d.vehicleCount,
+              governorate: d.governorate,
+              governorateAr: d.governorateAr,
+              delegation: d.delegation,
+              delegationAr: d.delegationAr,
+              subRouteName: subRoute,
+              baseDestinationName: baseName,
+            });
+          } else {
+            // For destinations without sub-routes, check if we already have this base name
+            const existingKey = Array.from(destinationMap.keys()).find(k => k.startsWith(baseName));
+            if (!existingKey) {
+              destinationMap.set(baseName, {
+                destinationId: d.destinationId,
+                destinationName: baseName,
+                totalAvailableSeats: d.totalAvailableSeats,
+                vehicleCount: d.vehicleCount,
+                governorate: d.governorate,
+                governorateAr: d.governorateAr,
+                delegation: d.delegation,
+                delegationAr: d.delegationAr,
+                subRouteName: null,
+                baseDestinationName: baseName,
+              });
+            }
+          }
+        });
+      
+      const availableDestinations: Destination[] = Array.from(destinationMap.values());
         setDestinations(availableDestinations);
         setLastUpdateTime(new Date().toLocaleTimeString());
         console.log(`📍 Fetched ${availableDestinations.length} available destinations`);
@@ -698,16 +969,51 @@ export default function MainBooking() {
             setSelectedDestination(previousDestination);
             setSelectedQueueDestination(previousDestination.destinationId);
             fetchQueueForDestination(previousDestination.destinationId);
+            
+            // Also restore vehicle selection if it was previously selected
+            if (selectedVehicle) {
+              console.log('🚗 Checking if previously selected vehicle still exists:', selectedVehicle.licensePlate);
+              // The vehicle selection will be validated when the queue data is fetched
+            }
           } else {
             console.log('⚠️ Previous destination no longer available, auto-selecting first');
             if (availableDestinations.length > 0) {
               handleDestinationSelect(availableDestinations[0]);
             }
           }
-        } else if (availableDestinations.length > 0) {
-          // Auto-select first destination if none is currently selected
-          console.log('🎯 Auto-selecting first destination:', availableDestinations[0].destinationName);
-          handleDestinationSelect(availableDestinations[0]);
+        } else {
+          // Try to restore from localStorage if no current selection
+          const { destinationData, vehicleData } = restoreSelectionState();
+          
+          if (destinationData) {
+            const restoredDestination = availableDestinations.find(d => d.destinationId === destinationData.destinationId);
+            if (restoredDestination) {
+              console.log('🔄 Restoring destination from localStorage:', restoredDestination.destinationName);
+              setSelectedDestination(restoredDestination);
+              setSelectedQueueDestination(restoredDestination.destinationId);
+              fetchQueueForDestination(restoredDestination.destinationId);
+              
+              // Restore vehicle selection if it exists
+              if (vehicleData) {
+                console.log('🔄 Restoring vehicle from localStorage:', vehicleData.licensePlate);
+                setSelectedVehicle(vehicleData);
+                setAvailableSeats(vehicleData.availableSeats);
+              }
+            } else {
+              console.log('⚠️ Saved destination no longer available, auto-selecting first');
+              if (availableDestinations.length > 0) {
+                handleDestinationSelect(availableDestinations[0]);
+              }
+            }
+          } else if (availableDestinations.length > 0 && !selectedDestination && !isUpdatingData) {
+            // Auto-select first destination only if no destination is currently selected and not updating data
+            console.log('🎯 Auto-selecting first destination:', availableDestinations[0].destinationName);
+            handleDestinationSelect(availableDestinations[0]);
+          } else if (selectedDestination) {
+            console.log('🎯 Maintaining current destination selection during refresh:', selectedDestination.destinationName);
+            // Ensure the current selection is saved
+            saveSelectionState(selectedDestination, selectedVehicle);
+          }
         }
     } catch (error: any) {
       console.error('❌ [MAIN BOOKING DEBUG] Error fetching destinations:', error);
@@ -715,6 +1021,7 @@ export default function MainBooking() {
     } finally {
       setIsLoading(false);
       setIsFetchingDestinations(false);
+      setIsUpdatingData(false);
     }
   };
 
@@ -820,7 +1127,15 @@ export default function MainBooking() {
 
   // Fetch available seats and base price for selected destination
   const fetchAvailableSeats = async (destinationId: string) => {
-    const response = await dbClient.getAvailableSeatsForDestination(destinationId);
+    // Derive sub-route from selected destination label like "KSAR HLEL (BOUHJAR)"
+    let subRouteParam: string | undefined = undefined;
+    if (selectedDestination?.destinationName) {
+      const m = selectedDestination.destinationName.match(/^.*\(([^)]+)\)\s*$/);
+      if (m && m[1]) {
+        subRouteParam = m[1].toUpperCase().trim();
+      }
+    }
+    const response = await dbClient.getAvailableSeatsForDestination(destinationId, subRouteParam);
     if (response && typeof response.totalAvailableSeats !== 'undefined') {
       const newAvailableSeats = response.totalAvailableSeats || 0;
       setAvailableSeats(newAvailableSeats);
@@ -861,6 +1176,9 @@ export default function MainBooking() {
 
   // Initial fetch and data loading
   useEffect(() => {
+    // Restore selection state from localStorage on component mount
+    const { destinationData, vehicleData } = restoreSelectionState();
+    
     fetchGovernments();
     fetchDestinations();
     fetchRoutes();
@@ -1038,17 +1356,24 @@ export default function MainBooking() {
     }
   }, [selectedDestination]);
 
+  // Validate vehicle selection when queue data changes
+  useEffect(() => {
+    if (queues && Object.keys(queues).length > 0) {
+      validateVehicleSelection();
+    }
+  }, [queues, selectedVehicle, selectedDestination]);
+
   // When filters change, debounced refetch destinations
   useEffect(() => {
     debouncedFetchDestinations(300); // Short delay for filter changes
   }, [selectedGovernment, selectedDelegation]);
 
-  // Check if selected destination becomes fully booked and clear selection
+  // Check if selected destination becomes fully booked - but don't clear selection immediately
   useEffect(() => {
     if (selectedDestination && availableSeats === 0) {
-      console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is now fully booked, clearing selection`);
-      setSelectedDestination(null);
-      setShowSuccess(false);
+      console.log(`⚠️ Selected destination ${selectedDestination.destinationName} is now fully booked, but maintaining selection`);
+      // Don't clear the selection immediately - let the user decide
+      // The selection will be maintained and they can try again later
     }
   }, [selectedDestination, availableSeats]);
 
@@ -1130,11 +1455,24 @@ export default function MainBooking() {
   }, [destinations, availableSeats, selectedDestination, isProcessing]);
 
   const handleDestinationSelect = (destination: Destination | null) => {
-    console.log("destination", destination);
+    console.log("🎯 Destination selected:", destination);
+    if (destination) {
+      console.log("🎯 Destination details:", {
+        destinationId: destination.destinationId,
+        destinationName: destination.destinationName,
+        baseDestinationName: destination.baseDestinationName,
+        subRouteName: destination.subRouteName,
+        totalAvailableSeats: destination.totalAvailableSeats
+      });
+    }
+    
     setSelectedDestination(destination);
     setCurrentDestinationId(destination?.destinationId || null);
     setShowSuccess(false);
     setLastBookingData(null); // Clear any previous booking data
+    
+    // Save selection state
+    saveSelectionState(destination, selectedVehicle);
     
     // Fetch queue data for the selected destination
     if (destination) {
@@ -1546,7 +1884,7 @@ export default function MainBooking() {
 
         // Manual reconciliation: fetch latest destinations and detailed queue for the focused destination
         try {
-          await fetchDestinations();
+          await fetchDestinationsWithoutAutoSelect();
           if (selectedDestination) {
             await fetchQueueForDestination(selectedDestination.destinationId);
           }
@@ -1725,8 +2063,43 @@ export default function MainBooking() {
           setShowSuccess(false);
           setTicketsPrinted(0);
           setBookingData({ seats: 1 });
-          // Clear vehicle selection but keep destination focus
-          setSelectedVehicle(null);
+          
+          // Ensure destination selection is maintained
+          if (selectedDestination) {
+            console.log('🎯 Maintaining destination selection after booking:', selectedDestination.destinationName);
+            // Save the current destination selection to ensure it persists
+            saveSelectionState(selectedDestination, selectedVehicle);
+          }
+          
+          // Keep vehicle selection if it's still valid, otherwise clear it
+          if (selectedVehicle) {
+            // Check if the selected vehicle still exists in the queue
+            const baseDestinationName = selectedDestination?.baseDestinationName || selectedDestination?.destinationName;
+            const normalizedDestination = normalizeDestinationName(baseDestinationName || '');
+            const destinationQueues = queues[normalizedDestination] || [];
+            
+            // Filter by sub-route if needed
+            let filteredQueues = destinationQueues;
+            if (selectedDestination?.subRouteName) {
+              filteredQueues = destinationQueues.filter((q: any) => {
+                const queueSubRoute = (q.subRouteName || q.subRoute || '').toString().toUpperCase().trim();
+                return queueSubRoute === selectedDestination.subRouteName!.toUpperCase();
+              });
+            }
+            
+            const vehicleStillExists = filteredQueues.some((q: any) => q.id === selectedVehicle.queueId);
+            
+            if (!vehicleStillExists) {
+              console.log('🚗 Selected vehicle no longer exists, clearing selection');
+              setSelectedVehicle(null);
+              // Save cleared vehicle selection
+              saveSelectionState(selectedDestination, null);
+            } else {
+              console.log('🚗 Keeping vehicle selection:', selectedVehicle.licensePlate);
+              // Save the maintained vehicle selection
+              saveSelectionState(selectedDestination, selectedVehicle);
+            }
+          }
         }, 3000);
       } else {
         console.error('❌ Booking failed:', response.message);
@@ -1736,12 +2109,16 @@ export default function MainBooking() {
             response.message?.includes('were just booked by another user')) {
           alert(`⚠️ Booking Conflict!\n\n${response.message}\n\nThe seat availability has been updated. Please select your seats again.`);
           
-          // Clear selection and refresh data immediately
-          setSelectedDestination(null);
+          // Keep destination selection but refresh data
           setShowSuccess(false);
           
           // Force refresh of destinations to show current availability
           fetchDestinations();
+          
+          // Refresh queue data for the current destination
+          if (selectedDestination) {
+            fetchQueueForDestination(selectedDestination.destinationId);
+          }
         } else if (response.message?.includes('Not enough seats available')) {
           alert(`⚠️ Insufficient Seats!\n\n${response.message}\n\nPlease select fewer seats or choose a different destination.`);
           
@@ -1863,10 +2240,10 @@ export default function MainBooking() {
                 {destinations.map((destination: Destination, index: number) => (
                     <Card
                       key={destination.destinationId}
-                    className={`relative cursor-pointer transition-all duration-200 hover:shadow-lg hover:scale-105 ${
+                    className={`relative cursor-pointer transition-colors duration-200 ${
                         selectedDestination?.destinationId === destination.destinationId 
                         ? 'ring-2 ring-orange-500 bg-orange-50 dark:bg-orange-900/20 shadow-lg' 
-                          : 'hover:bg-muted dark:hover:bg-muted'
+                        : 'bg-white dark:bg-gray-900 ring-0 shadow-none hover:bg-gray-50 dark:hover:bg-gray-800'
                       }`}
                       onClick={() => handleDestinationSelect(destination)}
                     >
@@ -1880,40 +2257,59 @@ export default function MainBooking() {
                         </div>
                         
                         <h3 className="font-bold text-base leading-tight">{destination.destinationName}</h3>
+                        {destination.subRouteName && (
+                          <div className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                            Sous-route: {destination.subRouteName}
+                          </div>
+                        )}
                         <div className="flex items-center justify-center gap-1">
                           <Users className="h-4 w-4 text-gray-600" />
                           <p className="text-sm font-semibold text-gray-600 dark:text-gray-400">
                             {destination.totalAvailableSeats} places
                           </p>
                         </div>
-                            {selectedDestination?.destinationId === destination.destinationId && (
+                        {selectedDestination?.destinationId === destination.destinationId && (
                           <div className="flex items-center justify-center gap-2">
                             <CheckCircle className="h-5 w-5 text-orange-600" />
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleCancelSeatFromDestination(destination.destinationId);
-                              }}
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-300 text-xs px-2 py-1"
-                              title="Annuler 1 place de cette destination"
-                            >
-                              <X className="h-3 w-3 mr-1" />
-                              Annuler 1 place
-                            </Button>
-                            </div>
+                          </div>
                         )}
                         </div>
                       </CardContent>
                     </Card>
                   ))}
             </div>
+
+              {/* Action panel below destination cards */}
+              {selectedDestination && (
+                <div className="mt-2 p-3 border rounded-lg bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCancelSeatFromDestination(selectedDestination.destinationId)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-300"
+                    >
+                      <X className="h-4 w-4 mr-1" /> Annuler 1 place
+                    </Button>
+                    {/* Transformer des sièges disabled for now */}
+                  </div>
+                  
+                </div>
+              )}
           </div>
 
             {/* Right Side - Queue Table */}
           <div className="space-y-4">
               <h2 className="text-xl font-bold">File d'Attente</h2>
+              {selectedDestination?.subRouteName && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+                    <MapPin className="w-4 h-4" />
+                    <span className="font-medium">Sous-route active:</span>
+                    <span className="font-bold">{selectedDestination.subRouteName}</span>
+                  </div>
+                </div>
+              )}
               
               {/* Vehicle Selection Panel */}
               {selectedVehicle && (
@@ -1983,8 +2379,27 @@ export default function MainBooking() {
                       </Button>
                 </div>
                   ) : (() => {
-                    const normalizedDestination = normalizeDestinationName(selectedDestination.destinationName);
-                    const destinationQueues = queues[normalizedDestination] || [];
+                    // Use the base destination name from the selected destination
+                    const baseDestinationName = selectedDestination.baseDestinationName || selectedDestination.destinationName;
+                    const selectedSubRouteName = selectedDestination.subRouteName;
+                    const normalizedDestination = normalizeDestinationName(baseDestinationName);
+                    let destinationQueues = queues[normalizedDestination] || [];
+                    
+                    // Filter by sub-route if one is selected
+                    if (selectedSubRouteName) {
+                      destinationQueues = destinationQueues.filter((q: any) => {
+                        const queueSubRoute = (q.subRouteName || q.subRoute || '').toString().toUpperCase().trim();
+                        return queueSubRoute === selectedSubRouteName.toUpperCase();
+                      });
+                      console.log(`🎯 Filtering queue for sub-route "${selectedSubRouteName}": ${destinationQueues.length} vehicles`);
+                    } else {
+                      // If no sub-route is specified, only show vehicles without sub-routes
+                      destinationQueues = destinationQueues.filter((q: any) => {
+                        const queueSubRoute = (q.subRouteName || q.subRoute || '').toString().trim();
+                        return !queueSubRoute || queueSubRoute === '';
+                      });
+                      console.log(`🎯 Filtering queue for main station (no sub-route): ${destinationQueues.length} vehicles`);
+                    }
                     
                     if (destinationQueues.length === 0) {
                       return (
@@ -2017,139 +2432,57 @@ export default function MainBooking() {
                         </div>
                           </div>
                          
-                         {/* Table Rows */}
-                         <div className="max-h-96 overflow-y-auto">
-                           {destinationQueues.map((queue: any, index: number) => {
-                             // Status-based background colors
-                             const getStatusBackground = (status: string) => {
-                               switch (status) {
-                                 case 'WAITING':
-                                   return 'bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20 border-l-4 border-yellow-400';
-                                 case 'LOADING':
-                                   return 'bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border-l-4 border-blue-400';
-                                 case 'READY':
-                                   return 'bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 border-l-4 border-orange-400';
-                                 default:
-                                   return 'bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-800 dark:to-slate-800 border-l-4 border-gray-400';
-                               }
-                             };
-
-                             const getStatusTextColor = (status: string) => {
-                               switch (status) {
-                                 case 'WAITING':
-                                   return 'text-yellow-800 dark:text-yellow-200';
-                                 case 'LOADING':
-                                   return 'text-blue-800 dark:text-blue-200';
-                                 case 'READY':
-                                   return 'text-orange-800 dark:text-orange-200';
-                                 default:
-                                   return 'text-gray-800 dark:text-gray-200';
-                               }
-                             };
-
-                             const getStatusBadgeColor = (status: string) => {
-                               switch (status) {
-                                 case 'WAITING':
-                                   return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300';
-                                 case 'LOADING':
-                                   return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
-                                 case 'READY':
-                                   return 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300';
-                                 default:
-                                   return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300';
-                               }
-                              };
-                              
-                              const isSelected = selectedVehicle?.queueId === queue.id;
-                              
-                              return (
-                               <div
-                                 key={queue.id}
-                                 className={`grid grid-cols-12 gap-4 p-5 border-b border-gray-100 dark:border-gray-700 transition-all duration-200 hover:shadow-md cursor-pointer ${
-                                   isSelected 
-                                     ? 'ring-2 ring-green-500 bg-green-50 dark:bg-green-900/20 shadow-lg' 
-                                     : 'hover:shadow-md'
-                                 } ${getStatusBackground(queue.status)}`}
-                                 onClick={() => handleVehicleSelect(queue)}
-                               >
-                                 {/* Booked Seats */}
-                                 <div className="col-span-2 flex items-center">
-                                   <span className={`font-bold text-lg ${getStatusTextColor(queue.status)}`}>
-                                     {queue.totalSeats - queue.availableSeats}
-                                   </span>
-                                    </div>
-                                 
-                                 {/* Total Seats */}
-                                 <div className="col-span-2 flex items-center">
-                                   <span className={`font-bold text-lg ${getStatusTextColor(queue.status)}`}>
-                                     {queue.totalSeats}
-                                      </span>
-                                    </div>
-                                 
-                                 {/* License Plate */}
-                                 <div className="col-span-5 flex items-center justify-between">
-                                   <div className="flex items-center gap-3 flex-1">
-                                     {isSelected && (
-                                       <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                                         <CheckCircle className="w-4 h-4 text-white" />
-                                       </div>
-                                     )}
-                                     <span className="font-mono text-base font-bold bg-white/50 dark:bg-gray-800/50 px-3 py-2 rounded border min-w-0 flex-1">
-                                       {queue.licensePlate}
-                                     </span>
-                                   </div>
-                                   <Button 
-                                     variant="ghost" 
-                                     size="sm"
-                                     className="text-red-600 hover:text-red-700 hover:bg-red-100 dark:hover:bg-red-900/20 p-2 flex-shrink-0"
-                                     onClick={(e) => {
-                                       e.stopPropagation(); // Prevent vehicle selection when clicking remove button
-                                       // Check vehicle status and handle accordingly
-                                       if (queue.status === 'READY') {
-                                         // Vehicle is ready (fully booked) - show exit pass modal
-                                         triggerExitPassWorkflow(queue, selectedDestination.destinationName);
-                                       } else if (queue.availableSeats === 0) {
-                                         // Vehicle is fully booked but not READY status - change to READY
-                                         triggerExitPassWorkflow(queue, selectedDestination.destinationName);
-                                       } else {
-                                         // Normal removal for non-fully-booked vehicles
-                                         setActionLoading(queue.vehicle.licensePlate);
-                                         exitQueue(queue.vehicle.licensePlate).finally(() => setActionLoading(null));
-                                       }
-                                     }}
-                                     disabled={actionLoading === queue.vehicle.licensePlate || (queue.status !== 'WAITING' && queue.status !== 'READY') || vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)}
-                                     title={
-                                       queue.status === 'READY'
-                                         ? "Véhicule prêt - Cliquez pour imprimer le ticket de sortie"
-                                         : queue.availableSeats === 0 
-                                         ? "Véhicule complet - Cliquez pour changer le statut et imprimer le ticket"
-                                         : vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)
-                                         ? "En attente de confirmation de sortie"
-                                         : "Retirer de la file d'attente"
-                                     }
-                                   >
-                                     {actionLoading === queue.vehicle.licensePlate ? (
-                                       <Loader2 className="h-4 w-4 animate-spin" />
-                                     ) : queue.status === 'READY' ? (
-                                       <Printer className="h-4 w-4" />
-                                     ) : (
-                                       <X className="h-4 w-4" />
-                                     )}
-                                   </Button>
-                                 </div>
-                                 
-                                 {/* Status */}
-                                 <div className="col-span-3 flex items-center">
-                                   <Badge className={`text-sm font-semibold px-3 py-1 ${getStatusBadgeColor(queue.status)}`}>
-                                     {queue.status === 'WAITING' ? 'En attente' :
-                                      queue.status === 'LOADING' ? 'Chargement' :
-                                      queue.status === 'READY' ? 'Complet - Prêt à sortir' : queue.status}
-                                   </Badge>
-                                 </div>
-                               </div>
-                              );
-                            })}
-                      </div>
+                        {/* Table Rows */}
+                        <div className="max-h-96 overflow-y-auto">
+                          {destinationQueues.map((queue: any) => {
+                            const getStatusBackground = (status: string) => {
+                              switch (status) {
+                                case 'WAITING': return 'bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20 border-l-4 border-yellow-400';
+                                case 'LOADING': return 'bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border-l-4 border-blue-400';
+                                case 'READY': return 'bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 border-l-4 border-orange-400';
+                                default: return 'bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-800 dark:to-slate-800 border-l-4 border-gray-400';
+                              }
+                            };
+                            const getStatusTextColor = (status: string) => {
+                              switch (status) {
+                                case 'WAITING': return 'text-yellow-800 dark:text-yellow-200';
+                                case 'LOADING': return 'text-blue-800 dark:text-blue-200';
+                                case 'READY': return 'text-orange-800 dark:text-orange-200';
+                                default: return 'text-gray-800 dark:text-gray-200';
+                              }
+                            };
+                            const getStatusBadgeColor = (status: string) => {
+                              switch (status) {
+                                case 'WAITING': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300';
+                                case 'LOADING': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
+                                case 'READY': return 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300';
+                                default: return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300';
+                              }
+                            };
+                            const isSelected = selectedVehicle?.queueId === queue.id;
+                            return (
+                              <div key={queue.id} className={`grid grid-cols-12 gap-4 p-5 border-b border-gray-100 dark:border-gray-700 transition-all duration-200 hover:shadow-md cursor-pointer ${isSelected ? 'ring-2 ring-green-500 bg-green-50 dark:bg-green-900/20 shadow-lg' : 'hover:shadow-md'} ${getStatusBackground(queue.status)}`} onClick={() => handleVehicleSelect(queue)}>
+                                <div className="col-span-2 flex items-center"><span className={`font-bold text-lg ${getStatusTextColor(queue.status)}`}>{queue.totalSeats - queue.availableSeats}</span></div>
+                                <div className="col-span-2 flex items-center"><span className={`font-bold text-lg ${getStatusTextColor(queue.status)}`}>{queue.totalSeats}</span></div>
+                                <div className="col-span-5 flex items-center justify-between">
+                                  <div className="flex items-center gap-3 flex-1">
+                                    {isSelected && (<div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center"><CheckCircle className="w-4 h-4 text-white" /></div>)}
+                                    <span className="font-mono text-base font-bold bg-white/50 dark:bg-gray-800/50 px-3 py-2 rounded border min-w-0 flex-1">{queue.licensePlate}</span>
+                                    <span className="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 border text-gray-700 dark:text-gray-300"># {queue.queuePosition}</span>
+                                  </div>
+                                  <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-100 dark:hover:bg-red-900/20 p-2 flex-shrink-0" onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (queue.status === 'READY' || queue.availableSeats === 0) { triggerExitPassWorkflow(queue, selectedDestination.destinationName); }
+                                    else { setActionLoading(queue.vehicle.licensePlate); exitQueue(queue.vehicle.licensePlate).finally(() => setActionLoading(null)); }
+                                  }} disabled={actionLoading === queue.vehicle.licensePlate || (queue.status !== 'WAITING' && queue.status !== 'READY') || vehiclesPendingExitConfirmation.has(queue.vehicle.licensePlate)}>
+                                    {actionLoading === queue.vehicle.licensePlate ? (<Loader2 className="h-4 w-4 animate-spin" />) : queue.status === 'READY' ? (<Printer className="h-4 w-4" />) : (<X className="h-4 w-4" />)}
+                                  </Button>
+                                </div>
+                                <div className="col-span-3 flex items-center"><Badge className={`text-sm font-semibold px-3 py-1 ${getStatusBadgeColor(queue.status)}`}>{queue.status === 'WAITING' ? 'En attente' : queue.status === 'LOADING' ? 'Chargement' : queue.status === 'READY' ? 'Complet - Prêt à sortir' : queue.status}</Badge></div>
+                              </div>
+                            );
+                          })}
+                        </div>
                          
                          {/* Table Footer */}
                          {destinationQueues.length > 0 && (
@@ -2215,68 +2548,7 @@ export default function MainBooking() {
         )}
                     </div>
 
-            {/* Selected Vehicle Seat Management - Show when vehicle is selected */}
-            {selectedVehicle && selectedDestination && activeTab === 'bookings' && (
-              <div className="mb-6">
-                <Card className="border-orange-200 bg-orange-50 dark:bg-orange-900/20">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center gap-2 text-orange-800 dark:text-orange-200">
-                      <Users className="h-5 w-5" />
-                      Gestion des Places - Véhicule {selectedVehicle.licensePlate}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Vehicle Info */}
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border">
-                          <span className="font-medium">Places Réservées:</span>
-                          <Badge variant="outline" className="text-lg font-bold">
-                            {selectedVehicle.totalSeats - selectedVehicle.availableSeats}/{selectedVehicle.totalSeats}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center justify-between p-3 bg-white dark:bg-gray-800 rounded-lg border">
-                          <span className="font-medium">Places Disponibles:</span>
-                          <Badge variant="outline" className="text-lg font-bold text-green-600">
-                            {selectedVehicle.availableSeats}
-                          </Badge>
-                        </div>
-                      </div>
-
-                      {/* Seat Cancellation */}
-                      <div className="space-y-3">
-                        <div className="text-center">
-                          <h4 className="font-semibold text-gray-700 dark:text-gray-300 mb-3">
-                            Annuler une Place
-                          </h4>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                            Annule la dernière réservation pour cette destination
-                          </p>
-                          <Button
-                            onClick={handleCancelSeat}
-                            disabled={isCancelingSeat || (selectedVehicle.totalSeats - selectedVehicle.availableSeats) === 0}
-                            variant="outline"
-                            className="w-full border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
-                          >
-                            {isCancelingSeat ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Annulation...
-                              </>
-                            ) : (
-                              <>
-                                <X className="w-4 h-4 mr-2" />
-                                Annuler 1 Place
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
+            {/* Removed old vehicle seat management card in favor of the new action panel below destination cards */}
 
             {/* Bottom Booking Panel - Only show when destination is selected */}
       {selectedDestination && activeTab === 'bookings' && (

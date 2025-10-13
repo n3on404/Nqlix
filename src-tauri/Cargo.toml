@@ -1,6 +1,6 @@
 [package]
 name = "wasla_desktop_app"
-version = "2.6.2"
+version = "2.6.9"
 description = "Wasla Desktop Application - Tunisia Transportation Management System"
 authors = ["you"]
 license = ""

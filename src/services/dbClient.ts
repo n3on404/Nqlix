@@ -16,6 +16,8 @@ export interface QueueItemDto {
   id: string;
   destinationId: string;
   destinationName: string;
+  subRoute?: string | null;
+  subRouteName?: string | null;
   queuePosition: number;
   status: 'WAITING' | 'LOADING' | 'READY' | string;
   availableSeats: number;
@@ -45,8 +47,8 @@ export const dbClient = {
     return invoke<AuthorizedDestinationDto[]>('db_get_vehicle_authorized_destinations', { licensePlate });
   },
 
-  async enterQueueWithDestination(licensePlate: string, destinationId: string, destinationName?: string, staffId?: string) {
-    return invoke<string>('db_enter_queue', { licensePlate, destinationId, destinationName, staffId });
+  async enterQueueWithDestination(licensePlate: string, destinationId: string, destinationName?: string, staffId?: string, subRoute?: string, subRouteName?: string) {
+    return invoke<string>('db_enter_queue', { licensePlate, destinationId, destinationName, staffId, subRoute, subRouteName });
   },
 
   async exitQueue(licensePlate: string) {
@@ -66,8 +68,8 @@ export const dbClient = {
     });
   },
 
-  async getAvailableSeatsForDestination(destinationId: string) {
-    return invoke<any>('db_get_available_seats_for_destination', { destinationId });
+  async getAvailableSeatsForDestination(destinationId: string, subRoute?: string) {
+    return invoke<any>('db_get_available_seats_for_destination', { destinationId, subRoute });
   },
 
   async createQueueBooking(destinationId: string, seatsRequested: number, createdBy?: string) {
@@ -143,8 +145,29 @@ export const dbClient = {
     return invoke<DestinationDto[]>('db_get_stations_by_governorate', { governorate });
   },
 
-  async addVehicleToQueue(licensePlate: string, destinationId: string, destinationName?: string) {
-    return invoke<string>('db_add_vehicle_to_queue', { licensePlate, destinationId, destinationName });
+  async getSubRoutesForDestination(destinationName: string): Promise<Array<{id: string, name: string}>> {
+    // Normalize station names to handle variants like "STATION KSAR HLEL"
+    const norm = (destinationName || '').toUpperCase().trim().replace(/^STATION\s+/,'');
+
+    if (norm.includes('KSAR') && norm.includes('HLEL')) {
+      return [
+        { id: 'BOUHJAR', name: 'BOUHJAR' },
+        { id: 'SAYADA', name: 'SAYADA' }
+      ];
+    }
+
+    if (norm.includes('MOKNIN')) {
+      return [
+        { id: 'REGULAR', name: 'REGULAR' },
+        { id: 'HALKOM', name: 'HALKOM' }
+      ];
+    }
+
+    return [];
+  },
+
+  async addVehicleToQueue(licensePlate: string, destinationId: string, destinationName?: string, subRoute?: string, subRouteName?: string) {
+    return invoke<string>('db_add_vehicle_to_queue', { licensePlate, destinationId, destinationName, subRoute, subRouteName });
   },
 
   async removeVehicleFromQueue(licensePlate: string) {
@@ -197,8 +220,8 @@ export const dbClient = {
   },
 
   // Add new method for transferring seats and removing vehicle
-  async transferSeatsAndRemoveVehicle(licensePlate: string, destinationId: string) {
-    return invoke<string>('db_transfer_seats_and_remove_vehicle', { licensePlate, destinationId });
+  async transferSeatsAndRemoveVehicle(licensePlate: string, destinationId: string, targetQueueId?: string) {
+    return invoke<string>('db_transfer_seats_and_remove_vehicle', { licensePlate, destinationId, targetQueueId });
   },
 
   // Emergency remove vehicle with booked seats (cancel all bookings)
@@ -214,6 +237,18 @@ export const dbClient = {
   // Print day pass for vehicle in queue
   async printDayPassForVehicle(licensePlate: string) {
     return invoke<string>('db_print_day_pass_for_vehicle', { licensePlate });
+  },
+
+  async updateQueueSubroute(queueId: string, subRoute?: string, subRouteName?: string) {
+    return invoke<string>('db_update_queue_subroute', { queueId, subRoute, subRouteName });
+  },
+
+  async bulkUpdateSubroute(destinationId: string, subRoute: string, subRouteName: string, onlyEmpty = true) {
+    return invoke<number>('db_bulk_update_subroute', { destinationId, subRoute, subRouteName, onlyEmpty });
+  },
+
+  async distributeSubroutesEvenly(destinationId: string, leftSub: string, rightSub: string, onlyEmpty = true) {
+    return invoke<number>('db_distribute_subroutes_evenly', { destinationId, leftSub, rightSub, onlyEmpty });
   },
 
   // Realtime functionality
@@ -325,6 +360,19 @@ export interface DestinationDto {
   basePrice: number;
   governorate?: string;
   delegation?: string;
+}
+
+export interface BookingDestinationDto {
+  destinationId: string;
+  destinationName: string;
+  subRoute?: string | null;
+  subRouteName?: string | null;
+  totalAvailableSeats: number;
+  vehicleCount: number;
+  governorate?: string | null;
+  governorateAr?: string | null;
+  delegation?: string | null;
+  delegationAr?: string | null;
 }
 
 export interface VehicleQueueStatusDto {

@@ -76,6 +76,8 @@ struct QueueItemDto {
     id: String,
     destinationId: String,
     destinationName: String,
+    subRoute: Option<String>,
+    subRouteName: Option<String>,
     queuePosition: i32,
     status: String,
     availableSeats: i32,
@@ -98,6 +100,8 @@ async fn map_queue_row(row: &Row) -> QueueItemDto {
         id: row.get::<_, String>("id"),
         destinationId: row.get::<_, String>("destination_id"),
         destinationName: row.get::<_, String>("destination_name"),
+        subRoute: row.get::<_, Option<String>>("sub_route"),
+        subRouteName: row.get::<_, Option<String>>("sub_route_name"),
         queuePosition: row.get::<_, i32>("queue_position"),
         status: row.get::<_, String>("status"),
         availableSeats: row.get::<_, i32>("available_seats"),
@@ -198,6 +202,8 @@ async fn db_get_queue_by_destination(destination_id: String) -> Result<Vec<Queue
         SELECT q.id,
                q.destination_id,
                q.destination_name,
+               q.sub_route,
+               q.sub_route_name,
                q.queue_position,
                q.status,
                q.available_seats,
@@ -215,6 +221,70 @@ async fn db_get_queue_by_destination(destination_id: String) -> Result<Vec<Queue
         items.push(map_queue_row(r).await);
     }
     Ok(items)
+}
+
+#[tauri::command]
+async fn db_update_queue_subroute(queue_id: String, sub_route: Option<String>, sub_route_name: Option<String>) -> Result<String, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let rows = client
+        .execute(
+            "UPDATE vehicle_queue SET sub_route = $1, sub_route_name = $2 WHERE id = $3",
+            &[&sub_route, &sub_route_name, &queue_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    if rows == 0 {
+        return Err("Entrée de file introuvable".to_string());
+    }
+    Ok("Sous-route mise à jour".to_string())
+}
+
+#[tauri::command]
+async fn db_bulk_update_subroute(destination_id: String, sub_route: String, sub_route_name: String, only_empty: bool) -> Result<u64, String> {
+    let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let sql = if only_empty {
+        "UPDATE vehicle_queue SET sub_route = $1, sub_route_name = $2 WHERE destination_id = $3 AND (sub_route IS NULL OR sub_route = '')"
+    } else {
+        "UPDATE vehicle_queue SET sub_route = $1, sub_route_name = $2 WHERE destination_id = $3"
+    };
+    let res = client
+        .execute(sql, &[&sub_route, &sub_route_name, &destination_id])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(res)
+}
+
+#[tauri::command]
+async fn db_distribute_subroutes_evenly(destination_id: String, left_sub: String, right_sub: String, only_empty: bool) -> Result<u64, String> {
+    let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
+    let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
+
+    // Fetch queue entries for destination
+    let rows = if only_empty {
+        tx.query(
+            "SELECT id FROM vehicle_queue WHERE destination_id = $1 AND (sub_route IS NULL OR sub_route = '') ORDER BY queue_position ASC",
+            &[&destination_id]
+        ).await.map_err(|e| e.to_string())?
+    } else {
+        tx.query(
+            "SELECT id FROM vehicle_queue WHERE destination_id = $1 ORDER BY queue_position ASC",
+            &[&destination_id]
+        ).await.map_err(|e| e.to_string())?
+    };
+
+    let mut updated: u64 = 0;
+    for (i, row) in rows.iter().enumerate() {
+        let qid: String = row.get("id");
+        let (sr, srn) = if i % 2 == 0 { (&left_sub, &left_sub) } else { (&right_sub, &right_sub) };
+        let res = tx.execute(
+            "UPDATE vehicle_queue SET sub_route = $1, sub_route_name = $2 WHERE id = $3",
+            &[sr, srn, &qid]
+        ).await.map_err(|e| e.to_string())?;
+        updated += res;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -244,7 +314,7 @@ async fn db_get_vehicle_authorized_destinations(license_plate: String) -> Result
 }
 
 #[tauri::command]
-async fn db_enter_queue(license_plate: String, destination_id: String, destination_name: Option<String>, staff_id: Option<String>) -> Result<String, String> {
+async fn db_enter_queue(license_plate: String, destination_id: String, destination_name: Option<String>, staff_id: Option<String>, sub_route: Option<String>, sub_route_name: Option<String>) -> Result<String, String> {
     let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
 
@@ -262,8 +332,14 @@ async fn db_enter_queue(license_plate: String, destination_id: String, destinati
         return Err(format!("Véhicule inactif: {}", license_plate));
     }
 
-    // Next position
-    let pos_row = tx.query_one("SELECT COALESCE(MAX(queue_position), 0)+1 AS next_pos FROM vehicle_queue WHERE destination_id = $1", &[&destination_id])
+    // Next position within destination + sub-route
+    let pos_row = tx.query_one(
+        "SELECT COALESCE(MAX(queue_position), 0)+1 AS next_pos \
+         FROM vehicle_queue \
+         WHERE destination_id = $1 \
+           AND COALESCE(sub_route,'') = COALESCE($2,'')",
+        &[&destination_id, &sub_route]
+    )
         .await.map_err(|e| e.to_string())?;
     let next_pos: i32 = pos_row.get("next_pos");
 
@@ -300,10 +376,19 @@ async fn db_enter_queue(license_plate: String, destination_id: String, destinati
         &[&vehicle_id]
     ).await.map_err(|e| e.to_string())? {
         let qid: String = existing.get("id");
-        // Update queue entry to new destination and position
+        // Update queue entry to new destination and position with sub-route support
+        // Recompute next position within destination + sub-route
+        let next_pos_row = tx.query_one(
+            "SELECT COALESCE(MAX(queue_position), 0)+1 AS next_pos \
+             FROM vehicle_queue \
+             WHERE destination_id = $1 \
+               AND COALESCE(sub_route,'') = COALESCE($2,'')",
+            &[&destination_id, &sub_route]
+        ).await.map_err(|e| e.to_string())?;
+        let next_pos: i32 = next_pos_row.get("next_pos");
         tx.execute(
-            "UPDATE vehicle_queue SET destination_id = $1, destination_name = $2, queue_position = $3, base_price = $4 WHERE id = $5",
-            &[&destination_id, &dest_name, &next_pos, &base_price, &qid]
+            "UPDATE vehicle_queue SET destination_id = $1, destination_name = $2, sub_route = $3, sub_route_name = $4, queue_position = $5, base_price = $6 WHERE id = $7",
+            &[&destination_id, &dest_name, &sub_route, &sub_route_name, &next_pos, &base_price, &qid]
         ).await.map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())?;
 
@@ -331,11 +416,11 @@ async fn db_enter_queue(license_plate: String, destination_id: String, destinati
         return Ok(qid);
     }
 
-    // Insert new queue entry (without queue_type column to match existing DB)
+    // Insert new queue entry with sub-route support
     let qid = uuid::Uuid::new_v4().to_string();
     tx.execute(
-        "INSERT INTO vehicle_queue (id, vehicle_id, destination_id, destination_name, queue_position, status, entered_at, available_seats, total_seats, base_price) VALUES ($1,$2,$3,$4,$5,'WAITING',NOW(),$6,$7,$8)",
-        &[&qid, &vehicle_id, &destination_id, &dest_name, &next_pos, &(total_seats as i32), &(total_seats as i32), &base_price]
+        "INSERT INTO vehicle_queue (id, vehicle_id, destination_id, destination_name, sub_route, sub_route_name, queue_position, status, entered_at, available_seats, total_seats, base_price) VALUES ($1,$2,$3,$4,$5,$6,$7,'WAITING',NOW(),$8,$9,$10)",
+        &[&qid, &vehicle_id, &destination_id, &dest_name, &sub_route, &sub_route_name, &next_pos, &(total_seats as i32), &(total_seats as i32), &base_price]
     ).await.map_err(|e| format!("Insertion dans la file échouée: {}", e))?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
@@ -603,6 +688,129 @@ async fn db_update_vehicle_status(license_plate: String, status: String) -> Resu
                  SET status = $1
                  WHERE vehicle_id = (SELECT id FROM vehicles WHERE license_plate = $2)"#;
     let res = client.execute(sql, &[&status, &license_plate]).await.map_err(|e| e.to_string())?;
+    
+    // If status is READY (fully booked), automatically print exit pass and exit from queue
+    if status == "READY" {
+        println!("🚗 Vehicle {} is now READY (fully booked), triggering automatic exit pass workflow", license_plate);
+        
+        // Get vehicle details for exit pass
+        let vehicle_sql = r#"
+            SELECT vq.id, vq.destination_id, vq.destination_name, vq.sub_route, vq.sub_route_name,
+                   vq.total_seats, vq.available_seats, vq.base_price, vq.entered_at
+            FROM vehicle_queue vq
+            WHERE vq.vehicle_id = (SELECT id FROM vehicles WHERE license_plate = $1)
+        "#;
+        
+        if let Ok(rows) = client.query(vehicle_sql, &[&license_plate]).await {
+            if let Some(row) = rows.first() {
+                let destination_id: String = row.get("destination_id");
+                let destination_name: String = row.get("destination_name");
+                let sub_route: Option<String> = row.get("sub_route");
+                let sub_route_name: Option<String> = row.get("sub_route_name");
+                let total_seats: i32 = row.get("total_seats");
+                let base_price: f64 = row.get("base_price");
+                let entered_at: String = row.get("entered_at");
+                
+                // Check if this is the vehicle's first exit of the day (day pass scenario)
+                let is_first_exit_today = client.query_opt(
+                    r#"SELECT COUNT(*) as exit_count
+                       FROM exit_passes 
+                       WHERE license_plate = $1 
+                         AND (current_exit_time AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date"#,
+                    &[&license_plate]
+                ).await.map_err(|e| e.to_string())?;
+
+                let mut total_base_price = base_price * total_seats as f64;
+                let mut day_pass_discount = 0.0;
+                
+                if let Some(exit_row) = is_first_exit_today {
+                    let exit_count: i64 = exit_row.get("exit_count");
+                    if exit_count == 0 {
+                        // This is the first exit of the day, apply day pass discount
+                        day_pass_discount = 2.0; // 2 TND discount for day pass
+                        total_base_price = total_base_price - day_pass_discount;
+                        println!("🎫 [DAY PASS] Vehicle {} first exit of the day - applying 2 TND discount. Original: {:.2}, Final: {:.2}", 
+                            license_plate, base_price * total_seats as f64, total_base_price);
+                    } else {
+                        println!("🎫 [DAY PASS] Vehicle {} has {} exits today - no discount applied. Price: {:.2}", 
+                            license_plate, exit_count, total_base_price);
+                    }
+                }
+                
+                // Get previous vehicle info (if any)
+                let previous_vehicle_sql = r#"
+                    SELECT license_plate, exit_time
+                    FROM vehicle_queue_history
+                    WHERE destination_id = $1 AND exit_time::date = CURRENT_DATE
+                    ORDER BY exit_time DESC
+                    LIMIT 1
+                "#;
+                
+                let mut previous_license_plate: Option<String> = None;
+                let mut previous_exit_time: Option<String> = None;
+                
+                if let Ok(prev_rows) = client.query(previous_vehicle_sql, &[&destination_id]).await {
+                    if let Some(prev_row) = prev_rows.first() {
+                        previous_license_plate = prev_row.get("license_plate");
+                        previous_exit_time = prev_row.get("exit_time");
+                    }
+                }
+                
+                // Prepare exit pass data
+                let exit_pass_data = serde_json::json!({
+                    "licensePlate": license_plate,
+                    "destinationName": destination_name,
+                    "previousLicensePlate": previous_license_plate,
+                    "previousExitTime": previous_exit_time,
+                    "currentExitTime": chrono::Utc::now().to_rfc3339(),
+                    "totalSeats": total_seats,
+                    "basePricePerSeat": base_price,
+                    "totalBasePrice": total_base_price,
+                    "dayPassDiscount": day_pass_discount,
+                    "isFirstExitToday": day_pass_discount > 0.0,
+                    "subRoute": sub_route,
+                    "subRouteName": sub_route_name,
+                    "enteredAt": entered_at
+                });
+                
+                // Print exit pass automatically
+                match print_exit_pass_ticket(exit_pass_data.to_string(), None).await {
+                    Ok(_) => {
+                        println!("✅ Exit pass printed automatically for vehicle {}", license_plate);
+                        
+                        // Automatically exit from queue
+                        match db_exit_queue(license_plate.clone()).await {
+                            Ok(_) => {
+                                println!("✅ Vehicle {} automatically exited from queue", license_plate);
+                                
+                                // Record in history
+                                let history_sql = r#"
+                                    INSERT INTO vehicle_queue_history 
+                                    (license_plate, destination_id, destination_name, sub_route, sub_route_name, 
+                                     total_seats, base_price, entered_at, exit_time, status)
+                                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), 'EXITED')
+                                "#;
+                                
+                                if let Err(e) = client.execute(history_sql, &[
+                                    &license_plate, &destination_id, &destination_name, 
+                                    &sub_route, &sub_route_name, &total_seats, &base_price, &entered_at
+                                ]).await {
+                                    println!("⚠️ Failed to record vehicle history: {}", e);
+                                }
+                            },
+                            Err(e) => {
+                                println!("❌ Failed to automatically exit vehicle {} from queue: {}", license_plate, e);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        println!("❌ Failed to print exit pass for vehicle {}: {}", license_plate, e);
+                    }
+                }
+            }
+        }
+    }
+    
     Ok(res)
 }
 
@@ -662,6 +870,8 @@ async fn db_health() -> Result<bool, String> {
 struct BookingDestinationDto {
     destinationId: String,
     destinationName: String,
+    subRoute: Option<String>,
+    subRouteName: Option<String>,
     totalAvailableSeats: i64,
     vehicleCount: i64,
     governorate: Option<String>,
@@ -823,6 +1033,8 @@ async fn db_get_available_booking_destinations(governorate: Option<String>, dele
         r#"
         SELECT q.destination_id AS destinationId,
                MAX(q.destination_name) AS destinationName,
+               COALESCE(q.sub_route, '') AS subRoute,
+               COALESCE(q.sub_route_name, '') AS subRouteName,
                SUM(q.available_seats)::bigint AS totalAvailableSeats,
                COUNT(*)::bigint AS vehicleCount,
                MAX(r.governorate) AS governorate,
@@ -894,11 +1106,19 @@ async fn db_get_available_booking_destinations(governorate: Option<String>, dele
         }
     }
     
-    sql.push_str(" GROUP BY q.destination_id ORDER BY destinationName");
+    sql.push_str(" GROUP BY q.destination_id, q.sub_route, q.sub_route_name ORDER BY destinationName, subRouteName");
     let rows = client.query(&sql, &params).await.map_err(|e| e.to_string())?;
     let list = rows.into_iter().map(|r| BookingDestinationDto {
         destinationId: r.get("destinationid"),
         destinationName: r.get("destinationname"),
+        subRoute: {
+            let v: String = r.get("subroute");
+            if v.is_empty() { None } else { Some(v) }
+        },
+        subRouteName: {
+            let v: String = r.get("subroutename");
+            if v.is_empty() { None } else { Some(v) }
+        },
         totalAvailableSeats: r.get("totalavailableseats"),
         vehicleCount: r.get("vehiclecount"),
         governorate: r.get("governorate"),
@@ -910,17 +1130,18 @@ async fn db_get_available_booking_destinations(governorate: Option<String>, dele
 }
 
 #[tauri::command]
-async fn db_get_available_seats_for_destination(destination_id: String) -> Result<DestinationVehiclesDto, String> {
+async fn db_get_available_seats_for_destination(destination_id: String, sub_route: Option<String>) -> Result<DestinationVehiclesDto, String> {
     let client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let rows = client.query(
         r#"
-        SELECT q.id, q.available_seats, q.total_seats, q.base_price, v.license_plate
+        SELECT q.id, q.available_seats, q.total_seats, q.base_price, v.license_plate, q.sub_route, q.sub_route_name
         FROM vehicle_queue q
         JOIN vehicles v ON v.id = q.vehicle_id
         WHERE q.destination_id = $1 AND q.available_seats > 0
+          AND ($2::text IS NULL OR COALESCE(q.sub_route,'') = COALESCE($2::text,''))
         ORDER BY q.queue_position ASC
         "#,
-        &[&destination_id]
+        &[&destination_id, &sub_route]
     ).await.map_err(|e| e.to_string())?;
     let mut total: i64 = 0;
     let mut vehicles: Vec<serde_json::Value> = Vec::new();
@@ -933,6 +1154,8 @@ async fn db_get_available_seats_for_destination(destination_id: String) -> Resul
             "totalSeats": r.get::<_, i32>("total_seats"),
             "basePrice": r.get::<_, f64>("base_price"),
             "licensePlate": r.get::<_, String>("license_plate"),
+            "subRoute": r.get::<_, Option<String>>("sub_route"),
+            "subRouteName": r.get::<_, Option<String>>("sub_route_name"),
         }));
     }
     Ok(DestinationVehiclesDto { totalAvailableSeats: total, vehicles })
@@ -1038,8 +1261,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
         total_amount += amount;
         
         tx.execute(
-            r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
-                VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW())"#,
+            r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at, updated_at)
+                VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW(),NOW())"#,
             &[&bid, &qid, &take, &amount, &verification_code, &created_by]
         ).await.map_err(|e| e.to_string())?;
 
@@ -1099,7 +1322,31 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
                 &[&destination_id_row]
             ).await.map_err(|e| e.to_string())?;
             let base_price: f64 = route_row.map(|r| r.get::<_, f64>("base_price")).unwrap_or(0.0);
-            let total_price = base_price * (vehicle_capacity as f64);
+            let mut total_price = base_price * (vehicle_capacity as f64);
+
+            // Check if this is the vehicle's first exit of the day (day pass scenario)
+            let is_first_exit_today = tx.query_opt(
+                r#"SELECT COUNT(*) as exit_count
+                   FROM exit_passes 
+                   WHERE license_plate = $1 
+                     AND (current_exit_time AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date"#,
+                &[&license_plate_row]
+            ).await.map_err(|e| e.to_string())?;
+
+            let mut day_pass_discount = 0.0;
+            if let Some(row) = is_first_exit_today {
+                let exit_count: i64 = row.get("exit_count");
+                if exit_count == 0 {
+                    // This is the first exit of the day, apply day pass discount
+                    day_pass_discount = 2.0; // 2 TND discount for day pass
+                    total_price = total_price - day_pass_discount;
+                    println!("🎫 [DAY PASS] Vehicle {} first exit of the day - applying 2 TND discount. Original: {:.2}, Final: {:.2}", 
+                        license_plate_row, base_price * (vehicle_capacity as f64), total_price);
+                } else {
+                    println!("🎫 [DAY PASS] Vehicle {} has {} exits today - no discount applied. Price: {:.2}", 
+                        license_plate_row, exit_count, total_price);
+                }
+            }
 
             // Get previous vehicle exit info for same destination today
             let prev_exit_row = tx.query_opt(
@@ -1129,6 +1376,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
                 "vehicleCapacity": vehicle_capacity,
                 "basePrice": base_price,
                 "totalPrice": total_price,
+                "dayPassDiscount": day_pass_discount,
+                "isFirstExitToday": day_pass_discount > 0.0,
                 "staffName": staff_name.clone(),
                 "staffId": created_by.clone(),
                 "previousVehicle": prev_exit_row.map(|r| serde_json::json!({
@@ -1179,8 +1428,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
             total_amount += amount;
             
             tx.execute(
-                r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
-                    VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW())"#,
+                r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at, updated_at)
+                    VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW(),NOW())"#,
                 &[&bid, &qid, &take, &amount, &verification_code, &created_by]
             ).await.map_err(|e| e.to_string())?;
 
@@ -1242,7 +1491,31 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
                     &[&destination_id_row]
                 ).await.map_err(|e| e.to_string())?;
                 let base_price: f64 = route_row.map(|r| r.get::<_, f64>("base_price")).unwrap_or(0.0);
-                let total_price = base_price * (vehicle_capacity as f64);
+                let mut total_price = base_price * (vehicle_capacity as f64);
+
+                // Check if this is the vehicle's first exit of the day (day pass scenario)
+                let is_first_exit_today = tx.query_opt(
+                    r#"SELECT COUNT(*) as exit_count
+                       FROM exit_passes 
+                       WHERE license_plate = $1 
+                         AND (current_exit_time AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date"#,
+                    &[&license_plate_row]
+                ).await.map_err(|e| e.to_string())?;
+
+                let mut day_pass_discount = 0.0;
+                if let Some(row) = is_first_exit_today {
+                    let exit_count: i64 = row.get("exit_count");
+                    if exit_count == 0 {
+                        // This is the first exit of the day, apply day pass discount
+                        day_pass_discount = 2.0; // 2 TND discount for day pass
+                        total_price = total_price - day_pass_discount;
+                        println!("🎫 [DAY PASS] Vehicle {} first exit of the day - applying 2 TND discount. Original: {:.2}, Final: {:.2}", 
+                            license_plate_row, base_price * (vehicle_capacity as f64), total_price);
+                    } else {
+                        println!("🎫 [DAY PASS] Vehicle {} has {} exits today - no discount applied. Price: {:.2}", 
+                            license_plate_row, exit_count, total_price);
+                    }
+                }
 
                 // Get previous vehicle exit info for same destination today
                 let prev_exit_row = tx.query_opt(
@@ -1272,6 +1545,8 @@ async fn db_create_queue_booking(destination_id: String, seats_requested: i32, c
                     "vehicleCapacity": vehicle_capacity,
                     "basePrice": base_price,
                     "totalPrice": total_price,
+                    "dayPassDiscount": day_pass_discount,
+                    "isFirstExitToday": day_pass_discount > 0.0,
                     "staffName": staff_name.clone(),
                     "staffId": created_by.clone(),
                     "previousVehicle": prev_exit_row.map(|r| serde_json::json!({
@@ -1354,6 +1629,26 @@ async fn db_create_vehicle_specific_booking(queue_id: String, seats_requested: i
     let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
 
+    // Get staff name for display purposes
+    let staff_name = if let Some(staff_id) = &created_by {
+        let staff_row = tx.query_opt(
+            "SELECT first_name, last_name FROM staff WHERE id = $1",
+            &[staff_id]
+        ).await.map_err(|e| e.to_string())?;
+        
+        if let Some(row) = staff_row {
+            let first_name: String = row.get("first_name");
+            let last_name: String = row.get("last_name");
+            Some(format!("{} {}", first_name, last_name))
+        } else {
+            Some("Unknown Staff".to_string())
+        }
+    } else {
+        Some("System".to_string())
+    };
+    
+    println!("🎫 [VEHICLE BOOKING DEBUG] Staff name for display: {:?}", staff_name);
+
     // Get the specific vehicle queue information
     let queue_row = tx.query_opt(
         r#"
@@ -1419,8 +1714,8 @@ async fn db_create_vehicle_specific_booking(queue_id: String, seats_requested: i
     total_amount += amount;
     
     tx.execute(
-        r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at)
-            VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW())"#,
+        r#"INSERT INTO bookings (id, queue_id, seats_booked, total_amount, booking_source, booking_type, payment_status, payment_method, verification_code, created_offline, created_by, created_at, updated_at)
+            VALUES ($1,$2,$3,$4,'CASH_STATION','CASH','PAID','CASH',$5,false,$6,NOW(),NOW())"#,
         &[&bid, &qid, &take, &amount, &verification_code, &created_by]
     ).await.map_err(|e| e.to_string())?;
 
@@ -1470,36 +1765,144 @@ async fn db_create_vehicle_specific_booking(queue_id: String, seats_requested: i
     if remaining_seats == 0 {
         println!("🎫 [VEHICLE BOOKING DEBUG] Vehicle {} is now fully booked, preparing exit pass", license_plate);
         
-        let exit_pass_data = serde_json::json!({
-            "licensePlate": license_plate,
-            "destinationName": destination_name,
-            "queuePosition": queue_position,
-            "totalSeats": total_seats,
-            "seatsBooked": take,
-            "basePrice": base_price,
-            "totalAmount": amount,
-            "verificationCode": verification_code,
-            "createdBy": created_by,
-            "createdAt": chrono::Utc::now().to_rfc3339()
-        });
+        // Update vehicle status to READY when fully booked
+        println!("🚌 [STATUS CHANGE] Changing vehicle {} from LOADING to READY (fully booked)", license_plate);
+        tx.execute("UPDATE vehicle_queue SET status = 'READY' WHERE id = $1", &[&qid])
+            .await.map_err(|e| e.to_string())?;
         
-        exit_passes_to_print.push(exit_pass_data);
+        let destination_id_row: String = r.get("destination_id");
+        let destination_name_row: String = destination_name.clone();
+        let vehicle_id_row: String = tx.query_one(
+            "SELECT vehicle_id FROM vehicle_queue WHERE id = $1",
+            &[&qid]
+        ).await.map_err(|e| e.to_string())?.get("vehicle_id");
+        let license_plate_row: String = license_plate.clone();
+        let vehicle_capacity: i32 = vehicle_capacity;
+
+        // Get route base price for total calculation
+        let route_row = tx.query_opt(
+            "SELECT base_price FROM routes WHERE station_id = $1",
+            &[&destination_id_row]
+        ).await.map_err(|e| e.to_string())?;
+        let base_price: f64 = route_row.map(|r| r.get::<_, f64>("base_price")).unwrap_or(0.0);
+        let mut total_price = base_price * (vehicle_capacity as f64);
+
+        // Check if this is the vehicle's first exit of the day (day pass scenario)
+        let is_first_exit_today = tx.query_opt(
+            r#"SELECT COUNT(*) as exit_count
+               FROM exit_passes 
+               WHERE license_plate = $1 
+                 AND (current_exit_time AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date"#,
+            &[&license_plate_row]
+        ).await.map_err(|e| e.to_string())?;
+
+        let mut day_pass_discount = 0.0;
+        if let Some(row) = is_first_exit_today {
+            let exit_count: i64 = row.get("exit_count");
+            if exit_count == 0 {
+                // This is the first exit of the day, apply day pass discount
+                day_pass_discount = 2.0; // 2 TND discount for day pass
+                total_price = total_price - day_pass_discount;
+                println!("🎫 [DAY PASS] Vehicle {} first exit of the day - applying 2 TND discount. Original: {:.2}, Final: {:.2}", 
+                    license_plate_row, base_price * (vehicle_capacity as f64), total_price);
+            } else {
+                println!("🎫 [DAY PASS] Vehicle {} has {} exits today - no discount applied. Price: {:.2}", 
+                    license_plate_row, exit_count, total_price);
+            }
+        }
+
+        // Get previous vehicle exit info for same destination today
+        let prev_exit_row = tx.query_opt(
+            r#"SELECT license_plate, current_exit_time::text as current_exit_time
+               FROM exit_passes 
+               WHERE destination_id = $1 
+                 AND (current_exit_time AT TIME ZONE 'Africa/Tunis')::date = (NOW() AT TIME ZONE 'Africa/Tunis')::date
+               ORDER BY current_exit_time DESC 
+               LIMIT 1"#,
+            &[&destination_id_row]
+        ).await.map_err(|e| e.to_string())?;
+
+        let exit_id = uuid::Uuid::new_v4().to_string();
+        tx.execute(
+            r#"INSERT INTO exit_passes (
+                    id, queue_id, vehicle_id, license_plate, destination_id, destination_name, current_exit_time, created_by, created_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7,NOW())"#,
+            &[&exit_id, &qid, &vehicle_id_row, &license_plate_row, &destination_id_row, &destination_name_row, &created_by]
+        ).await.map_err(|e| e.to_string())?;
+
+        // schedule print after commit with all required data
+        exit_passes_to_print.push(serde_json::json!({
+            "id": exit_id,
+            "licensePlate": license_plate_row,
+            "destinationId": destination_id_row,
+            "destinationName": destination_name_row,
+            "vehicleCapacity": vehicle_capacity,
+            "basePrice": base_price,
+            "totalPrice": total_price,
+            "dayPassDiscount": day_pass_discount,
+            "isFirstExitToday": day_pass_discount > 0.0,
+            "staffName": staff_name.clone(),
+            "staffId": created_by.clone(),
+            "previousVehicle": prev_exit_row.map(|r| serde_json::json!({
+                "licensePlate": r.get::<_, String>("license_plate"),
+                "exitTime": r.get::<_, String>("current_exit_time")
+            }))
+        }));
     }
 
     tx.commit().await.map_err(|e| e.to_string())?;
 
-    // Handle exit pass printing asynchronously
+    // After commit: print exit passes and remove vehicles from queue
     if !exit_passes_to_print.is_empty() {
-        let exit_pass = exit_passes_to_print[0].clone();
-        let license_plate = exit_pass["licensePlate"].as_str().unwrap_or("").to_string();
-        let destination_name = exit_pass["destinationName"].as_str().unwrap_or("").to_string();
-        
-        tokio::spawn(async move {
-            println!("🎫 [VEHICLE BOOKING DEBUG] Starting exit pass printing for vehicle {}", license_plate);
-            if let Err(e) = print_entry_or_daypass_if_needed(license_plate.clone(), destination_name.clone(), 0.0, None).await {
-                println!("❌ [VEHICLE BOOKING DEBUG] Exit pass printing failed for vehicle {}: {}", license_plate, e);
-            } else {
-                println!("✅ [VEHICLE BOOKING DEBUG] Exit pass printed successfully for vehicle {}", license_plate);
+        println!("🎫 [VEHICLE BOOKING DEBUG] {} exit passes to print", exit_passes_to_print.len());
+        let staff = created_by.clone();
+        let items = exit_passes_to_print.clone();
+        tauri::async_runtime::spawn(async move {
+            println!("🎫 [VEHICLE BOOKING DEBUG] Starting exit pass printing task");
+            // slight delay to ensure booking tickets are printed first
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            
+            let printer = PRINTER_SERVICE.clone();
+            let printer_clone = {
+                let guard = printer.lock().unwrap();
+                guard.clone()
+            };
+            
+            // Get DB connection for vehicle removal
+            let client = DB_POOL.get().await.unwrap();
+            
+            for item in items.into_iter() {
+                let license_plate = item["licensePlate"].as_str().unwrap_or("").to_string();
+                println!("🎫 [VEHICLE BOOKING DEBUG] Processing exit pass for vehicle: {}", license_plate);
+                
+                // Print exit pass ticket
+                let ticket = serde_json::json!({
+                    "ticketNumber": format!("EXIT-{}", chrono::Utc::now().timestamp_millis()),
+                    "licensePlate": license_plate,
+                    "stationName": item["destinationName"].as_str().unwrap_or(""),
+                    "exitTime": chrono::Utc::now().to_rfc3339(),
+                    "vehicleCapacity": item["vehicleCapacity"].as_i64().unwrap_or(8),
+                    "basePrice": item["basePrice"].as_f64().unwrap_or(0.0),
+                    "totalPrice": item["totalPrice"].as_f64().unwrap_or(0.0),
+                    "previousVehicle": item["previousVehicle"]
+                }).to_string();
+                
+                println!("🎫 [VEHICLE BOOKING DEBUG] Exit pass ticket data: {}", ticket);
+                
+                // Print the exit pass ticket
+                match printer_clone.print_exit_pass_ticket(ticket, staff.clone()).await {
+                    Ok(result) => println!("✅ [VEHICLE BOOKING DEBUG] Exit pass printed successfully: {}", result),
+                    Err(e) => println!("❌ [VEHICLE BOOKING DEBUG] Exit pass printing failed: {}", e),
+                }
+                
+                // Remove vehicle from queue after printing
+                match client.execute(
+                    "DELETE FROM vehicle_queue WHERE vehicle_id = (SELECT id FROM vehicles WHERE license_plate = $1)",
+                    &[&license_plate]
+                ).await {
+                    Ok(rows_deleted) => println!("✅ [VEHICLE BOOKING DEBUG] Vehicle {} removed from queue ({} rows deleted)", license_plate, rows_deleted),
+                    Err(e) => println!("❌ [VEHICLE BOOKING DEBUG] Failed to remove vehicle {} from queue: {}", license_plate, e),
+                }
             }
             println!("🎫 [VEHICLE BOOKING DEBUG] Exit pass printing task completed");
         });
@@ -2203,8 +2606,8 @@ async fn print_booking_ticket(ticket_data: String, staff_name: Option<String>) -
                 id, queue_id, seats_booked, total_amount, 
                 booking_source, booking_type, payment_status, 
                 payment_method, verification_code, created_offline, 
-                created_by, created_at
-            ) VALUES ($1, $2, $3, $4, 'CASH_STATION', 'CASH', 'PAID', 'CASH', $5, false, $6, NOW())"#,
+                created_by, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, 'CASH_STATION', 'CASH', 'PAID', 'CASH', $5, false, $6, NOW(), NOW())"#,
             &[&booking_id, &queue_id, &seats_booked, &total_amount, &verification_code, &created_by]
         ).await;
         
@@ -3164,7 +3567,7 @@ async fn db_get_all_vehicles_daily_report(date: String) -> Result<AllVehiclesDai
 }
 
 #[tauri::command]
-async fn db_add_vehicle_to_queue(license_plate: String, destination_id: String, destination_name: Option<String>) -> Result<String, String> {
+async fn db_add_vehicle_to_queue(license_plate: String, destination_id: String, destination_name: Option<String>, sub_route: Option<String>, sub_route_name: Option<String>) -> Result<String, String> {
     let mut client = DB_POOL.get().await.map_err(|e| e.to_string())?;
     let tx = client.build_transaction().start().await.map_err(|e| e.to_string())?;
 
@@ -3212,11 +3615,11 @@ async fn db_add_vehicle_to_queue(license_plate: String, destination_id: String, 
     }
     let dest_name = resolved_name.unwrap_or_else(|| destination_id.clone());
 
-    // Insert new queue entry
+    // Insert new queue entry with sub-route support
     let qid = uuid::Uuid::new_v4().to_string();
     tx.execute(
-        "INSERT INTO vehicle_queue (id, vehicle_id, destination_id, destination_name, queue_position, status, entered_at, available_seats, total_seats, base_price) VALUES ($1,$2,$3,$4,$5,'WAITING',NOW(),$6,$7,$8)",
-        &[&qid, &vehicle_id, &destination_id, &dest_name, &next_pos, &(total_seats as i32), &(total_seats as i32), &base_price]
+        "INSERT INTO vehicle_queue (id, vehicle_id, destination_id, destination_name, sub_route, sub_route_name, queue_position, status, entered_at, available_seats, total_seats, base_price) VALUES ($1,$2,$3,$4,$5,$6,$7,'WAITING',NOW(),$8,$9,$10)",
+        &[&qid, &vehicle_id, &destination_id, &dest_name, &sub_route, &sub_route_name, &next_pos, &(total_seats as i32), &(total_seats as i32), &base_price]
     ).await.map_err(|e| format!("Insertion dans la file échouée: {}", e))?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
@@ -4120,16 +4523,16 @@ fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) {
 }
 
 #[tauri::command]
-async fn db_transfer_seats_and_remove_vehicle(license_plate: String, destination_id: String) -> Result<String, String> {
+async fn db_transfer_seats_and_remove_vehicle(license_plate: String, destination_id: String, target_queue_id: Option<String>) -> Result<String, String> {
     println!("🔄 Starting seat transfer for vehicle: {} to destination: {}", license_plate, destination_id);
     
     let mut client = DB_POOL.get().await.map_err(|e| format!("Database pool error: {}", e))?;
     let tx = client.build_transaction().start().await.map_err(|e| format!("Transaction start error: {}", e))?;
     
-    // First, get the vehicle to remove and its booked seats
+    // First, get the vehicle to remove and its booked seats (including sub-route)
     println!("🔍 Looking for vehicle to remove...");
     let vehicle_row = tx.query_opt(
-        "SELECT q.id, q.available_seats, q.total_seats, q.queue_position 
+        "SELECT q.id, q.available_seats, q.total_seats, q.queue_position, q.sub_route, q.sub_route_name 
          FROM vehicle_queue q
          JOIN vehicles v ON v.id = q.vehicle_id
          WHERE v.license_plate = $1 AND q.destination_id = $2 AND q.status IN ('WAITING', 'LOADING')",
@@ -4143,45 +4546,68 @@ async fn db_transfer_seats_and_remove_vehicle(license_plate: String, destination
     let available_seats: i32 = vehicle_row.get("available_seats");
     let total_seats: i32 = vehicle_row.get("total_seats");
     let queue_position: i32 = vehicle_row.get("queue_position");
+    let sub_route: Option<String> = vehicle_row.get("sub_route");
+    let _sub_route_name: Option<String> = vehicle_row.get("sub_route_name");
     let booked_seats = total_seats - available_seats;
     
     println!("📊 Vehicle found - ID: {}, Available: {}, Total: {}, Booked: {}, Position: {}", 
              vehicle_id, available_seats, total_seats, booked_seats, queue_position);
     
     if booked_seats == 0 {
-        println!("✅ No booked seats, removing vehicle directly...");
-        // No booked seats, just remove the vehicle
-        tx.execute("DELETE FROM vehicle_queue WHERE id = $1", &[&vehicle_id])
-            .await.map_err(|e| format!("Error removing vehicle: {}", e))?;
-        
-        // Update queue positions for remaining vehicles
-        tx.execute(
-            "UPDATE vehicle_queue SET queue_position = queue_position - 1 
-             WHERE destination_id = $1 AND queue_position > $2",
-            &[&destination_id, &queue_position]
-        )
-        .await.map_err(|e| format!("Error updating queue positions: {}", e))?;
-        
-        tx.commit().await.map_err(|e| format!("Commit error: {}", e))?;
-        println!("✅ Vehicle removed successfully");
-        return Ok(format!("Véhicule {} retiré de la file", license_plate));
+        println!("ℹ️ No booked seats on source vehicle; nothing to transfer.");
+        // Do not remove the vehicle in transfer mode; just return an informative message
+        tx.rollback().await.ok();
+        return Err("Aucun siège réservé à transférer depuis ce véhicule".into());
     }
     
-    // Find another vehicle in the same queue to transfer seats to
+    // Find target vehicle: if target_queue_id provided, validate it; otherwise pick head of same sub-route
     println!("🔍 Looking for target vehicle to transfer seats to...");
-    let target_row = tx.query_opt(
-        "SELECT q.id, q.available_seats, q.total_seats 
-         FROM vehicle_queue q
-         WHERE q.destination_id = $1 AND q.status IN ('WAITING', 'LOADING') AND q.id != $2
-         ORDER BY q.queue_position ASC LIMIT 1",
-        &[&destination_id, &vehicle_id]
-    )
-    .await
-    .map_err(|e| format!("Error finding target vehicle: {}", e))?
-    .ok_or("Aucun autre véhicule disponible dans cette file pour transférer les sièges")?;
+    let target_row = if let Some(ref provided_target_id) = target_queue_id {
+        // Validate same destination and same sub_route constraint
+        let row = tx.query_opt(
+            "SELECT q.id, q.available_seats, q.total_seats, q.sub_route, q.sub_route_name
+             FROM vehicle_queue q
+             WHERE q.id = $1 AND q.destination_id = $2 AND q.status IN ('WAITING', 'LOADING')",
+            &[provided_target_id, &destination_id]
+        )
+        .await
+        .map_err(|e| format!("Error validating target vehicle: {}", e))?;
+        let row = row.ok_or("Véhicule cible introuvable ou invalide")?;
+        let target_sr: Option<String> = row.get("sub_route");
+        match (&sub_route, &target_sr) {
+            (Some(a), Some(b)) if a == b => (),
+            (None, None) => (),
+            _ => return Err("Le véhicule cible n'appartient pas à la même sous-route".into()),
+        }
+        row
+    } else if let Some(ref sr) = sub_route {
+        tx.query_opt(
+            "SELECT q.id, q.available_seats, q.total_seats, q.sub_route, q.sub_route_name 
+             FROM vehicle_queue q
+             WHERE q.destination_id = $1 AND q.status IN ('WAITING', 'LOADING') AND q.id != $2 AND q.sub_route = $3
+             ORDER BY q.queue_position ASC LIMIT 1",
+            &[&destination_id, &vehicle_id, sr]
+        )
+        .await
+        .map_err(|e| format!("Error finding target vehicle: {}", e))?
+        .ok_or("Aucun autre véhicule disponible dans cette sous-route pour transférer les sièges")?
+    } else {
+        tx.query_opt(
+            "SELECT q.id, q.available_seats, q.total_seats, q.sub_route, q.sub_route_name 
+             FROM vehicle_queue q
+             WHERE q.destination_id = $1 AND q.status IN ('WAITING', 'LOADING') AND q.id != $2 AND q.sub_route IS NULL
+             ORDER BY q.queue_position ASC LIMIT 1",
+            &[&destination_id, &vehicle_id]
+        )
+        .await
+        .map_err(|e| format!("Error finding target vehicle: {}", e))?
+        .ok_or("Aucun autre véhicule disponible sans sous-route pour transférer les sièges")?
+    };
     
     let target_id: String = target_row.get("id");
     let target_available_seats: i32 = target_row.get("available_seats");
+    let target_sr: Option<String> = target_row.get("sub_route");
+    let target_sr_name: Option<String> = target_row.get("sub_route_name");
     
     println!("🎯 Target vehicle found - ID: {}, Available seats: {}", target_id, target_available_seats);
     
@@ -4196,8 +4622,13 @@ async fn db_transfer_seats_and_remove_vehicle(license_plate: String, destination
     // Transfer the bookings
     println!("🔄 Transferring {} bookings from vehicle {} to vehicle {}...", booked_seats, vehicle_id, target_id);
     tx.execute(
-        "UPDATE bookings SET queue_id = $1 WHERE queue_id = $2",
-        &[&target_id, &vehicle_id]
+        "UPDATE bookings b
+         SET queue_id = $1,
+             sub_route = $2,
+             sub_route_name = $3,
+             updated_at = NOW()
+         WHERE b.queue_id = $4",
+        &[&target_id, &target_sr, &target_sr_name, &vehicle_id]
     )
     .await
     .map_err(|e| format!("Error transferring bookings: {}", e))?;
@@ -4206,7 +4637,7 @@ async fn db_transfer_seats_and_remove_vehicle(license_plate: String, destination
     let new_available_seats = target_available_seats - booked_seats;
     println!("🔄 Updating target vehicle seats from {} to {}...", target_available_seats, new_available_seats);
     tx.execute(
-        "UPDATE vehicle_queue SET available_seats = $1 WHERE id = $2",
+        "UPDATE vehicle_queue SET available_seats = $1, updated_at = NOW() WHERE id = $2",
         &[&new_available_seats, &target_id]
     )
     .await
@@ -4222,31 +4653,26 @@ async fn db_transfer_seats_and_remove_vehicle(license_plate: String, destination
         let current_status: String = row.get("status");
         if current_status == "WAITING" {
             println!("🚌 [STATUS CHANGE] Changing target vehicle {} from WAITING to LOADING (received transferred seats)", target_id);
-            tx.execute("UPDATE vehicle_queue SET status = 'LOADING' WHERE id = $1", &[&target_id])
+            tx.execute("UPDATE vehicle_queue SET status = 'LOADING', updated_at = NOW() WHERE id = $1", &[&target_id])
                 .await.map_err(|e| format!("Error updating target vehicle status: {}", e))?;
         }
     }
     
-    // Remove the original vehicle
-    println!("🗑️ Removing original vehicle {}...", vehicle_id);
-    tx.execute("DELETE FROM vehicle_queue WHERE id = $1", &[&vehicle_id])
-        .await.map_err(|e| format!("Error removing vehicle: {}", e))?;
-    
-    // Update queue positions for remaining vehicles
-    println!("🔄 Updating queue positions...");
+    // Keep the original vehicle: reset its available seats to full and keep position
+    println!("♻️ Keeping original vehicle {}, resetting available seats to full...", vehicle_id);
     tx.execute(
-        "UPDATE vehicle_queue SET queue_position = queue_position - 1 
-         WHERE destination_id = $1 AND queue_position > $2",
-        &[&destination_id, &queue_position]
+        "UPDATE vehicle_queue SET available_seats = total_seats, updated_at = NOW() WHERE id = $1",
+        &[&vehicle_id]
     )
-    .await.map_err(|e| format!("Error updating queue positions: {}", e))?;
+    .await
+    .map_err(|e| format!("Error resetting source vehicle seats: {}", e))?;
     
     tx.commit().await.map_err(|e| format!("Commit error: {}", e))?;
     
-    println!("✅ Seat transfer and vehicle removal completed successfully");
+    println!("✅ Seat transfer completed successfully; source vehicle retained");
     Ok(format!(
-        "Véhicule {} retiré de la file. {} sièges transférés vers un autre véhicule.",
-        license_plate, booked_seats
+        "{} sièges transférés. Véhicule {} conservé dans la file.",
+        booked_seats, license_plate
     ))
 }
 
@@ -4583,6 +5009,9 @@ fn main() {
             save_printer_config,
             db_get_queue_summaries,
             db_get_queue_by_destination,
+            db_update_queue_subroute,
+            db_bulk_update_subroute,
+            db_distribute_subroutes_evenly,
             db_get_vehicle_authorized_destinations,
             db_enter_queue,
             db_exit_queue,

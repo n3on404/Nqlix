@@ -99,7 +99,14 @@ function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestinati
             <Car className="h-5 w-5 text-gray-600" />
             <div>
               <div className="font-semibold text-gray-900">{queue.licensePlate}</div>
-              <div className="text-sm text-gray-600">Véhicule: {queue.vehicle?.licensePlate}</div>
+              <div className="text-sm text-gray-600">
+                Véhicule: {queue.vehicle?.licensePlate}
+                {queue.subRouteName && (
+                  <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+                    {queue.subRouteName}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -143,6 +150,71 @@ function QueueItem({ queue, getStatusColor, formatTime, getBasePriceForDestinati
         
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
+            {/* Quick sub-route assignment for entries without sub-route */}
+            {(!queue.subRoute && !queue.subRouteName) && (
+              <div className="flex items-center gap-1 mr-2">
+                {(() => {
+                  const dn = (queue.destinationName || '').toUpperCase();
+                  if (dn.includes('KSAR') && dn.includes('HLEL')) {
+                    return (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-green-700 border-green-300 hover:bg-green-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            dbClient.updateQueueSubroute(queue.id, 'BOUHJAR', 'BOUHJAR').then(() => {});
+                          }}
+                        >
+                          BOUHJAR
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-green-700 border-green-300 hover:bg-green-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            dbClient.updateQueueSubroute(queue.id, 'SAYADA', 'SAYADA').then(() => {});
+                          }}
+                        >
+                          SAYADA
+                        </Button>
+                      </>
+                    );
+                  }
+                  if (dn.includes('MOKNIN')) {
+                    return (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-green-700 border-green-300 hover:bg-green-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            dbClient.updateQueueSubroute(queue.id, 'REGULAR', 'REGULAR').then(() => {});
+                          }}
+                        >
+                          REGULAR
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-green-700 border-green-300 hover:bg-green-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            dbClient.updateQueueSubroute(queue.id, 'HALKOM', 'HALKOM').then(() => {});
+                          }}
+                        >
+                          HALKOM
+                        </Button>
+                      </>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+            )}
           {/* Move to Front Button - only show if no booked seats */}
           {!hasBookedSeats && (
             <Button 
@@ -461,6 +533,8 @@ export default function QueueManagement() {
   // Vehicle destination selection state
   const [vehicleDestinations, setVehicleDestinations] = useState<any[]>([]);
   const [selectedVehicleDestination, setSelectedVehicleDestination] = useState<string | null>(null);
+  const [selectedSubRoute, setSelectedSubRoute] = useState<string | null>(null);
+  const [availableSubRoutes, setAvailableSubRoutes] = useState<Array<{id: string, name: string}>>([]);
   const [destinationsLoading, setDestinationsLoading] = useState(false);
   const [defaultDestination, setDefaultDestination] = useState<any | null>(null);
 
@@ -574,15 +648,33 @@ export default function QueueManagement() {
       if (def) {
         setSelectedVehicleDestination(def.stationId);
         console.log('✅ Auto-selected default destination:', def.stationName);
+        // Fetch sub-routes for the default destination
+        await fetchSubRoutesForDestination(def.stationName);
       } else if (mapped.length > 0) {
         setSelectedVehicleDestination(mapped[0].stationId);
         console.log('✅ Auto-selected first destination:', mapped[0].stationName);
+        // Fetch sub-routes for the first destination
+        await fetchSubRoutesForDestination(mapped[0].stationName);
       }
     } catch (error: any) {
       console.error('Error fetching vehicle destinations:', error);
       setAddVehicleError('Impossible de charger les destinations autorisées pour ce véhicule');
     } finally {
       setDestinationsLoading(false);
+    }
+  };
+
+  // Fetch sub-routes for a destination
+  const fetchSubRoutesForDestination = async (destinationName: string) => {
+    try {
+      const subRoutes = await dbClient.getSubRoutesForDestination(destinationName);
+      setAvailableSubRoutes(subRoutes);
+      // Reset selected sub-route when destination changes
+      setSelectedSubRoute(null);
+      console.log('🎯 Sub-routes loaded for', destinationName, ':', subRoutes);
+    } catch (error) {
+      console.error('Error fetching sub-routes:', error);
+      setAvailableSubRoutes([]);
     }
   };
 
@@ -882,10 +974,13 @@ export default function QueueManagement() {
       
       // Add vehicle to queue (this will automatically handle day pass printing)
       console.log('🚗 [QUEUE DEBUG] Adding vehicle to queue...');
+      const selectedSubRouteInfo = availableSubRoutes.find(sr => sr.id === selectedSubRoute);
       const result = await dbClient.addVehicleToQueue(
         selectedVehicle.licensePlate, 
         selectedVehicleDestination,
-        destinationInfo?.stationName
+        destinationInfo?.stationName,
+        selectedSubRoute || undefined,
+        selectedSubRouteInfo?.name || undefined
       );
       
       if (!result) {
@@ -904,6 +999,8 @@ export default function QueueManagement() {
       setShowAddVehicleModal(false);
       setSelectedVehicle(null);
       setSelectedVehicleDestination(null);
+      setSelectedSubRoute(null);
+      setAvailableSubRoutes([]);
       setVehicleDestinations([]);
       setSearch("");
       setIsInputFocused(false);
@@ -1814,7 +1911,11 @@ export default function QueueManagement() {
                               ? 'border-blue-500 bg-blue-50 shadow-lg ring-2 ring-blue-200' 
                               : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 hover:shadow-md'
                           }`}
-                          onClick={() => setSelectedVehicleDestination(dest.stationId)}
+                          onClick={() => {
+                            setSelectedVehicleDestination(dest.stationId);
+                            // Fetch sub-routes for the selected destination
+                            fetchSubRoutesForDestination(dest.stationName);
+                          }}
                         >
                           {/* Selection indicator with AZERTY key */}
                           <div className="absolute top-3 right-3 flex items-center space-x-2">
@@ -1879,6 +1980,80 @@ export default function QueueManagement() {
               </div>
             )}
             
+            {/* Step 3: Sub-Route Selection */}
+            {selectedVehicle && selectedVehicleDestination && availableSubRoutes.length > 0 && (
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-3">
+                  3. Choisir la sous-route pour <span className="font-semibold text-blue-600">
+                    {vehicleDestinations.find(d => d.stationId === selectedVehicleDestination)?.stationName}
+                  </span>
+                </h3>
+                
+                <div className="space-y-3">
+                  {/* Header with count */}
+                  <div className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg">
+                    <div className="flex items-center space-x-2">
+                      <ArrowRight className="h-4 w-4 text-gray-600" />
+                      <span className="text-sm font-medium text-gray-700">
+                        {availableSubRoutes.length} sous-route{availableSubRoutes.length > 1 ? 's' : ''} disponible{availableSubRoutes.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      Sélectionnez une sous-route
+                    </div>
+                  </div>
+                  
+                  {/* Sub-Routes Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {availableSubRoutes.map((subRoute: any, index: number) => (
+                      <div
+                        key={subRoute.id}
+                        className={`group relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+                          selectedSubRoute === subRoute.id 
+                            ? 'border-green-500 bg-green-50 shadow-lg ring-2 ring-green-200' 
+                            : 'border-gray-200 hover:border-green-300 hover:bg-green-50/50 hover:shadow-md'
+                        }`}
+                        onClick={() => setSelectedSubRoute(subRoute.id)}
+                      >
+                        {/* Selection indicator */}
+                        <div className="absolute top-3 right-3 flex items-center space-x-2">
+                          {/* Selection indicator */}
+                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                            selectedSubRoute === subRoute.id 
+                              ? 'border-green-500 bg-green-500' 
+                              : 'border-gray-300 group-hover:border-green-400'
+                          }`}>
+                            {selectedSubRoute === subRoute.id && (
+                              <CheckCircle className="w-3 h-3 text-white" />
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Sub-route info */}
+                        <div className="pr-20">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-green-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+                              {index + 1}
+                            </div>
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-gray-900 group-hover:text-green-700 transition-colors">
+                                {subRoute.name}
+                              </h4>
+                            </div>
+                          </div>
+                          
+                          {/* Sub-route description */}
+                          <div className="text-sm text-gray-600">
+                            Route spécifique vers {subRoute.name}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {/* Error Display */}
             {addVehicleError && (
               <div className="bg-red-50 text-red-700 px-4 py-3 rounded-lg border border-red-200">
@@ -1897,6 +2072,8 @@ export default function QueueManagement() {
                 setShowAddVehicleModal(false);
                 setSelectedVehicle(null);
                 setSelectedVehicleDestination(null);
+                setSelectedSubRoute(null);
+                setAvailableSubRoutes([]);
                 setVehicleDestinations([]);
                 setAddVehicleError(null);
                 setSearch("");
@@ -1908,7 +2085,7 @@ export default function QueueManagement() {
             </Button>
             <Button
               onClick={handleAddVehicleToQueue}
-              disabled={!selectedVehicle || !selectedVehicleDestination || !!actionLoading}
+              disabled={!selectedVehicle || !selectedVehicleDestination || (availableSubRoutes.length > 0 && !selectedSubRoute) || !!actionLoading}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               {actionLoading ? (
@@ -2362,43 +2539,287 @@ export default function QueueManagement() {
                   <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
                     <div className="flex items-center justify-between">
                       <h2 className="text-xl font-semibold text-gray-900">{destination}</h2>
-                      <div className="flex items-center gap-4 text-sm text-gray-600">
-                        <span>Véhicules: <span className="font-semibold text-gray-900">{summary?.totalVehicles || 0}</span></span>
-                        {isConnected && (
-                          <div className="flex items-center gap-1 text-green-600">
-                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                            <span>Live</span>
-                          </div>
-                        )}
+                      <div className="flex items-center gap-3">
+                        {/* Bulk sub-route assigners for known destinations */}
+                        {(() => {
+                          const dn = (destination || '').toUpperCase();
+                          if (dn.includes('KSAR') && dn.includes('HLEL')) {
+                            return (
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-green-700 border-green-300 hover:bg-green-50"
+                                  onClick={() => {
+                                    const destId = queueSummaries.find(s => normalizeDestinationName(s.destinationName) === destination)?.destinationId;
+                                    if (destId) dbClient.bulkUpdateSubroute(destId, 'BOUHJAR', 'BOUHJAR', true).then(() => debouncedRefreshQueues());
+                                  }}
+                                >
+                                  Assigner BOUHJAR (vides)
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-green-700 border-green-300 hover:bg-green-50"
+                                  onClick={() => {
+                                    const destId = queueSummaries.find(s => normalizeDestinationName(s.destinationName) === destination)?.destinationId;
+                                    if (destId) dbClient.bulkUpdateSubroute(destId, 'SAYADA', 'SAYADA', true).then(() => debouncedRefreshQueues());
+                                  }}
+                                >
+                                  Assigner SAYADA (vides)
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-blue-700 border-blue-300 hover:bg-blue-50"
+                                  onClick={() => {
+                                    const destId = queueSummaries.find(s => normalizeDestinationName(s.destinationName) === destination)?.destinationId;
+                                    if (destId) dbClient.distributeSubroutesEvenly(destId, 'BOUHJAR', 'SAYADA', true).then(() => debouncedRefreshQueues());
+                                  }}
+                                >
+                                  Répartir 50/50 (vides)
+                                </Button>
+                              </div>
+                            );
+                          }
+                          if (dn.includes('MOKNIN')) {
+                            return (
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-green-700 border-green-300 hover:bg-green-50"
+                                  onClick={() => {
+                                    const destId = queueSummaries.find(s => normalizeDestinationName(s.destinationName) === destination)?.destinationId;
+                                    if (destId) dbClient.bulkUpdateSubroute(destId, 'REGULAR', 'REGULAR', true).then(() => debouncedRefreshQueues());
+                                  }}
+                                >
+                                  Assigner REGULAR (vides)
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-green-700 border-green-300 hover:bg-green-50"
+                                  onClick={() => {
+                                    const destId = queueSummaries.find(s => normalizeDestinationName(s.destinationName) === destination)?.destinationId;
+                                    if (destId) dbClient.bulkUpdateSubroute(destId, 'HALKOM', 'HALKOM', true).then(() => debouncedRefreshQueues());
+                                  }}
+                                >
+                                  Assigner HALKOM (vides)
+                                </Button>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+
+                        <div className="flex items-center gap-4 text-sm text-gray-600">
+                          <span>Véhicules: <span className="font-semibold text-gray-900">{summary?.totalVehicles || 0}</span></span>
+                          {isConnected && (
+                            <div className="flex items-center gap-1 text-green-600">
+                              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                              <span>Live</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
                   
-                  {/* Vehicle List */}
+                  {/* Vehicle List grouped by sub-route */}
                   <div className="p-6">
                     {summary && summary.totalVehicles > 0 ? (
                       destinationQueues.length > 0 ? (
-                        <div className="space-y-3">
-                          {destinationQueues.map((queue) => (
-                            <QueueItem
-                              key={queue.id}
-                              queue={queue}
-                              getStatusColor={getStatusColor}
-                              formatTime={formatTime}
-                              getBasePriceForDestination={getBasePriceForDestination}
-                              onVehicleClick={handleVehicleClick}
-                              onExitQueue={handleExitQueue}
-                              onEndTrip={handleEndTrip}
-                              onMoveToFront={handleMoveToFront}
-                              onRetryExitPass={handleRetryExitPass}
-                              onConfirmExit={handleConfirmExit}
-                              onEmergencyRemove={handleEmergencyRemove}
-                              onPrintDayPass={handlePrintDayPass}
-                              hasRecentDayPass={queue.licensePlate ? vehiclesWithRecentDayPass.has(queue.licensePlate) : false}
-                              actionLoading={actionLoading}
-                            />
-                          ))}
-                        </div>
+                        (() => {
+                          const groups: Record<string, any[]> = {};
+                          for (const q of destinationQueues) {
+                            const key = (q.subRouteName || q.subRoute || '').toString().trim() || 'SANS SOUS-ROUTE';
+                            if (!groups[key]) groups[key] = [];
+                            groups[key].push(q);
+                          }
+
+                          const subRouteOrder = (name: string) => {
+                            const n = name.toUpperCase();
+                            if (n === 'BOUHJAR') return 1;
+                            if (n === 'SAYADA') return 2;
+                            if (n === 'REGULAR') return 1;
+                            if (n === 'HALKOM') return 2;
+                            if (n === 'SANS SOUS-ROUTE') return 99;
+                            return 50;
+                          };
+
+                          const sectionTitles = Object.keys(groups).sort((a, b) => subRouteOrder(a) - subRouteOrder(b));
+
+                          // Determine if we should render side-by-side for known destinations
+                          const destNorm = (destination || '').toUpperCase();
+                          const isKsarHlel = destNorm.includes('KSAR') && destNorm.includes('HLEL');
+                          const isMoknin = destNorm.includes('MOKNIN');
+
+                          if (isKsarHlel || isMoknin) {
+                            const leftKey = isKsarHlel ? 'BOUHJAR' : 'REGULAR';
+                            const rightKey = isKsarHlel ? 'SAYADA' : 'HALKOM';
+
+                            const leftList = groups[leftKey] || [];
+                            const rightList = groups[rightKey] || [];
+
+                            // Remaining (including SANS SOUS-ROUTE) will be stacked below
+                            const remainingTitles = sectionTitles.filter(t => t !== leftKey && t !== rightKey);
+
+                            return (
+                              <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  {/* Left sub-route */}
+                                  <div className="border border-gray-200 rounded-lg">
+                                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-semibold text-gray-800">Sous-route: {leftKey}</span>
+                                        <span className="text-xs text-gray-500">( {leftList.length} véhicule{leftList.length > 1 ? 's' : ''} )</span>
+                                      </div>
+                                    </div>
+                                    <div className="p-4 space-y-3">
+                                      {leftList
+                                        .sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0))
+                                        .map((queue) => (
+                                          <QueueItem
+                                            key={queue.id}
+                                            queue={queue}
+                                            getStatusColor={getStatusColor}
+                                            formatTime={formatTime}
+                                            getBasePriceForDestination={getBasePriceForDestination}
+                                            onVehicleClick={handleVehicleClick}
+                                            onExitQueue={handleExitQueue}
+                                            onEndTrip={handleEndTrip}
+                                            onMoveToFront={handleMoveToFront}
+                                            onRetryExitPass={handleRetryExitPass}
+                                            onConfirmExit={handleConfirmExit}
+                                            onEmergencyRemove={handleEmergencyRemove}
+                                            onPrintDayPass={handlePrintDayPass}
+                                            hasRecentDayPass={queue.licensePlate ? vehiclesWithRecentDayPass.has(queue.licensePlate) : false}
+                                            actionLoading={actionLoading}
+                                          />
+                                        ))}
+                                    </div>
+                                  </div>
+
+                                  {/* Right sub-route */}
+                                  <div className="border border-gray-200 rounded-lg">
+                                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-sm font-semibold text-gray-800">Sous-route: {rightKey}</span>
+                                        <span className="text-xs text-gray-500">( {rightList.length} véhicule{rightList.length > 1 ? 's' : ''} )</span>
+                                      </div>
+                                    </div>
+                                    <div className="p-4 space-y-3">
+                                      {rightList
+                                        .sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0))
+                                        .map((queue) => (
+                                          <QueueItem
+                                            key={queue.id}
+                                            queue={queue}
+                                            getStatusColor={getStatusColor}
+                                            formatTime={formatTime}
+                                            getBasePriceForDestination={getBasePriceForDestination}
+                                            onVehicleClick={handleVehicleClick}
+                                            onExitQueue={handleExitQueue}
+                                            onEndTrip={handleEndTrip}
+                                            onMoveToFront={handleMoveToFront}
+                                            onRetryExitPass={handleRetryExitPass}
+                                            onConfirmExit={handleConfirmExit}
+                                            onEmergencyRemove={handleEmergencyRemove}
+                                            onPrintDayPass={handlePrintDayPass}
+                                            hasRecentDayPass={queue.licensePlate ? vehiclesWithRecentDayPass.has(queue.licensePlate) : false}
+                                            actionLoading={actionLoading}
+                                          />
+                                        ))}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Remaining sections stacked */}
+                                {remainingTitles.length > 0 && (
+                                  <div className="space-y-6">
+                                    {remainingTitles.map((title) => (
+                                      <div key={title} className="border border-gray-200 rounded-lg">
+                                        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-sm font-semibold text-gray-800">
+                                              {title === 'SANS SOUS-ROUTE' ? 'Sous-route: —' : `Sous-route: ${title}`}
+                                            </span>
+                                            <span className="text-xs text-gray-500">( {groups[title].length} véhicule{groups[title].length > 1 ? 's' : ''} )</span>
+                                          </div>
+                                        </div>
+                                        <div className="p-4 space-y-3">
+                                          {groups[title]
+                                            .sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0))
+                                            .map((queue) => (
+                                              <QueueItem
+                                                key={queue.id}
+                                                queue={queue}
+                                                getStatusColor={getStatusColor}
+                                                formatTime={formatTime}
+                                                getBasePriceForDestination={getBasePriceForDestination}
+                                                onVehicleClick={handleVehicleClick}
+                                                onExitQueue={handleExitQueue}
+                                                onEndTrip={handleEndTrip}
+                                                onMoveToFront={handleMoveToFront}
+                                                onRetryExitPass={handleRetryExitPass}
+                                                onConfirmExit={handleConfirmExit}
+                                                onEmergencyRemove={handleEmergencyRemove}
+                                                onPrintDayPass={handlePrintDayPass}
+                                                hasRecentDayPass={queue.licensePlate ? vehiclesWithRecentDayPass.has(queue.licensePlate) : false}
+                                                actionLoading={actionLoading}
+                                              />
+                                            ))}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+
+                          // Default stacked rendering
+                          return (
+                            <div className="space-y-6">
+                              {sectionTitles.map((title) => (
+                                <div key={title} className="border border-gray-200 rounded-lg">
+                                  <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-semibold text-gray-800">
+                                        {title === 'SANS SOUS-ROUTE' ? 'Sous-route: —' : `Sous-route: ${title}`}
+                                      </span>
+                                      <span className="text-xs text-gray-500">( {groups[title].length} véhicule{groups[title].length > 1 ? 's' : ''} )</span>
+                                    </div>
+                                  </div>
+                                  <div className="p-4 space-y-3">
+                                    {groups[title]
+                                      .sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0))
+                                      .map((queue) => (
+                                        <QueueItem
+                                          key={queue.id}
+                                          queue={queue}
+                                          getStatusColor={getStatusColor}
+                                          formatTime={formatTime}
+                                          getBasePriceForDestination={getBasePriceForDestination}
+                                          onVehicleClick={handleVehicleClick}
+                                          onExitQueue={handleExitQueue}
+                                          onEndTrip={handleEndTrip}
+                                          onMoveToFront={handleMoveToFront}
+                                          onRetryExitPass={handleRetryExitPass}
+                                          onConfirmExit={handleConfirmExit}
+                                          onEmergencyRemove={handleEmergencyRemove}
+                                          onPrintDayPass={handlePrintDayPass}
+                                          hasRecentDayPass={queue.licensePlate ? vehiclesWithRecentDayPass.has(queue.licensePlate) : false}
+                                          actionLoading={actionLoading}
+                                        />
+                                      ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()
                       ) : (
                         <div className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3 text-gray-400" />
